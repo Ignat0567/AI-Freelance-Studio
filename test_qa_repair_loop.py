@@ -173,4 +173,4 @@ def test_scenario_h_opencode_unavailable_no_fake_completion(tmp_path, monkeypatc
 
     assert result["success"] is False
     assert engine.repair_calls == 1
-    assert any("Explicit fallback to JSON patch mode" in log for log in engine.logs)
+    assert any("LEGACY JSON FALLBACK" in log for log in engine.logs)

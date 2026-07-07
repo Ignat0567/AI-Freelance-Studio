@@ -91,6 +91,46 @@ def _project_files(root_path):
     return [os.path.relpath(fpath, root_path) for _root, _fname, fpath in _walk_project_files(root_path)]
 
 
+_SNAPSHOT_FILE_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".md", ".txt", ".html", ".css", ".env", ".yml", ".yaml", ".cfg", ".ini", ".toml", ".xml", ".svg"}
+_SNAPSHOT_DIR_IGNORE = {".git", ".pytest_cache", "__pycache__", "node_modules", ".venv", "venv", "dist", "build", "data", ".egg-info"}
+
+
+def _snapshot_project_files(root_path: str) -> dict[str, dict]:
+    snapshot = {}
+    for root, dirs, files in os.walk(root_path):
+        dirs[:] = [d for d in dirs if d not in _SNAPSHOT_DIR_IGNORE and not d.endswith(".egg-info")]
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in _SNAPSHOT_FILE_EXTS:
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                stat = os.stat(fpath)
+                snapshot[os.path.relpath(fpath, root_path).replace(os.sep, "/")] = {
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime,
+                }
+            except OSError:
+                continue
+    return snapshot
+
+
+def _compare_snapshots(before: dict[str, dict], after: dict[str, dict]) -> list[str]:
+    changed = []
+    for path, info_after in after.items():
+        info_before = before.get(path)
+        if info_before is None:
+            changed.append(f"{path} [NEW]")
+            continue
+        if info_after["size"] != info_before["size"] or info_after["mtime"] != info_before["mtime"]:
+            changed.append(f"{path} [MODIFIED]")
+            continue
+    for path in before:
+        if path not in after:
+            changed.append(f"{path} [DELETED]")
+    return changed
+
+
 def _has_any_file(root_path, names):
     wanted = set(names)
     return any(fname in wanted for _root, fname, _fpath in _walk_project_files(root_path))
@@ -891,14 +931,17 @@ asyncio.run(main())
                     if info is not None:
                         info.setdefault("previous_repair_attempts", []).append(repair_entry)
                 if not fix_result:
-                    self.log("[QA]: OpenCode fix failed. Aborting further attempts.")
+                    self.log("[QA]: Direct repair produced no changes. Aborting further attempts.")
                     break
                 if fix_result.get(OPENCODE_FIX_APPLIED):
-                    self.log("[QA]: OpenCode updated files on disk. Restarting full QA from the beginning.")
+                    changed_count = fix_result.get("changed_files", "?")
+                    self.log(f"[QA]: OpenCode modified {changed_count} file(s) on disk. Restarting full QA from the beginning.")
                     self.set_state("verifying")
                     continue
-                # Write fixed files to disk
+                self.log("[LEGACY JSON FALLBACK] Writing agent-provided file contents to disk.")
                 for fname, content in fix_result.items():
+                    if fname == OPENCODE_FIX_APPLIED:
+                        continue
                     if not _is_safe_fix_path(fname):
                         self.log(f"[QA]: Ignored unsafe/cache fix path: {fname}")
                         continue
@@ -938,9 +981,10 @@ asyncio.run(main())
 
         opencode_result = self._request_opencode_fix(errors, error_text, repair_report)
         if opencode_result:
+            self.log(f"[QA OpenCode Fix] Direct repair applied — {opencode_result.get('changed_files', '?')} file(s) changed. Skipping legacy fallback.")
             return opencode_result
 
-        self.log("[QA Legacy Fix]: Explicit fallback to JSON patch mode because OpenCode direct repair was unavailable or failed.")
+        self.log("[LEGACY JSON FALLBACK] OpenCode direct repair produced no meaningful disk changes. Attempting JSON-based repair.")
 
         prompt = CODEX_FIX_PROMPT.format(errors=error_text)
         # Retry up to 2 times on transient AI errors
@@ -1020,21 +1064,45 @@ asyncio.run(main())
                 self.log("[QA OpenCode Fix]: Cancelled before OpenCode repair start.")
                 return None
             bridge = get_bridge()
-            self.log("[QA OpenCode Fix]: Starting OpenCode repair task...")
             if not bridge.ensure_running(workdir=self.target_path):
                 self.log("[QA OpenCode Fix]: OpenCode is unavailable or not authenticated.")
                 return None
+
+            snapshot = _snapshot_project_files(self.target_path)
+            self.log(f"[QA OpenCode Fix] Snapshot captured: {len(snapshot)} relevant files")
+            self.log("[QA OpenCode Fix]: Starting OpenCode repair task...")
+
             result = bridge.execute_fix_task(
                 project_dir=self.target_path,
                 issues=issue_report,
                 log_callback=lambda msg: self.log(msg.replace("[Codex]", "[OpenCode]")),
             )
-            if not result.get("success"):
-                self.log(f"[QA OpenCode Fix]: Failed: {result.get('error', 'unknown error')}")
-                return None
+
+            after_snapshot = _snapshot_project_files(self.target_path)
+            changed = _compare_snapshots(snapshot, after_snapshot)
+
+            timed_out = result.get("timed_out", False)
             session_id = result.get("session_id") or "?"
-            self.log(f"[QA OpenCode Fix]: Completed (session {session_id}).")
-            return {OPENCODE_FIX_APPLIED: True}
+            success = result.get("success", False)
+            error = result.get("error")
+
+            if changed:
+                self.log(f"[QA OpenCode Fix] {len(changed)} project file(s) changed: {', '.join(changed[:10])}")
+                if timed_out:
+                    self.log("[QA OpenCode Fix] OpenCode exceeded the timeout, but project files changed. Running full QA to verify the actual repair.")
+                elif not success and error:
+                    self.log(f"[QA OpenCode Fix] OpenCode exited with error: {error}. Project files changed — running full QA to verify the actual repair.")
+                else:
+                    self.log(f"[QA OpenCode Fix]: OpenCode repair completed (session {session_id}). Files changed — running full QA to verify.")
+                return {OPENCODE_FIX_APPLIED: True, "session_id": session_id, "changed_files": len(changed)}
+            else:
+                if timed_out:
+                    self.log("[QA OpenCode Fix] OpenCode timed out. No meaningful files changed. Repair attempt considered unsuccessful.")
+                elif not success and error:
+                    self.log(f"[QA OpenCode Fix]: OpenCode repair failed: {error}. No files changed.")
+                else:
+                    self.log("[QA OpenCode Fix]: OpenCode completed but no project files changed.")
+                return None
         except Exception as e:
             self.log(f"[QA OpenCode Fix]: Exception: {e}")
             return None

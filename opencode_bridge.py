@@ -824,12 +824,21 @@ class OpencodeBridge:
                 _drain_output()
                 if session_id in self._cancelled_sessions:
                     _terminate_process_tree(proc)
-                    return {"success": False, "error": "OpenCode task cancelled", "session_id": session_id, "cancelled": True}
+                    return {"success": False, "error": "OpenCode task cancelled", "session_id": session_id, "cancelled": True, "timed_out": False}
                 if proc.poll() is not None:
                     break
                 if time.time() - started > TASK_TIMEOUT:
                     _terminate_process_tree(proc)
-                    return {"success": False, "error": "OpenCode task timed out", "session_id": session_id}
+                    reader.join(timeout=1)
+                    _drain_output()
+                    output = _strip_ansi("\n".join(output_parts))
+                    return {
+                        "success": False,
+                        "error": "OpenCode task timed out",
+                        "session_id": session_id,
+                        "timed_out": True,
+                        "summary": output[-4000:],
+                    }
                 time.sleep(0.1)
             reader.join(timeout=1)
             _drain_output()
@@ -839,10 +848,11 @@ class OpencodeBridge:
                 "session_id": session_id,
                 "summary": output[-4000:],
                 "error": None if proc.returncode == 0 else _friendly_opencode_error(output[-2000:]),
+                "timed_out": False,
             }
         except Exception as e:
             logger.exception("OpenCode CLI task failed")
-            return {"success": False, "error": str(e), "session_id": session_id}
+            return {"success": False, "error": str(e), "session_id": session_id, "timed_out": False}
         finally:
             self._active_processes.pop(session_id, None)
             self._cancelled_sessions.discard(session_id)
