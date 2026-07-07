@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swo
+*.swp
+
+# Project files
+studio_config.json
+projects_state.json
+full_stack_spec.json
+test_project.json
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+*.err
+server_*.txt
+sv_*.log
+sv_*.txt
+server_test.*
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/installers/
+
+# Cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Generated projects
+generated_projects/*/

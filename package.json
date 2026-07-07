@@ -1,0 +1,18 @@
+{
+    "name": "ai-freelance-studio-root",
+    "version": "1.0.0",
+    "description": "AI Freelance Studio - Root package for unified frontend/backend",
+    "main": "frontend/main.js",
+    "scripts": {
+        "start": "cd frontend && npm start",
+        "dev": "cd frontend && npm run dev:full",
+        "build": "cd frontend && npm run build:vite",
+        "lint": "cd frontend && npm run lint",
+        "test": "cd frontend && npm run test"
+    },
+    "keywords": ["ai", "freelance", "studio"],
+    "license": "MIT",
+    "engines": {
+        "node": ">=18.0.0"
+    }
+}
