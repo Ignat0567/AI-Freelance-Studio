@@ -106,9 +106,14 @@ def _snapshot_project_files(root_path: str) -> dict[str, dict]:
             fpath = os.path.join(root, fname)
             try:
                 stat = os.stat(fpath)
+                digest = hashlib.sha256()
+                with open(fpath, "rb") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                        digest.update(chunk)
                 snapshot[os.path.relpath(fpath, root_path).replace(os.sep, "/")] = {
                     "size": stat.st_size,
                     "mtime": stat.st_mtime,
+                    "sha256": digest.hexdigest(),
                 }
             except OSError:
                 continue
@@ -122,7 +127,7 @@ def _compare_snapshots(before: dict[str, dict], after: dict[str, dict]) -> list[
         if info_before is None:
             changed.append(f"{path} [NEW]")
             continue
-        if info_after["size"] != info_before["size"] or info_after["mtime"] != info_before["mtime"]:
+        if info_after["sha256"] != info_before["sha256"]:
             changed.append(f"{path} [MODIFIED]")
             continue
     for path in before:
