@@ -5,7 +5,6 @@ import shlex
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -55,7 +54,7 @@ class RuntimeAdapter:
     def run(self, project: dict, root: str) -> RuntimeAdapterResult:
         raise NotImplementedError
 
-    def start_http_server(self, project: dict, root: str, env_extra: dict[str, str] | None = None) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
+    def start_http_server(self, project: dict, root: str) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
         return RuntimeAdapterResult(False, False, False, True, {"reason": f"{self.name} does not expose a reusable HTTP runtime"}, ""), None
 
 
@@ -259,7 +258,7 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
                 result.stopped_cleanly = True
                 result.evidence["shutdown_method"] = "already_exited"
 
-    def start_http_server(self, project: dict, root: str, env_extra: dict[str, str] | None = None) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
+    def start_http_server(self, project: dict, root: str) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
         profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
         if "fastapi" not in profiles:
             return RuntimeAdapterResult(False, False, False, True, {"reason": "No FastAPI profile"}, ""), None
@@ -276,10 +275,7 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
         port = _free_port()
         command = [sys.executable, "-m", "uvicorn", entrypoint[1], "--host", "127.0.0.1", "--port", str(port)]
         command_text = " ".join(command)
-        env = os.environ.copy()
-        if env_extra:
-            env.update({str(key): str(value) for key, value in env_extra.items()})
-        proc = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env)
+        proc = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         probes = []
         base_evidence = {
             "adapter": self.name,
@@ -290,7 +286,6 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
             "base_url": f"http://127.0.0.1:{port}",
             "command": command_text,
             "pid": proc.pid,
-            "env_overrides": sorted(env_extra or {}),
             "owned_process_only": True,
             "shutdown_method": "pending",
             "killed": False,
@@ -1213,18 +1208,18 @@ def _crud_sequence_kind(criterion: dict[str, Any], plan: dict[str, Any]) -> str:
     return ""
 
 
-def _start_http_sequence_runtime(project: dict, root: str, env_extra: dict[str, str] | None = None) -> tuple[RuntimeServerHandle | None, dict[str, Any]]:
+def _start_http_sequence_runtime(project: dict, root: str) -> tuple[RuntimeServerHandle | None, dict[str, Any]]:
     _effective_project_profiles(project, root)
     for adapter in RUNTIME_ADAPTERS:
         starter = getattr(adapter, "start_http_server", None)
         if not callable(starter):
             continue
-        result, handle = starter(project, root, env_extra)
+        result, handle = starter(project, root)
         if not result.applicable:
             continue
         evidence = result.to_dict()
         evidence["adapter"] = adapter.name
-        evidence["status"] = "passed" if handle and result.started and result.verified else _adapter_status(result)
+        evidence["status"] = _adapter_status(result)
         evidence.update(result.evidence)
         if handle and result.started and result.verified:
             return handle, evidence
@@ -1261,109 +1256,6 @@ def _stop_http_sequence_runtime(handle: RuntimeServerHandle) -> dict[str, Any]:
         "shutdown_method": handle.result.evidence.get("shutdown_method", ""),
         "killed": handle.result.evidence.get("killed", False),
     }
-
-
-def _persistence_storage_config(root: str, criterion_id: str) -> tuple[dict[str, str], dict[str, Any]]:
-    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(criterion_id or "criterion")).strip("_") or "criterion"
-    storage_dir = tempfile.mkdtemp(prefix=f"freelancerstudio_{safe_id}_")
-    sqlite_path = os.path.join(storage_dir, "acceptance_verifier.sqlite3")
-    json_path = os.path.join(storage_dir, "acceptance_verifier.json")
-    env = {
-        "FREELANCERSTUDIO_ACCEPTANCE_TEST": "1",
-        "APP_ENV": "test",
-        "ENV": "test",
-        "DATABASE_PATH": sqlite_path,
-        "DB_PATH": sqlite_path,
-        "SQLITE_PATH": sqlite_path,
-        "SQLITE_DB_PATH": sqlite_path,
-        "APP_DATABASE_PATH": sqlite_path,
-        "TEST_DATABASE_PATH": sqlite_path,
-        "DATABASE_URL": f"sqlite:///{sqlite_path.replace(os.sep, '/')}",
-        "STORAGE_DIR": storage_dir,
-        "DATA_DIR": storage_dir,
-        "DATA_FILE": json_path,
-    }
-    evidence = {
-        "isolated_storage_dir": storage_dir,
-        "sqlite_path": sqlite_path,
-        "json_path": json_path,
-        "env_override_names": sorted(env),
-        "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
-    }
-    return env, evidence
-
-
-def _runtime_start_evidence(raw: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "status": raw.get("status"),
-        "adapter": raw.get("adapter"),
-        "started": raw.get("started"),
-        "verified": raw.get("verified"),
-        "pid": raw.get("pid"),
-        "base_url": raw.get("base_url"),
-        "error": raw.get("error", ""),
-        "env_overrides": raw.get("env_overrides", []),
-    }
-
-
-def _persistence_evidence(
-    criterion: dict[str, Any],
-    status: str,
-    summary: str,
-    *,
-    created_identifier: str = "",
-    marker: str = "",
-    pre_restart_verification: dict[str, Any] | None = None,
-    stop_result: dict[str, Any] | None = None,
-    restart_result: dict[str, Any] | None = None,
-    post_restart_verification: dict[str, Any] | None = None,
-    final_assertion: dict[str, Any] | None = None,
-    method_path: list[dict[str, str]] | None = None,
-    safe_request_summary: dict[str, Any] | None = None,
-    response_status: dict[str, Any] | None = None,
-    redacted_response_excerpt: dict[str, str] | None = None,
-    failure_reason: str = "",
-    collected_evidence: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    collected = dict(collected_evidence or {})
-    collected.update(
-        {
-            "created_marker": marker,
-            "created_identifier": created_identifier,
-            "pre_restart_verification": pre_restart_verification or {},
-            "stop_result": stop_result or {},
-            "restart_result": restart_result or {},
-            "post_restart_verification": post_restart_verification or {},
-            "final_assertion": final_assertion or {},
-            "method_path": method_path or [],
-            "safe_request_summary": safe_request_summary or {},
-            "response_status": response_status or {},
-            "redacted_response_excerpt": redacted_response_excerpt or {},
-        }
-    )
-    return _registry_evidence(
-        "persistence_restart",
-        status,
-        summary,
-        setup_steps=["Start runtime with isolated storage configuration", "Create and verify a uniquely identifiable record", "Stop and restart the runtime with the same storage configuration"],
-        action_steps=[f"{step.get('method')} {step.get('path')}" for step in method_path or []],
-        assertions=["Record exists before restart", "A distinct runtime process starts after clean stop", "Same identifier and marker are observable after restart"],
-        collected_evidence=collected,
-        failure_reason=failure_reason,
-        criterion_id=criterion.get("id", ""),
-        created_marker=marker,
-        created_identifier=created_identifier,
-        pre_restart_verification=pre_restart_verification or {},
-        stop_result=stop_result or {},
-        restart_result=restart_result or {},
-        post_restart_verification=post_restart_verification or {},
-        final_assertion=final_assertion or {},
-        method_path=method_path or [],
-        safe_request_summary=safe_request_summary or {},
-        response_status=response_status or {},
-        redacted_response_excerpt=redacted_response_excerpt or {},
-        verdict=status if status in ("passed", "failed", "blocked") else "not_executed",
-    )
 
 
 def _http_path_url(base_url: str, path: str) -> str:
@@ -1984,42 +1876,6 @@ def _list_contains_created_item(value: Any, created_identifier: str, marker: str
     return False, ""
 
 
-def _matching_response_object(value: Any, created_identifier: str, marker: str) -> dict[str, Any] | None:
-    for item in _iter_response_objects(value):
-        if not isinstance(item, dict):
-            continue
-        if created_identifier and _extract_identifier(item) == created_identifier:
-            return item
-        if _json_contains_marker(item, marker):
-            return item
-    return None
-
-
-def _required_payload_fields(openapi: dict[str, Any], create_route: dict[str, Any], payload: dict[str, Any], marker_field: str) -> list[str]:
-    schema = _resolve_openapi_schema(openapi, create_route.get("request_schema", {}))
-    fields = [str(name) for name in schema.get("required", []) if isinstance(name, str) and name in payload]
-    if marker_field and marker_field in payload:
-        fields.append(marker_field)
-    return list(dict.fromkeys(fields))
-
-
-def _verify_persisted_response(response: dict[str, Any], created_identifier: str, marker: str, required_fields: list[str]) -> dict[str, Any]:
-    item = _matching_response_object(response.get("json"), created_identifier, marker)
-    missing_fields = required_fields if item is None else [field for field in required_fields if field not in item]
-    contains_identifier = bool(item and created_identifier and _extract_identifier(item) == created_identifier)
-    contains_marker = bool(item and _json_contains_marker(item, marker))
-    return {
-        "status_code": response.get("status"),
-        "response_ok": bool(response.get("ok")),
-        "record_exists": bool(item and (contains_identifier or contains_marker)),
-        "contains_identifier": contains_identifier,
-        "contains_marker": contains_marker,
-        "required_fields": required_fields,
-        "missing_required_fields": missing_fields,
-        "required_fields_present": not missing_fields,
-    }
-
-
 def _discover_crud_route_set(openapi: dict[str, Any], criterion: dict[str, Any], plan: dict[str, Any], kind: str) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
     if kind == "create":
         create_route, list_route, discovery_reason, discovery_evidence = _discover_create_list_routes(openapi, criterion, plan)
@@ -2087,27 +1943,6 @@ def _discover_crud_route_set(openapi: dict[str, Any], criterion: dict[str, Any],
     return route_set, "", discovery_evidence
 
 
-def _discover_persistence_routes(openapi: dict[str, Any], criterion: dict[str, Any], plan: dict[str, Any]) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
-    create_route, discovery_reason, discovery_evidence = _discover_create_route(openapi, criterion, plan)
-    if discovery_reason or not create_route:
-        return None, discovery_reason, discovery_evidence
-    routes = _openapi_route_candidates(openapi)
-    route_set: dict[str, Any] = {"create": create_route}
-    collection_path = str(create_route.get("path") or "")
-    discovery_evidence.setdefault("related_route_candidates", {})
-    read_route, read_reason, read_labels = _find_related_route(routes, collection_path, {"GET"}, require_path_param=True)
-    discovery_evidence["related_route_candidates"]["read"] = read_labels
-    if read_route:
-        route_set["read"] = read_route
-    list_route, list_reason, list_labels = _find_related_route(routes, collection_path, {"GET"}, require_path_param=False)
-    discovery_evidence["related_route_candidates"]["list"] = list_labels
-    if list_route:
-        route_set["list"] = list_route
-    if not route_set.get("read") and not route_set.get("list"):
-        return None, f"No read or list route was discovered for post-restart verification: {read_reason}; {list_reason}", discovery_evidence
-    return route_set, "", discovery_evidence
-
-
 def _record_http_step(method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], key: str, method: str, path: str, response: dict[str, Any]) -> None:
     method_path.append({"method": method.upper(), "path": path.split("?", 1)[0]})
     response_status[key] = response.get("status")
@@ -2136,252 +1971,6 @@ def _execute_create_fixture(handle: RuntimeServerHandle, openapi: dict[str, Any]
     if id_reason:
         return "failed", "Create succeeded but produced no created identifier or unique marker", id_reason, False, safe_summary, payload, ""
     return "passed", "Fixture record was created successfully", "", True, safe_summary, payload, created_identifier
-
-
-def _fetch_persisted_record(handle: RuntimeServerHandle, route_set: dict[str, Any], created_identifier: str, marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], key: str) -> dict[str, Any]:
-    if route_set.get("read") and created_identifier and created_identifier != marker:
-        read_path = _replace_path_params(route_set["read"]["path"], created_identifier)
-        response = _http_json_request(handle.base_url, "GET", read_path)
-        _record_http_step(method_path, response_status, redacted_excerpt, key, "GET", read_path, response)
-        return response
-    if not route_set.get("list"):
-        return {"ok": False, "status": None, "json": None, "body_text": "", "excerpt": "", "error": "No list route is available and create response did not provide a concrete identifier"}
-    list_path = route_set["list"]["path"]
-    response = _http_json_request(handle.base_url, "GET", list_path)
-    _record_http_step(method_path, response_status, redacted_excerpt, key, "GET", list_path, response)
-    return response
-
-
-def _verify_persistence_restart(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    plan = _criterion_verifier_plan(criterion)
-    if plan.get("verifier_type") != "persistence_restart":
-        return _persistence_evidence(
-            criterion,
-            "not_verified",
-            "Persistence restart verifier requires a persistence_restart plan",
-            failure_reason="Verifier plan is not persistence_restart",
-            collected_evidence={"plan_verifier_type": plan.get("verifier_type", "")},
-        )
-
-    env_extra, storage_evidence = _persistence_storage_config(root, str(criterion.get("id", "")))
-    handle: RuntimeServerHandle | None = None
-    restarted_handle: RuntimeServerHandle | None = None
-    method_path: list[dict[str, str]] = []
-    response_status: dict[str, Any] = {}
-    redacted_excerpt: dict[str, str] = {}
-    safe_summary: dict[str, Any] = {}
-    created_identifier = ""
-    marker = f"persist_{re.sub(r'[^A-Za-z0-9]+', '_', str(criterion.get('id') or 'criterion')).strip('_').lower()}_{int(time.time() * 1000)}"
-    pre_verification: dict[str, Any] = {}
-    stop_result: dict[str, Any] = {}
-    restart_result: dict[str, Any] = {}
-    post_verification: dict[str, Any] = {}
-    final_assertion: dict[str, Any] = {"passed": False}
-    collected: dict[str, Any] = {"storage": storage_evidence, "verifier_plan": plan}
-    status = "failed"
-    summary = "Persistence restart verification failed"
-    failure_reason = ""
-
-    try:
-        handle, start_evidence = _start_http_sequence_runtime(project, root, env_extra)
-        collected["initial_start"] = _runtime_start_evidence(start_evidence)
-        if not handle:
-            reason = start_evidence.get("error") or "Runtime unavailable for persistence restart verification"
-            return _persistence_evidence(
-                criterion,
-                "failed" if start_evidence.get("status") == "failed" else "not_verified",
-                "Initial runtime start failed for persistence verification",
-                marker=marker,
-                failure_reason=str(reason),
-                restart_result={"status": "not_started"},
-                final_assertion={"passed": False, "reason": str(reason)},
-                collected_evidence=collected,
-            )
-
-        openapi_response = _http_json_request(handle.base_url, "GET", "/openapi.json")
-        collected["openapi_status"] = openapi_response.get("status")
-        if not openapi_response.get("ok") or not isinstance(openapi_response.get("json"), dict):
-            status = "not_verified"
-            summary = "OpenAPI route discovery was unavailable for persistence verification"
-            failure_reason = openapi_response.get("error") or f"OpenAPI response status was {openapi_response.get('status')}"
-            return _persistence_evidence(
-                criterion,
-                status,
-                summary,
-                marker=marker,
-                failure_reason=failure_reason,
-                collected_evidence=collected,
-            )
-
-        openapi = openapi_response["json"]
-        route_set, discovery_reason, discovery_evidence = _discover_persistence_routes(openapi, criterion, plan)
-        collected["route_discovery"] = discovery_evidence
-        if discovery_reason or not route_set:
-            status = "not_verified"
-            summary = "Persistence route discovery was ambiguous or incomplete"
-            failure_reason = discovery_reason
-            return _persistence_evidence(
-                criterion,
-                status,
-                summary,
-                marker=marker,
-                failure_reason=failure_reason,
-                collected_evidence=collected,
-            )
-
-        create_status, create_summary, create_failure, create_assertion, safe_summary, payload, created_identifier = _execute_create_fixture(
-            handle,
-            openapi,
-            route_set["create"],
-            marker,
-            method_path,
-            response_status,
-            redacted_excerpt,
-        )
-        if create_status != "passed":
-            return _persistence_evidence(
-                criterion,
-                create_status,
-                create_summary,
-                marker=marker,
-                created_identifier=created_identifier,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason=create_failure,
-                final_assertion={"passed": bool(create_assertion), "reason": create_failure},
-                collected_evidence=collected,
-            )
-
-        required_fields = _required_payload_fields(openapi, route_set["create"], payload, str(safe_summary.get("marker_field", "")))
-        pre_response = _fetch_persisted_record(handle, route_set, created_identifier, marker, method_path, response_status, redacted_excerpt, "pre_restart_fetch")
-        pre_verification = _verify_persisted_response(pre_response, created_identifier, marker, required_fields)
-        if not pre_verification.get("record_exists") or not pre_verification.get("required_fields_present"):
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                "Created record was not verifiable before restart",
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason="Pre-restart fetch did not contain the created identifier, marker, and required fields",
-                final_assertion={"passed": False, "reason": "pre_restart_verification_failed"},
-                collected_evidence=collected,
-            )
-
-        first_pid = handle.result.evidence.get("pid")
-        stop_result = _stop_http_sequence_runtime(handle)
-        handle = None
-        if not stop_result.get("stopped_cleanly"):
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                "Runtime did not stop cleanly before persistence restart",
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                stop_result=stop_result,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason="Owned runtime process did not stop cleanly",
-                final_assertion={"passed": False, "reason": "stop_failed"},
-                collected_evidence=collected,
-            )
-
-        restarted_handle, raw_restart = _start_http_sequence_runtime(project, root, env_extra)
-        restart_result = _runtime_start_evidence(raw_restart)
-        restart_result["same_storage_env"] = sorted(env_extra) == sorted(env_extra)
-        if restarted_handle:
-            restart_result["real_restart"] = restarted_handle.result.evidence.get("pid") != first_pid
-        else:
-            restart_result["real_restart"] = False
-        if not restarted_handle:
-            reason = raw_restart.get("error") or "Runtime restart failed"
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                "Runtime restart failed during persistence verification",
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                stop_result=stop_result,
-                restart_result=restart_result,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason=str(reason),
-                final_assertion={"passed": False, "reason": str(reason)},
-                collected_evidence=collected,
-            )
-        if not restart_result.get("real_restart"):
-            failure_reason = "Restart did not create a distinct runtime process"
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                failure_reason,
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                stop_result=stop_result,
-                restart_result=restart_result,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason=failure_reason,
-                final_assertion={"passed": False, "reason": "not_a_real_restart"},
-                collected_evidence=collected,
-            )
-
-        post_response = _fetch_persisted_record(restarted_handle, route_set, created_identifier, marker, method_path, response_status, redacted_excerpt, "post_restart_fetch")
-        post_verification = _verify_persisted_response(post_response, created_identifier, marker, required_fields)
-        identity_persisted = bool(post_verification.get("contains_identifier") or (created_identifier == marker and post_verification.get("contains_marker")))
-        final_assertion = {
-            "passed": bool(identity_persisted and post_verification.get("contains_marker") and post_verification.get("required_fields_present") and restart_result.get("real_restart")),
-            "identity_persisted": identity_persisted,
-            "marker_persisted": bool(post_verification.get("contains_marker")),
-            "required_fields_present": bool(post_verification.get("required_fields_present")),
-            "real_restart": bool(restart_result.get("real_restart")),
-        }
-        if final_assertion["passed"]:
-            status = "passed"
-            summary = "Created record survived a real application restart with the same storage configuration"
-            failure_reason = ""
-        else:
-            status = "failed"
-            summary = "Created record did not survive application restart"
-            failure_reason = "Post-restart fetch did not contain the same identifier, marker, and required fields; in-memory or non-persistent storage is likely"
-        return _persistence_evidence(
-            criterion,
-            status,
-            summary,
-            marker=marker,
-            created_identifier=created_identifier,
-            pre_restart_verification=pre_verification,
-            stop_result=stop_result,
-            restart_result=restart_result,
-            post_restart_verification=post_verification,
-            final_assertion=final_assertion,
-            method_path=method_path,
-            safe_request_summary=safe_summary,
-            response_status=response_status,
-            redacted_response_excerpt=redacted_excerpt,
-            failure_reason=failure_reason,
-            collected_evidence=collected,
-        )
-    finally:
-        if handle is not None:
-            collected["initial_runtime_cleanup"] = _stop_http_sequence_runtime(handle)
-        if restarted_handle is not None:
-            collected["post_restart_stop_result"] = _stop_http_sequence_runtime(restarted_handle)
 
 
 def _execute_create_observable_sequence(handle: RuntimeServerHandle, openapi: dict[str, Any], route_set: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str]) -> tuple[str, str, str, bool, dict[str, Any], dict[str, Any], str]:
@@ -2824,9 +2413,6 @@ def _verify_command(criterion: dict[str, Any], project: dict, root: str, qa_resu
 def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
     evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        evidence = _runtime_smoke(project, root)
-        runtime_check = {"name": "runtime_smoke", "status": "passed" if evidence.get("status") == "passed" else "failed", "evidence": evidence}
     status = "passed" if runtime_check.get("status") == "passed" and evidence.get("status") == "passed" else "failed"
     runtime_status = evidence.get("status", "not_verified")
     return _registry_evidence(
@@ -2840,160 +2426,6 @@ def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, q
         runtime_status=runtime_status,
         adapter=evidence.get("adapter", ""),
         limitation=evidence.get("limitation", ""),
-    )
-
-
-def _verify_runtime_start(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        evidence = _runtime_smoke(project, root)
-        runtime_check = {"name": "runtime_smoke", "status": "passed" if evidence.get("status") == "passed" else "failed", "evidence": evidence}
-
-    adapter = str(evidence.get("adapter") or "")
-    unsupported = adapter == "generic" or evidence.get("status") == "not_applicable"
-    startup_ready = bool(evidence.get("started") or evidence.get("credential_free"))
-    response_ready = bool(evidence.get("status_code") and 200 <= int(evidence.get("status_code")) < 400) or bool(evidence.get("verified"))
-    stopped_cleanly = bool(evidence.get("stopped_cleanly"))
-    passed = bool(runtime_check.get("status") == "passed" and evidence.get("status") == "passed" and startup_ready and response_ready and stopped_cleanly and not unsupported)
-    status = "passed" if passed else "not_verified" if unsupported else "failed"
-    failure_reason = ""
-    if status != "passed":
-        if unsupported:
-            failure_reason = "No supported runtime adapter produced direct startup evidence"
-        else:
-            failure_reason = evidence.get("error") or f"Runtime startup evidence incomplete: status={evidence.get('status')} started={startup_ready} response_ready={response_ready} stopped_cleanly={stopped_cleanly}"
-    return _registry_evidence(
-        "runtime_start",
-        status,
-        "Runtime adapter started the app, observed readiness, and stopped cleanly" if status == "passed" else "Runtime startup was not directly verified",
-        action_steps=["Start app with selected runtime adapter", "Probe primary page or health endpoint", "Stop owned runtime process"],
-        assertions=["Runtime process starts", "Port or local process becomes ready", "Primary page or health endpoint responds", "Owned process stops cleanly"],
-        collected_evidence={
-            "adapter": adapter,
-            "started": startup_ready,
-            "verified": bool(evidence.get("verified")),
-            "response_status": evidence.get("status_code"),
-            "url": evidence.get("url", ""),
-            "stopped_cleanly": stopped_cleanly,
-            "pid": evidence.get("pid"),
-            "owned_process_only": evidence.get("owned_process_only", False),
-        },
-        failure_reason=failure_reason,
-        adapter=adapter,
-        runtime_status=evidence.get("status", "not_verified"),
-        response_status=evidence.get("status_code"),
-        url=evidence.get("url", ""),
-        started=startup_ready,
-        verified=bool(evidence.get("verified")),
-        stopped_cleanly=stopped_cleanly,
-    )
-
-
-def _html_from_runtime_or_static(project: dict, root: str, runtime_evidence: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    html = str(runtime_evidence.get("response_sample") or "")
-    source = {"source": "runtime_response_sample" if html else ""}
-    if html:
-        return html, source
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-    if "static_website" in profiles:
-        entrypoint = _static_entrypoint(root)
-        if entrypoint:
-            entry_rel, _site_root = entrypoint
-            try:
-                return _read(os.path.join(root, entry_rel)), {"source": "static_entry_html", "entry_html": entry_rel}
-            except Exception as exc:
-                return "", {"source": "static_entry_html", "error": _tail_output(str(exc))}
-    return "", source
-
-
-def _fatal_render_errors(html: str) -> list[str]:
-    lower = html.lower()
-    markers = ("uncaught runtime error", "error boundary", "traceback", "typeerror:", "referenceerror:", "syntaxerror:", "failed to compile")
-    return [marker for marker in markers if marker in lower]
-
-
-def _primary_controls_exist(html: str) -> bool:
-    return bool(re.search(r"<(nav|header|main|button|a|form|input|select|textarea)\b", html, flags=re.IGNORECASE) or re.search(r"\brole\s*=\s*['\"](?:navigation|button|main|search)['\"]", html, flags=re.IGNORECASE))
-
-
-def _catastrophic_horizontal_overflow(html: str) -> dict[str, Any]:
-    hits = []
-    for match in re.finditer(r"(?:min-width|width)\s*:\s*(\d{4,})px", html, flags=re.IGNORECASE):
-        try:
-            width = int(match.group(1))
-        except ValueError:
-            continue
-        if width > 900:
-            hits.append(match.group(0))
-    overflow_scroll = bool(re.search(r"overflow-x\s*:\s*(scroll|auto)", html, flags=re.IGNORECASE) and hits)
-    return {"catastrophic": bool(hits or overflow_scroll), "fixed_width_rules": hits[:10], "overflow_x_scroll_with_fixed_width": overflow_scroll}
-
-
-def _verify_responsive_ui(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-    if not profiles.intersection({"static_website", "react_frontend", "vite_frontend"}):
-        return _registry_evidence(
-            "responsive_ui",
-            "not_verified",
-            "Responsive UI verification is unsupported for this project profile",
-            action_steps=["Check project profile for supported browser UI runtime"],
-            assertions=["Only supported UI stacks are directly verified"],
-            collected_evidence={"profiles": sorted(profiles)},
-            failure_reason="Unsupported UI stack for lightweight responsive verification",
-        )
-
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    runtime_evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        runtime_evidence = _runtime_smoke(project, root)
-    html, html_source = _html_from_runtime_or_static(project, root, runtime_evidence)
-    status_code = runtime_evidence.get("status_code")
-    page_renders = bool((status_code is None or 200 <= int(status_code) < 400) and html.strip())
-    fatal_errors = _fatal_render_errors(html)
-    controls_exist = _primary_controls_exist(html)
-    overflow = _catastrophic_horizontal_overflow(html)
-    desktop = {
-        "primary_page_renders": page_renders,
-        "fatal_render_errors": fatal_errors,
-        "primary_navigation_or_control_area_exists": controls_exist,
-    }
-    tablet = {
-        "primary_page_renders": page_renders,
-        "primary_controls_reachable": controls_exist,
-        "catastrophic_horizontal_overflow": overflow["catastrophic"],
-        "overflow_evidence": overflow,
-    }
-    passed = page_renders and not fatal_errors and controls_exist and not overflow["catastrophic"]
-    status = "passed" if passed else "failed"
-    failure_parts = []
-    if not page_renders:
-        failure_parts.append("primary page did not render")
-    if fatal_errors:
-        failure_parts.append("fatal render error markers found")
-    if not controls_exist:
-        failure_parts.append("primary navigation/control area was not found")
-    if overflow["catastrophic"]:
-        failure_parts.append("catastrophic horizontal overflow indicators found")
-    return _registry_evidence(
-        "responsive_ui",
-        status,
-        "Desktop and tablet UI reachability assertions passed" if passed else "Responsive UI assertions failed",
-        action_steps=["Start supported UI runtime or inspect static entry page", "Assert desktop render/control reachability", "Assert tablet control reachability and overflow heuristic"],
-        assertions=["Desktop primary page renders without fatal error", "Desktop navigation/control area exists", "Tablet controls remain reachable", "No catastrophic horizontal overflow indicators"],
-        collected_evidence={
-            "profiles": sorted(profiles),
-            "runtime": _runtime_start_evidence(runtime_evidence),
-            "html_source": html_source,
-            "html_excerpt": _redact_secrets(html[:1000]),
-            "desktop": desktop,
-            "tablet": tablet,
-        },
-        failure_reason="; ".join(failure_parts),
-        desktop=desktop,
-        tablet=tablet,
-        response_status=status_code,
-        html_source=html_source,
     )
 
 
@@ -3089,14 +2521,8 @@ def _verify_telegram_smoke(criterion: dict[str, Any], project: dict, root: str, 
 
 def _verify_feature_trace_static_or_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     plan = _criterion_verifier_plan(criterion)
-    if plan.get("verifier_type") == "runtime_start":
-        return _verify_runtime_start(criterion, project, root, qa_result, checks)
-    if plan.get("verifier_type") == "responsive_ui":
-        return _verify_responsive_ui(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "http_sequence":
         return _verify_http_sequence(criterion, project, root, qa_result, checks)
-    if plan.get("verifier_type") == "persistence_restart":
-        return _verify_persistence_restart(criterion, project, root, qa_result, checks)
     return _registry_evidence(
         "feature_trace_static_or_smoke",
         "not_verified",
@@ -3114,14 +2540,11 @@ ACCEPTANCE_VERIFIERS = {
     "command": _verify_command,
     "python_import": _verify_python_import,
     "runtime_smoke": _verify_runtime_smoke,
-    "runtime_start": _verify_runtime_start,
-    "responsive_ui": _verify_responsive_ui,
     "static_asset_check": _verify_static_asset_check,
     "secret_scan": _verify_secret_scan,
     "file_and_secret_check": _verify_file_and_secret_check,
     "telegram_smoke": _verify_telegram_smoke,
     "http_sequence": _verify_http_sequence,
-    "persistence_restart": _verify_persistence_restart,
     "feature_trace_static_or_smoke": _verify_feature_trace_static_or_smoke,
 }
 

@@ -7,7 +7,7 @@ import re
 import traceback
 import hashlib
 from ai_utils import ask_studio_ai_with_history
-from project_spec import Issue, detect_project_profiles
+from project_spec import Issue
 
 MAX_ROUNDS = 4
 MAX_REPAIR_ATTEMPTS = 3
@@ -151,25 +151,15 @@ def _project_files(root_path):
     return [os.path.relpath(fpath, root_path) for _root, _fname, fpath in _walk_project_files(root_path)]
 
 
-def _project_profiles(project, root_path=None):
+def _project_profiles(project):
     if not isinstance(project, dict):
         return []
-    if root_path and os.path.isdir(root_path):
-        spec = project.get("project_spec") if isinstance(project.get("project_spec"), dict) else {}
-        text = "\n".join(str(part) for part in (project.get("title", ""), project.get("description", ""), spec.get("original_user_request", "")) if part)
-        profiles = detect_project_profiles(spec, project_path=root_path, text=text)
-        if profiles:
-            project["project_profiles"] = profiles
-            if isinstance(spec, dict):
-                spec["project_profiles"] = profiles
-                spec["project_type"] = profiles[0]
-            return profiles
     profiles = project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", [])
     return [str(profile) for profile in profiles if profile]
 
 
 def select_policy_groups(project, root_path=None):
-    profiles = set(_project_profiles(project, root_path))
+    profiles = set(_project_profiles(project))
     groups = []
     if profiles.intersection({"python_application", "python_cli", "fastapi", "telegram_bot"}):
         groups.append("python")
@@ -351,7 +341,7 @@ class QAEngine:
     def run_command(self, command, cwd=None, timeout=120):
         started = time.time()
         try:
-            result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+            result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=timeout)
             record = {
                 "command": " ".join(str(part) for part in command),
                 "working_directory": cwd or self.target_path,
@@ -436,7 +426,7 @@ class QAEngine:
                 return True, [], []
             # Second try: install packages one by one, skip failures
             self.log("[QA Deps]: Batch install had issues. Trying individual installs...")
-            with open(req_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(req_path, "r") as f:
                 packages = [l.strip() for l in f if l.strip() and not l.startswith("#")]
             failed_one_by_one = []
             for pkg in packages:
@@ -499,7 +489,7 @@ class QAEngine:
                 dirs[:] = [d for d in dirs if d not in IGNORED_QA_DIRS and not d.endswith(".egg-info")]
                 for f in files:
                     if f.endswith(".py"):
-                        with open(os.path.join(root, f), "r", encoding="utf-8", errors="replace") as fh:
+                        with open(os.path.join(root, f), "r", errors="replace") as fh:
                             c = fh.read()
                             if "FastAPI" in c or "uvicorn" in c:
                                 main_py = os.path.join(root, f)
@@ -660,17 +650,6 @@ class QAEngine:
     # ─── Stage 5: Profile-specific checks ────────────────────────────────
 
     def detect_profile(self):
-        profiles = set(_project_profiles(self.project, self.target_path))
-        if "fastapi" in profiles:
-            return "fastapi"
-        if "telegram_bot" in profiles:
-            return "telegram_bot"
-        if profiles.intersection({"react_frontend", "vite_frontend", "node_project", "node_backend"}):
-            return "node_app"
-        if "static_website" in profiles:
-            return "static_web"
-        if profiles.intersection({"python_application", "python_cli"}):
-            return "python_app"
         files = set(p.replace("\\", "/") for p in _project_files(self.target_path))
         if "bot.py" in files and _has_any_file(self.target_path, (".env.example", "docker-compose.yml")):
             try:

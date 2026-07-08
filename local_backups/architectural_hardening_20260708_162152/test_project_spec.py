@@ -4,25 +4,18 @@ from pathlib import Path
 import pytest
 
 from project_spec import (
-    ACCEPTANCE_CONTRACT_FIELDS,
     ACCEPTANCE_EVIDENCE_FIELDS,
     ACCEPTANCE_EVIDENCE_HISTORY_KEY,
-    ACCEPTANCE_VERDICTS,
     ISSUE_FIELDS,
-    VERIFIER_PLAN_FIELDS,
-    VERIFIER_PLAN_TYPES,
     Issue,
-    acceptance_evidence_is_direct,
     append_agent_review_issues,
     build_product_judge_input,
-    detect_project_profiles,
     detect_requirement_gaps,
     ensure_acceptance_evidence_history,
     ensure_project_spec_bundle,
     generate_acceptance_criteria,
     normalize_agent_review_issues,
     orphan_mandatory_requirements,
-    plan_acceptance_verifier,
     record_acceptance_evidence,
     requirement_dependency_errors,
     requirement_graph,
@@ -238,74 +231,6 @@ def test_scenario_4_explicit_user_feature_maps_to_acceptance_criteria():
     assert "api key" in criteria_text.lower()
 
 
-def test_russian_requirement_survives_spec_json_round_trip():
-    request = "Иметь возможность создать новую заявку клиента"
-    project = _project("Unicode Demo", request)
-
-    bundle = ensure_project_spec_bundle(project)
-    restored = json.loads(json.dumps(bundle, ensure_ascii=False))
-
-    assert restored["project_spec"]["original_user_request"] == request
-    assert request in restored["project_spec"]["required_features"]
-    assert any(criterion["trace"] == request for criterion in restored["acceptance_criteria"])
-
-
-def test_already_mojibake_text_is_not_double_decoded():
-    text = "РёРјРµС‚СЊ"
-    project = _project("No Double Decode", text)
-
-    bundle = ensure_project_spec_bundle(project)
-    restored = json.loads(json.dumps(bundle, ensure_ascii=False))
-
-    assert restored["project_spec"]["original_user_request"] == text
-
-
-def test_russian_requirements_generate_self_contained_acceptance_criteria():
-    project = _project(
-        "Ticket Desk",
-        """Сотрудник должен иметь возможность создать новую заявку клиента.
-
-В заявке нужно сохранить:
-- имя клиента;
-- телефон или email;
-- краткое описание проблемы;
-- приоритет;
-- статус заявки.
-
-После создания заявка должна появляться в общем списке.
-
-Нужно иметь возможность:
-- открыть заявку;
-- изменить данные;
-- поменять статус;
-- добавить комментарий;
-- удалить заявку, но желательно с подтверждением.
-
-Программа должна нормально работать на обычном компьютере и на планшете.
-Данные не должны исчезать после перезапуска программы.
-Очень важно:
-- программа должна реально запускаться;
-- должна быть инструкция, как установить и запустить проект на Windows.
-""",
-    )
-
-    bundle = ensure_project_spec_bundle(project)
-    user_criteria = [criterion for criterion in bundle["acceptance_criteria"] if criterion["source"] == "user_requirement"]
-    titles = [criterion["title"] for criterion in user_criteria]
-
-    assert len(user_criteria) >= 7
-    assert "User can create a new client request." in titles
-    assert "Client request records store all required fields." in titles
-    assert "After creation, the new request appears in the common request list." in titles
-    assert "User can open an existing request and update its data." in titles
-    assert "The application layout remains usable on desktop and tablet viewport sizes." in titles
-    assert "Application data persists after restart." in titles
-    assert "The application starts successfully with the documented run command." in titles
-    assert "Windows installation and run instructions are documented." in titles
-    forbidden = {"feature: сохранить", "feature: иметь возможность", "save", "appear", "have the ability"}
-    assert not forbidden.intersection({title.lower().strip(" .") for title in titles})
-
-
 def test_requirement_and_acceptance_ids_are_stable_and_formatted():
     project = _project("Traceable App", "Build a dashboard. Add CSV export. Include admin login.")
 
@@ -338,166 +263,6 @@ def test_every_mandatory_user_requirement_links_to_acceptance_criterion():
     assert mandatory_req_ids
     assert mandatory_req_ids <= linked_req_ids
     assert bundle["traceability"]["orphan_mandatory_requirement_ids"] == []
-
-
-def test_creation_list_criterion_plans_http_sequence_without_execution():
-    criterion = {
-        "id": "AC-CREATE-LIST",
-        "title": "After creation, the new request appears in the common request list.",
-        "description": "A newly created client request is visible in the shared request list.",
-        "expected_result": "The request list contains the new request after creation.",
-    }
-
-    plan = plan_acceptance_verifier(criterion)
-
-    assert tuple(plan) == VERIFIER_PLAN_FIELDS
-    assert plan["criterion_id"] == "AC-CREATE-LIST"
-    assert plan["verifier_type"] == "http_sequence"
-    assert plan["setup"] == ["start application"]
-    assert plan["required_fixtures"] == ["request payload with a unique client or request identifier"]
-    assert plan["actions"] == ["create request", "list requests"]
-    assert plan["assertions"] == ["create succeeds", "created identifier appears in list"]
-    assert plan["observable_expected_outcomes"]
-    assert plan["execution_status"] == "not_executed"
-    assert plan["verifier_type"] in VERIFIER_PLAN_TYPES
-
-
-def test_update_criterion_plans_http_sequence_with_fixture_data():
-    criterion = {
-        "id": "AC-UPDATE",
-        "title": "User can open an existing request and update its data.",
-        "description": "Existing request operations change the stored request state.",
-        "expected_result": "Updated request fields are observable through the API or UI.",
-    }
-
-    plan = plan_acceptance_verifier(criterion)
-
-    assert plan["criterion_id"] == "AC-UPDATE"
-    assert plan["verifier_type"] == "http_sequence"
-    assert "existing request record" in plan["required_fixtures"]
-    assert plan["actions"] == ["create or seed request", "update request", "fetch or list request"]
-    assert "updated fields or status are observable after update" in plan["assertions"]
-    assert plan["execution_status"] == "not_executed"
-
-
-def test_persistence_criterion_plans_restart_verifier():
-    criterion = {
-        "id": "AC-PERSIST",
-        "title": "Application data persists after restart.",
-        "description": "Saved request data remains available after the process is stopped and started again.",
-        "expected_result": "Data created before restart can be retrieved after restart.",
-    }
-
-    plan = plan_acceptance_verifier(criterion)
-
-    assert plan["criterion_id"] == "AC-PERSIST"
-    assert plan["verifier_type"] == "persistence_restart"
-    assert plan["setup"] == ["start application with persistent storage"]
-    assert plan["actions"] == ["create record", "stop application", "restart application", "retrieve or list records"]
-    assert "same record is observable after restart" in plan["assertions"]
-    assert plan["observable_expected_outcomes"] == ["post-restart read response contains the pre-restart identifier and data"]
-    assert plan["execution_status"] == "not_executed"
-
-
-def test_runtime_criterion_plans_runtime_start_not_pass():
-    criterion = {
-        "id": "AC-RUNTIME",
-        "title": "The application starts successfully with the documented run command.",
-        "description": "The delivered application can be started locally using the documented command.",
-        "expected_result": "The documented run command starts the application successfully.",
-        "verification_method": "runtime_smoke",
-    }
-
-    plan = plan_acceptance_verifier(criterion)
-
-    assert plan["criterion_id"] == "AC-RUNTIME"
-    assert plan["verifier_type"] == "runtime_start"
-    assert "documented run command" in plan["required_fixtures"]
-    assert plan["actions"] == ["start application", "probe observable endpoint or page", "stop owned process"]
-    assert plan["execution_status"] == "not_executed"
-
-
-def test_responsive_tablet_criterion_plans_responsive_ui():
-    criterion = {
-        "id": "AC-RESPONSIVE",
-        "title": "The application layout remains usable on desktop and tablet viewport sizes.",
-        "description": "Core screens and controls remain readable and usable on ordinary desktop and tablet viewport sizes.",
-        "expected_result": "The UI remains usable on desktop and tablet widths without hiding required actions.",
-    }
-
-    plan = plan_acceptance_verifier(criterion)
-
-    assert plan["criterion_id"] == "AC-RESPONSIVE"
-    assert plan["verifier_type"] == "responsive_ui"
-    assert plan["required_fixtures"] == ["desktop viewport size", "tablet viewport size", "core screen route or page"]
-    assert plan["actions"] == ["render core screen at desktop width", "render core screen at tablet width"]
-    assert "required controls remain visible" in plan["assertions"]
-    assert plan["execution_status"] == "not_executed"
-
-
-def test_unsupported_and_incomplete_criteria_do_not_get_fake_plans():
-    unknown = {
-        "id": "AC-UNKNOWN",
-        "title": "The product feels delightful to users.",
-        "description": "Subjective acceptance with no observable local outcome.",
-        "expected_result": "Users feel delighted.",
-    }
-    incomplete = {"id": "AC-INCOMPLETE", "title": "Works"}
-
-    unknown_plan = plan_acceptance_verifier(unknown)
-    incomplete_plan = plan_acceptance_verifier(incomplete)
-
-    for plan, criterion_id in ((unknown_plan, "AC-UNKNOWN"), (incomplete_plan, "AC-INCOMPLETE")):
-        assert plan["criterion_id"] == criterion_id
-        assert plan["verifier_type"] == "manual_or_unsupported"
-        assert plan["setup"] == []
-        assert plan["required_fixtures"] == []
-        assert plan["actions"] == []
-        assert plan["assertions"] == []
-        assert plan["observable_expected_outcomes"] == []
-        assert plan["execution_status"] == "not_executed"
-
-
-def test_generated_acceptance_criteria_include_non_executed_verifier_plans():
-    project = _project("Planner Demo", "After creation, the new request appears in the common request list.")
-
-    bundle = ensure_project_spec_bundle(project)
-
-    planned = [criterion for criterion in bundle["acceptance_criteria"] if criterion.get("verifier_plan")]
-    assert planned
-    assert all(criterion["status"] == "pending" for criterion in planned)
-    assert all(criterion["verifier_plan"]["execution_status"] == "not_executed" for criterion in planned)
-
-
-@pytest.mark.parametrize(
-    ("criterion", "expected_type"),
-    [
-        (
-            {"id": "AC-FILE", "title": "Project has delivery documentation", "description": "Root documentation explains installation, run, and test commands.", "expected_result": "README.md exists.", "verification_method": "file_check"},
-            "file_artifact",
-        ),
-        (
-            {"id": "AC-COMMAND", "title": "Frontend production build succeeds", "description": "Frontend builds in production mode.", "expected_result": "npm run build exits with code 0.", "verification_method": "command"},
-            "command",
-        ),
-        (
-            {"id": "AC-IMPORT", "title": "FastAPI application imports", "description": "FastAPI app module imports successfully.", "expected_result": "Expected ASGI app can be imported.", "verification_method": "python_import"},
-            "python_import",
-        ),
-        (
-            {"id": "AC-HTTP", "title": "The home page displays current request summary counts.", "description": "The application shows request counts.", "expected_result": "Summary counters reflect current data."},
-            "http_single",
-        ),
-    ],
-)
-def test_remaining_supported_verifier_plan_types_are_planned_not_executed(criterion, expected_type):
-    plan = plan_acceptance_verifier(criterion)
-
-    assert plan["criterion_id"] == criterion["id"]
-    assert plan["verifier_type"] == expected_type
-    assert plan["required_fixtures"]
-    assert plan["observable_expected_outcomes"]
-    assert plan["execution_status"] == "not_executed"
 
 
 def test_requirement_graph_fields_are_serializable():
@@ -638,42 +403,6 @@ def test_file_based_static_and_vite_detection(tmp_path: Path):
     assert "static_website" in bundle["project_profiles"]
 
 
-def test_fastapi_profile_detected_from_strong_file_evidence(tmp_path: Path):
-    (tmp_path / "requirements.txt").write_text("fastapi\nuvicorn\n", encoding="utf-8")
-    (tmp_path / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
-
-    profiles = detect_project_profiles(project_path=str(tmp_path), text="Build a local request tracker.")
-
-    assert "fastapi" in profiles
-    assert "python_application" in profiles
-
-
-def test_generic_python_script_is_not_fastapi(tmp_path: Path):
-    (tmp_path / "main.py").write_text("print('hello')\n", encoding="utf-8")
-
-    profiles = detect_project_profiles(project_path=str(tmp_path), text="Build a generic Python script.")
-
-    assert "python_application" in profiles
-    assert "fastapi" not in profiles
-
-
-def test_static_web_project_detected_from_files(tmp_path: Path):
-    (tmp_path / "index.html").write_text("<!doctype html><h1>Site</h1>", encoding="utf-8")
-
-    profiles = detect_project_profiles(project_path=str(tmp_path), text="Build a local site.")
-
-    assert "static_website" in profiles
-
-
-def test_weak_fastapi_mentions_do_not_create_fastapi_profile(tmp_path: Path):
-    (tmp_path / "README.md").write_text("This project is not a FastAPI application.", encoding="utf-8")
-    (tmp_path / "main.py").write_text("print('no framework')\n", encoding="utf-8")
-
-    profiles = detect_project_profiles(project_path=str(tmp_path), text="Build a tool without FastAPI.")
-
-    assert "fastapi" not in profiles
-
-
 def test_acceptance_evidence_is_structured_and_json_serializable():
     project = _project("Evidence Demo", "Build a simple FastAPI app.")
     ensure_project_spec_bundle(project)
@@ -686,10 +415,10 @@ def test_acceptance_evidence_is_structured_and_json_serializable():
         {
             "source": "unit_test",
             "method": "command",
-            "command": "python -c \"from pathlib import Path; assert Path('README.md').exists()\"",
+            "command": "python -m pytest -q",
             "exit_code": 0,
-            "summary": "README existence check passed.",
-            "artifacts": ["acceptance-readme-check.log"],
+            "summary": "Focused tests passed.",
+            "artifacts": ["pytest.log"],
             "legacy_detail": "preserved",
         },
     )
@@ -703,35 +432,6 @@ def test_acceptance_evidence_is_structured_and_json_serializable():
     assert json.loads(json.dumps(evidence))["status"] == "passed"
 
 
-def test_acceptance_evidence_execution_contract_fields_are_recorded():
-    project = _project("Contract Demo", "Build a simple FastAPI app.")
-    ensure_project_spec_bundle(project)
-    criterion_id = project["acceptance_criteria"][0]["id"]
-
-    record_acceptance_evidence(
-        project,
-        criterion_id,
-        "passed",
-        {
-            "source": "unit_test",
-            "method": "command",
-            "setup_steps": ["Create fixture project"],
-            "action_steps": ["Run focused criterion check"],
-            "assertions": ["README.md exists"],
-            "collected_evidence": {"path": "README.md", "exists": True},
-        },
-    )
-
-    evidence = project["acceptance_criteria"][0]["evidence"][-1]
-    assert all(field in evidence for field in ACCEPTANCE_CONTRACT_FIELDS)
-    assert evidence["verifier_type"] == "command"
-    assert evidence["verdict"] == "passed"
-    assert evidence["failure_reason"] == ""
-    assert evidence["collected_evidence"] == {"path": "README.md", "exists": True}
-    assert evidence["verdict"] in ACCEPTANCE_VERDICTS
-    assert acceptance_evidence_is_direct(evidence, criterion_id) is True
-
-
 def test_passed_acceptance_evidence_requires_evidence():
     project = _project("Evidence Demo", "Build a simple FastAPI app.")
     ensure_project_spec_bundle(project)
@@ -739,44 +439,6 @@ def test_passed_acceptance_evidence_requires_evidence():
 
     with pytest.raises(ValueError, match="requires"):
         record_acceptance_evidence(project, criterion_id, "passed", {})
-
-
-def test_passed_acceptance_evidence_rejects_global_qa_and_keyword_only_payloads():
-    project = _project("Evidence Demo", "Build a simple FastAPI app.")
-    ensure_project_spec_bundle(project)
-    criterion_id = project["acceptance_criteria"][0]["id"]
-
-    with pytest.raises(ValueError, match="direct criterion-specific"):
-        record_acceptance_evidence(
-            project,
-            criterion_id,
-            "passed",
-            {"source": "qa_engine", "method": "global_qa", "summary": "Global QA passed", "qa_success": True},
-        )
-
-    with pytest.raises(ValueError, match="direct criterion-specific"):
-        record_acceptance_evidence(
-            project,
-            criterion_id,
-            "passed",
-            {"source": "pytest", "method": "global_pytest", "summary": "python -m pytest -q passed", "command": "python -m pytest -q", "exit_code": 0},
-        )
-
-    with pytest.raises(ValueError, match="direct criterion-specific"):
-        record_acceptance_evidence(
-            project,
-            criterion_id,
-            "passed",
-            {"source": "unit_test", "method": "command", "summary": "All tests passed", "command": "python -m pytest -q", "exit_code": 0},
-        )
-
-    with pytest.raises(ValueError, match="direct criterion-specific"):
-        record_acceptance_evidence(
-            project,
-            criterion_id,
-            "passed",
-            {"source": "qa_engine", "method": "keyword_presence", "summary": "Keyword appeared in generated files."},
-        )
 
 
 def test_failed_acceptance_evidence_can_record_empty_legacy_payload():

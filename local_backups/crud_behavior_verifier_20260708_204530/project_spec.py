@@ -1223,17 +1223,6 @@ def plan_acceptance_verifier(criterion: dict[str, Any]) -> dict[str, Any]:
     if _criterion_is_incomplete(criterion, semantic_text):
         return _manual_verifier_plan(criterion_id)
 
-    if any(token in lower for token in ("persist", "restart", "stopped and started", "after restart", "data remains")):
-        return _plan(
-            criterion_id,
-            "persistence_restart",
-            ["start application with persistent storage"],
-            ["request or record payload with a unique identifier", "documented restart command or runtime adapter"],
-            ["create record", "stop application", "restart application", "retrieve or list records"],
-            ["record exists before restart", "same record is observable after restart"],
-            ["post-restart read response contains the pre-restart identifier and data"],
-        )
-
     if ("after creation" in lower and "list" in lower) or ("new request" in lower and "appears" in lower and "list" in lower):
         return _plan(
             criterion_id,
@@ -1243,50 +1232,6 @@ def plan_acceptance_verifier(criterion: dict[str, Any]) -> dict[str, Any]:
             ["create request", "list requests"],
             ["create succeeds", "created identifier appears in list"],
             ["create response reports success and returns or preserves the created identifier", "list response contains the created request"],
-        )
-
-    if "search" in lower and any(token in lower for token in ("request", "ticket", "record", "item", "client", "contact", "text")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["two request records with distinct searchable values"],
-            ["create target request", "create control request", "search requests"],
-            ["search succeeds", "target record appears", "control record is excluded"],
-            ["search response contains only records matching the search term"],
-        )
-
-    if "filter" in lower and any(token in lower for token in ("request", "ticket", "record", "item", "status", "priority")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["two request records with distinct filter values"],
-            ["create target request", "create control request", "filter requests"],
-            ["filter succeeds", "target record appears", "control record is excluded"],
-            ["filtered response contains only records matching the requested field value"],
-        )
-
-    if any(token in lower for token in ("delete", "remove")) and any(token in lower for token in ("request", "ticket", "record", "item")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["existing request record"],
-            ["create or seed request", "delete request", "read or list request"],
-            ["delete succeeds", "deleted record is no longer observable"],
-            ["post-delete read fails or list response excludes the deleted identifier and marker"],
-        )
-
-    if "status" in lower and any(token in lower for token in ("change", "update", "set", "поменять", "изменить")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["existing request record", "new status value"],
-            ["create or seed request", "change request status", "read request"],
-            ["status change succeeds", "changed status is observable after update"],
-            ["read response contains the changed status for the same request identifier"],
         )
 
     if any(token in lower for token in ("update", "change", "edit", "open an existing")) and any(token in lower for token in ("request", "ticket", "status", "data")):
@@ -1300,26 +1245,15 @@ def plan_acceptance_verifier(criterion: dict[str, Any]) -> dict[str, Any]:
             ["read response contains the changed values for the same request identifier"],
         )
 
-    if any(token in lower for token in ("read", "open", "view")) and any(token in lower for token in ("existing request", "existing ticket", "request", "ticket", "record", "item")):
+    if any(token in lower for token in ("persist", "restart", "stopped and started", "after restart", "data remains")):
         return _plan(
             criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["existing request record"],
-            ["create or seed request", "read request"],
-            ["read succeeds", "read response contains the same identifier or marker"],
-            ["read response returns the created record by its identifier"],
-        )
-
-    if "create" in lower and any(token in lower for token in ("request", "ticket", "record", "item")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["request payload with a unique client or request identifier"],
-            ["create request", "read or list request"],
-            ["create succeeds", "created identifier or marker is observable after create"],
-            ["created record can be retrieved or appears in the collection response"],
+            "persistence_restart",
+            ["start application with persistent storage"],
+            ["request or record payload with a unique identifier", "documented restart command or runtime adapter"],
+            ["create record", "stop application", "restart application", "retrieve or list records"],
+            ["record exists before restart", "same record is observable after restart"],
+            ["post-restart read response contains the pre-restart identifier and data"],
         )
 
     if any(token in lower for token in ("tablet", "responsive", "viewport", "desktop")):

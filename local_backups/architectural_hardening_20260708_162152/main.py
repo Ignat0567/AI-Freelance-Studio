@@ -169,7 +169,7 @@ def load_studio_keys():
 
 def save_studio_keys(data):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(data, f, indent=2)
 
 
 def _load_projects_state():
@@ -1898,9 +1898,9 @@ def _build_agent_context(project, sprint_plan=None, design_system=None, tdd_test
     """Build a context string from all preceding agent outputs."""
     parts = []
     if sprint_plan:
-        parts.append(f"=== SPRINT PLAN (by Alex/PM) ===\n{json.dumps(sprint_plan, indent=2, ensure_ascii=False)}")
+        parts.append(f"=== SPRINT PLAN (by Alex/PM) ===\n{json.dumps(sprint_plan, indent=2)}")
     if design_system:
-        parts.append(f"=== DESIGN SYSTEM (by Elena/Designer) ===\n{json.dumps(design_system, indent=2, ensure_ascii=False)}")
+        parts.append(f"=== DESIGN SYSTEM (by Elena/Designer) ===\n{json.dumps(design_system, indent=2)}")
     if tdd_tests:
         test_list = "\n".join([f"  - {t.get('filename','?')}: {t.get('description','')}" for t in tdd_tests])
         parts.append(f"=== TDD TEST FILES (by BugCatcher/QA) ===\n{test_list}")
@@ -4607,7 +4607,7 @@ def push_project_to_github(project_id: str):
         raise HTTPException(404, "Project not found")
 
     proj_data = {k: v for k, v in proj.items() if k != "_key"}
-    body = json.dumps(proj_data, indent=2, ensure_ascii=False).encode("utf-8")
+    body = json.dumps(proj_data, indent=2).encode("utf-8")
     file_name = f"projects/{project_id}.json"
     commit_msg = f"Update project {proj.get('title', project_id)}"
 
@@ -4674,8 +4674,8 @@ def export_project(project_id: str, fmt: str = Query("markdown", pattern="^(mark
         raise HTTPException(404, "Project not found")
 
     if fmt == "json":
-        content = json.dumps(proj, indent=2, ensure_ascii=False)
-        media_type = "application/json; charset=utf-8"
+        content = json.dumps(proj, indent=2)
+        media_type = "application/json"
         filename = f"{project_id}.json"
     else:
         lines = [
@@ -4702,7 +4702,7 @@ def export_project(project_id: str, fmt: str = Query("markdown", pattern="^(mark
         lines.append("---")
         lines.append(f"*Exported from AI Freelance Studio on {__import__('datetime').datetime.now().isoformat()}*")
         content = "\n".join(lines)
-        media_type = "text/markdown; charset=utf-8"
+        media_type = "text/markdown"
         filename = f"{project_id}.md"
 
     return PlainTextResponse(content, media_type=media_type, headers={

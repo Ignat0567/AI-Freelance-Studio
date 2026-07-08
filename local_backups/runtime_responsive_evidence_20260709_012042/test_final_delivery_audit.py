@@ -424,38 +424,6 @@ Open index.html.
     }
 
 
-def _responsive_static_project(tmp_path: Path, *, overflow: bool = False):
-    fixed_rule = ".shell { width: 1200px; overflow-x: scroll; }" if overflow else ".shell { max-width: 960px; width: 100%; }"
-    _write(tmp_path / "index.html", f"""<!doctype html>
-<html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1"><style>{fixed_rule}</style></head>
-<body>
-  <header><nav><a href="#home">Home</a><button>New request</button></nav></header>
-  <main class="shell" id="home"><form><input aria-label="Search"><button>Search</button></form></main>
-</body>
-</html>
-""")
-    _write(tmp_path / "README.md", "# Responsive Static\n\nInstall: none\n\nRun: python -m http.server 8000\n\nTest: inspect\n")
-    criterion = {
-        "id": "AC-RESPONSIVE",
-        "title": "The application layout remains usable on desktop and tablet viewport sizes.",
-        "description": "Core screens and controls remain readable and usable on ordinary desktop and tablet viewport sizes.",
-        "expected_result": "The UI remains usable on desktop and tablet widths without hiding required actions.",
-        "priority": "high",
-        "verification_method": "feature_trace_static_or_smoke",
-        "evidence": [],
-    }
-    project = {
-        "title": "Responsive Static",
-        "description": "Build a static website that works on desktop and tablet.",
-        "project_profiles": ["static_website"],
-        "project_spec": {"project_profiles": ["static_website"], "project_type": "static_website", "delivery_artifacts": ["README.md", "index.html"]},
-        "acceptance_criteria": [criterion],
-        "logs": [],
-    }
-    return project, criterion
-
-
 def _react_vite_fixture(tmp_path: Path):
     server_js = """const http = require('http');
 const port = Number(process.env.PORT || 4173);
@@ -999,70 +967,6 @@ def test_runtime_smoke_not_applicable_does_not_pass_mandatory_acceptance(tmp_pat
     assert evidence["runtime_status"] == "not_applicable"
 
 
-def test_runtime_start_feature_records_real_startup_evidence(tmp_path):
-    project = _fastapi_project(tmp_path)
-    criterion = {
-        "id": "AC-RUNTIME-START",
-        "title": "The application starts successfully with the documented run command.",
-        "description": "The delivered application can be started locally using the documented command.",
-        "expected_result": "The documented run command starts the application successfully.",
-        "priority": "high",
-        "verification_method": "feature_trace_static_or_smoke",
-        "evidence": [],
-    }
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": False}, [])
-
-    assert evidence["status"] == "passed"
-    assert evidence["verifier_type"] == "runtime_start"
-    assert evidence["started"] is True
-    assert evidence["verified"] is True
-    assert evidence["stopped_cleanly"] is True
-    assert evidence["response_status"] == 200
-    assert evidence["collected_evidence"]["owned_process_only"] is True
-
-
-def test_responsive_ui_static_profile_passes_lightweight_assertions(tmp_path):
-    project, criterion = _responsive_static_project(tmp_path)
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": False}, [])
-
-    assert evidence["status"] == "passed"
-    assert evidence["verifier_type"] == "responsive_ui"
-    assert evidence["desktop"]["primary_page_renders"] is True
-    assert evidence["desktop"]["primary_navigation_or_control_area_exists"] is True
-    assert evidence["tablet"]["primary_controls_reachable"] is True
-    assert evidence["tablet"]["catastrophic_horizontal_overflow"] is False
-
-
-def test_responsive_ui_unsupported_profile_is_not_verified(tmp_path):
-    criterion = {
-        "id": "AC-RESPONSIVE-UNSUPPORTED",
-        "title": "The application layout remains usable on desktop and tablet viewport sizes.",
-        "priority": "high",
-        "verification_method": "feature_trace_static_or_smoke",
-        "evidence": [],
-    }
-    project = _project_with_custom_acceptance(tmp_path, criterion)
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
-
-    assert evidence["status"] == "not_verified"
-    assert evidence["verdict"] == "not_executed"
-    assert "Unsupported UI stack" in evidence["failure_reason"]
-
-
-def test_responsive_ui_fails_catastrophic_tablet_overflow(tmp_path):
-    project, criterion = _responsive_static_project(tmp_path, overflow=True)
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
-
-    assert evidence["status"] == "failed"
-    assert evidence["verdict"] == "failed"
-    assert evidence["tablet"]["catastrophic_horizontal_overflow"] is True
-    assert "overflow" in evidence["failure_reason"]
-
-
 def test_mandatory_feature_cannot_pass_from_global_qa_alone(tmp_path):
     project = _fastapi_project(tmp_path)
     feature = next(c for c in project["acceptance_criteria"] if c["verification_method"] == "feature_trace_static_or_smoke")
@@ -1143,8 +1047,6 @@ def test_acceptance_verifier_registry_contains_initial_methods():
         "command",
         "python_import",
         "runtime_smoke",
-        "runtime_start",
-        "responsive_ui",
         "static_asset_check",
         "secret_scan",
         "file_and_secret_check",

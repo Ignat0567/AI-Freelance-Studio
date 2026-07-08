@@ -1,0 +1,202 @@
+{
+  "project_name": "Test-Project",
+  "project_type": "generic",
+  "detected_profiles": [
+    "generic"
+  ],
+  "implementation_summary": "Generated project at E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project",
+  "acceptance_criteria_summary": [
+    {
+      "id": "AC-001",
+      "title": "Project has delivery documentation",
+      "priority": "high",
+      "status": "passed"
+    },
+    {
+      "id": "AC-002",
+      "title": "Project has no placeholder implementation",
+      "priority": "high",
+      "status": "passed"
+    },
+    {
+      "id": "AC-003",
+      "title": "Feature: иметь возможность создать новую заявку клиента",
+      "priority": "high",
+      "status": "passed"
+    },
+    {
+      "id": "AC-004",
+      "title": "Feature: сохранить",
+      "priority": "high",
+      "status": "passed"
+    },
+    {
+      "id": "AC-005",
+      "title": "Feature: появляться в общем списке",
+      "priority": "high",
+      "status": "failed"
+    },
+    {
+      "id": "AC-006",
+      "title": "Feature: иметь возможность",
+      "priority": "high",
+      "status": "failed"
+    },
+    {
+      "id": "AC-007",
+      "title": "Feature: нормально работать на обычном компьютере и на планшете",
+      "priority": "high",
+      "status": "failed"
+    },
+    {
+      "id": "AC-008",
+      "title": "Feature: реально запускаться",
+      "priority": "high",
+      "status": "failed"
+    },
+    {
+      "id": "AC-009",
+      "title": "Feature: быть инструкция, как установить и запустить проект на Windows",
+      "priority": "high",
+      "status": "passed"
+    },
+    {
+      "id": "AC-010",
+      "title": "Credentials are documented safely",
+      "priority": "critical",
+      "status": "passed"
+    }
+  ],
+  "mandatory_criteria_passed": false,
+  "optional_criteria_failed": [],
+  "commands_executed": [
+    {
+      "command": "C:\\Users\\aksen\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe -m pip install -r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt",
+      "working_directory": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project",
+      "exit_code": 0,
+      "stdout": "Defaulting to user installation because normal site-packages is not writeable\nRequirement already satisfied: fastapi in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from -r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 1)) (0.115.6)\nRequirement already satisfied: httpx in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from -r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 2)) (0.28.1)\nRequirement already satisfied: pydantic in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from -r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 3)) (2.9.0)\nRequirement already satisfied: pytest in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from -r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 4)) (8.3.4)\nRequirement already satisfied: python-dotenv in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from -r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 5)) (1.0.1)\nRequirement already satisfied: uvicorn in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from -r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 6)) (0.34.0)\nRequirement already satisfied: starlette<0.42.0,>=0.40.0 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from fastapi->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 1)) (0.41.3)\nRequirement already satisfied: typing-extensions>=4.8.0 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from fastapi->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 1)) (4.15.0)\nRequirement already satisfied: annotated-types>=0.4.0 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from pydantic->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 3)) (0.6.0)\nRequirement already satisfied: pydantic-core==2.23.2 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from pydantic->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 3)) (2.23.2)\nRequirement already satisfied: tzdata in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from pydantic->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 3)) (2025.3)\nRequirement already satisfied: anyio<5,>=3.4.0 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from starlette<0.42.0,>=0.40.0->fastapi->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 1)) (4.13.0)\nRequirement already satisfied: idna>=2.8 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from anyio<5,>=3.4.0->starlette<0.42.0,>=0.40.0->fastapi->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 1)) (3.6)\nRequirement already satisfied: certifi in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from httpx->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 2)) (2023.11.17)\nRequirement already satisfied: httpcore==1.* in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from httpx->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 2)) (1.0.2)\nRequirement already satisfied: h11<0.15,>=0.13 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from httpcore==1.*->httpx->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 2)) (0.14.0)\nRequirement already satisfied: colorama in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from pytest->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 4)) (0.4.6)\nRequirement already satisfied: iniconfig in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from pytest->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 4)) (2.3.0)\nRequirement already satisfied: packaging in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from pytest->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 4)) (26.2)\nRequirement already satisfied: pluggy<2,>=1.5 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from pytest->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 4)) (1.6.0)\nRequirement already satisfied: click>=7.0 in C:\\Users\\aksen\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages (from uvicorn->-r E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project\\requirements.txt (line 6)) (8.1.8)\n",
+      "stderr": "",
+      "duration": 4.384
+    },
+    {
+      "command": "C:\\Users\\aksen\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe -m pytest -q",
+      "working_directory": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project",
+      "exit_code": 0,
+      "stdout": "............                                                             [100%]\n12 passed in 0.58s\n",
+      "stderr": "",
+      "duration": 0.873
+    }
+  ],
+  "test_results": {
+    "latest_full_qa_passed": true,
+    "rounds": 1,
+    "errors": []
+  },
+  "runtime_verification": {
+    "status": "not_applicable",
+    "reason": "No FastAPI profile"
+  },
+  "installation_instructions": "Document exact dependency installation in README.md",
+  "run_instructions": "Document exact run command in README.md",
+  "credentials_still_required": [],
+  "known_limitations": [
+    "Project depends on external credentials that cannot be validated without user input"
+  ],
+  "checks": [
+    {
+      "name": "required_files",
+      "status": "passed",
+      "evidence": {
+        "required": [
+          "README.md",
+          ".env.example",
+          ".gitignore"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "readme_instructions",
+      "status": "passed",
+      "evidence": {
+        "missing_sections": []
+      }
+    },
+    {
+      "name": "secret_scan",
+      "status": "passed",
+      "evidence": {
+        "files_with_secret_like_values": []
+      }
+    },
+    {
+      "name": "todo_scan",
+      "status": "passed",
+      "evidence": {
+        "files_with_blocking_todos": []
+      }
+    },
+    {
+      "name": "latest_full_qa",
+      "status": "passed",
+      "evidence": {
+        "rounds_completed": 1,
+        "total_errors": 0
+      }
+    },
+    {
+      "name": "regression_status",
+      "status": "passed",
+      "evidence": {
+        "unresolved_regressions": []
+      }
+    },
+    {
+      "name": "runtime_smoke",
+      "status": "passed",
+      "evidence": {
+        "status": "not_applicable",
+        "reason": "No FastAPI profile"
+      }
+    },
+    {
+      "name": "active_operations",
+      "status": "passed",
+      "evidence": {
+        "active": []
+      }
+    },
+    {
+      "name": "acceptance_criteria",
+      "status": "failed",
+      "evidence": {
+        "failed_mandatory": [
+          "AC-005",
+          "AC-006",
+          "AC-007",
+          "AC-008"
+        ]
+      }
+    },
+    {
+      "name": "credential_status",
+      "status": "passed",
+      "evidence": {
+        "required_credentials": [
+          {
+            "name": "SMTP_PASSWORD",
+            "description": "SMTP credentials",
+            "required": "true"
+          }
+        ]
+      }
+    }
+  ],
+  "status": "failed",
+  "legend": {
+    "verified": "passed",
+    "not_verified": "failed",
+    "blocked_by_credentials": "blocked",
+    "optional_limitation": "optional failed/non-critical"
+  }
+}

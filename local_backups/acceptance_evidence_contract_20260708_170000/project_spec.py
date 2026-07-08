@@ -9,13 +9,6 @@ from typing import Any
 ACCEPTANCE_EVIDENCE_FIELDS = (
     "criterion_id",
     "verifier",
-    "verifier_type",
-    "setup_steps",
-    "action_steps",
-    "assertions",
-    "collected_evidence",
-    "verdict",
-    "failure_reason",
     "method",
     "command",
     "exit_code",
@@ -25,49 +18,6 @@ ACCEPTANCE_EVIDENCE_FIELDS = (
     "artifacts",
 )
 ACCEPTANCE_EVIDENCE_HISTORY_KEY = "acceptance_evidence"
-ACCEPTANCE_CONTRACT_FIELDS = (
-    "criterion_id",
-    "verifier_type",
-    "setup_steps",
-    "action_steps",
-    "assertions",
-    "collected_evidence",
-    "verdict",
-    "failure_reason",
-    "timestamp",
-)
-ACCEPTANCE_VERDICTS = ("passed", "failed", "blocked", "not_executed")
-VERIFIER_PLAN_TYPES = (
-    "file_artifact",
-    "command",
-    "python_import",
-    "http_single",
-    "http_sequence",
-    "persistence_restart",
-    "runtime_start",
-    "responsive_ui",
-    "manual_or_unsupported",
-)
-VERIFIER_PLAN_FIELDS = (
-    "criterion_id",
-    "verifier_type",
-    "setup",
-    "required_fixtures",
-    "actions",
-    "assertions",
-    "observable_expected_outcomes",
-    "execution_status",
-)
-GLOBAL_ACCEPTANCE_EVIDENCE_TYPES = {
-    "build_and_tests",
-    "full_qa",
-    "global_pytest",
-    "global_qa",
-    "latest_full_qa",
-    "pytest",
-    "qa_result",
-    "qa_summary",
-}
 ISSUE_FIELDS = (
     "id",
     "source",
@@ -188,212 +138,23 @@ def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-@dataclass
-class AcceptanceEvidenceExecutionContract:
-    criterion_id: str
-    verifier_type: str
-    setup_steps: list[str] = field(default_factory=list)
-    action_steps: list[str] = field(default_factory=list)
-    assertions: list[str] = field(default_factory=list)
-    collected_evidence: dict[str, Any] = field(default_factory=dict)
-    verdict: str = "not_executed"
-    failure_reason: str = ""
-    timestamp: str = field(default_factory=_utc_timestamp)
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["verdict"] = _normalize_acceptance_verdict(data.get("verdict"))
-        return data
-
-
-@dataclass
-class AcceptanceVerifierPlan:
-    criterion_id: str
-    verifier_type: str
-    setup: list[str] = field(default_factory=list)
-    required_fixtures: list[str] = field(default_factory=list)
-    actions: list[str] = field(default_factory=list)
-    assertions: list[str] = field(default_factory=list)
-    observable_expected_outcomes: list[str] = field(default_factory=list)
-    execution_status: str = "not_executed"
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        if data["verifier_type"] not in VERIFIER_PLAN_TYPES:
-            data["verifier_type"] = "manual_or_unsupported"
-        data["execution_status"] = "not_executed"
-        return {field_name: data[field_name] for field_name in VERIFIER_PLAN_FIELDS}
-
-
-def _as_text_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if str(item).strip()]
-    if isinstance(value, tuple):
-        return [str(item) for item in value if str(item).strip()]
-    text = str(value).strip()
-    return [text] if text else []
-
-
-def _normalize_acceptance_verdict(verdict: Any, status: Any = None) -> str:
-    raw = str(verdict or "").strip().lower()
-    if raw in ACCEPTANCE_VERDICTS:
-        return raw
-    raw_status = str(status or "").strip().lower()
-    if raw_status in ("pass", "passed"):
-        return "passed"
-    if raw_status in ("fail", "failed", "optional_fail"):
-        return "failed"
-    if raw_status in ("block", "blocked", "blocked_by_credentials"):
-        return "blocked"
-    return "not_executed"
-
-
-def _status_from_verdict(verdict: str, raw_status: Any) -> str:
-    status = str(raw_status or "").strip().lower()
-    if verdict == "passed":
-        return "passed"
-    if verdict == "failed":
-        return status if status in ("failed", "optional_fail") else "failed"
-    if verdict == "blocked":
-        return status if status in ("blocked", "blocked_by_credentials") else "blocked"
-    return status if status and status not in ("pass", "passed", "fail", "failed", "blocked") else "not_verified"
-
-
-def _acceptance_verifier_type(source: dict[str, Any]) -> str:
-    return str(
-        source.get("verifier_type")
-        or source.get("method")
-        or source.get("verification_method")
-        or source.get("verifier")
-        or source.get("source")
-        or "unknown"
-    ).strip() or "unknown"
-
-
-def _is_global_pytest_command(value: Any) -> bool:
-    if isinstance(value, (list, tuple)):
-        text = " ".join(str(part) for part in value)
-    else:
-        text = str(value or "")
-    lower = re.sub(r"\s+", " ", text.strip().lower())
-    if "pytest" not in lower:
-        return False
-    tokens = lower.split()
-    ignored = {"-m", "pytest", "-q", "--quiet", "--disable-warnings"}
-    meaningful = []
-    for token in tokens:
-        if token.startswith("python"):
-            continue
-        if token in ignored or token.startswith("--maxfail="):
-            continue
-        meaningful.append(token)
-    return not meaningful
-
-
-def _collected_acceptance_evidence(source: dict[str, Any]) -> dict[str, Any]:
-    raw = source.get("collected_evidence")
-    if isinstance(raw, dict):
-        collected = dict(raw)
-    elif raw in (None, "", [], {}):
-        collected = {}
-    else:
-        collected = {"value": raw}
-
-    reserved = set(ACCEPTANCE_CONTRACT_FIELDS) | {
-        "verifier",
-        "source",
-        "method",
-        "verification_method",
-        "status",
-        "timestamp",
-    }
-    for key, value in source.items():
-        if key in reserved:
-            continue
-        if value in (None, "", [], {}):
-            continue
-        collected.setdefault(key, value)
-    return collected
-
-
-def acceptance_evidence_is_direct(evidence: dict[str, Any] | None, criterion_id: str | None = None) -> bool:
-    if not isinstance(evidence, dict):
-        return False
-    if criterion_id is not None and str(evidence.get("criterion_id") or "") != str(criterion_id):
-        return False
-
-    verdict = _normalize_acceptance_verdict(evidence.get("verdict"), evidence.get("status"))
-    status = str(evidence.get("status") or "").lower()
-    if verdict == "not_executed" or status in ("not_applicable", "not_verified"):
-        return False
-
-    verifier_type = _acceptance_verifier_type(evidence).lower()
-    if verifier_type in GLOBAL_ACCEPTANCE_EVIDENCE_TYPES:
-        return False
-    if any(marker in verifier_type for marker in ("keyword", "text_presence")):
-        return False
-    if "qa_success" in evidence or "qa_success" in (evidence.get("collected_evidence") or {}):
-        return False
-
-    collected = evidence.get("collected_evidence")
-    if not isinstance(collected, dict):
-        collected = _collected_acceptance_evidence(evidence)
-    if "qa_success" in collected:
-        return False
-    if _is_global_pytest_command(evidence.get("command") or collected.get("command")):
-        return False
-
-    has_strategy = bool(verifier_type and verifier_type != "unknown")
-    has_observation = bool(
-        collected
-        or evidence.get("command")
-        or evidence.get("exit_code") is not None
-        or evidence.get("artifacts")
-        or evidence.get("traceback_tail")
-    )
-    return has_strategy and has_observation
-
-
 def normalize_acceptance_evidence(criterion_id: str, status: str, evidence: dict[str, Any] | None) -> dict[str, Any]:
     source = dict(evidence or {})
-    raw_status = source.get("status", status)
-    verdict = _normalize_acceptance_verdict(source.get("verdict"), raw_status)
-    normalized_status = _status_from_verdict(verdict, raw_status)
-    verifier_type = _acceptance_verifier_type(source)
-    collected_evidence = _collected_acceptance_evidence(source)
-    action_steps = _as_text_list(source.get("action_steps"))
-    if not action_steps and source.get("command"):
-        action_steps = [str(source.get("command"))]
-    assertions = _as_text_list(source.get("assertions"))
-    if not assertions and source.get("summary"):
-        assertions = [str(source.get("summary"))]
-    failure_reason = str(source.get("failure_reason") or "")
-    if not failure_reason and verdict in ("failed", "blocked"):
-        failure_reason = str(source.get("summary") or "")
     normalized = {
         "criterion_id": source.get("criterion_id", criterion_id),
         "verifier": source.get("verifier", source.get("source", "unknown")),
-        "verifier_type": verifier_type,
-        "setup_steps": _as_text_list(source.get("setup_steps")),
-        "action_steps": action_steps,
-        "assertions": assertions,
-        "collected_evidence": collected_evidence,
-        "verdict": verdict,
-        "failure_reason": failure_reason,
         "method": source.get("method", source.get("verification_method", "")),
         "command": source.get("command"),
         "exit_code": source.get("exit_code"),
-        "status": normalized_status,
+        "status": source.get("status", status),
         "timestamp": source.get("timestamp", _utc_timestamp()),
         "summary": source.get("summary", ""),
         "artifacts": source.get("artifacts", []),
     }
     for key, value in source.items():
         normalized.setdefault(key, value)
-    if normalized["verdict"] == "passed" and not acceptance_evidence_is_direct(normalized, str(normalized["criterion_id"])):
-        raise ValueError("Passed acceptance evidence requires direct criterion-specific evidence")
+    if str(normalized["status"]).lower() in ("pass", "passed") and not _has_acceptance_evidence(normalized):
+        raise ValueError("Passed acceptance evidence requires a summary, command, exit code, or artifacts")
     return normalized
 
 
@@ -1165,237 +926,11 @@ def _acceptance_statement(requirement_text: str) -> dict[str, str]:
     }
 
 
-def _criterion_semantic_text(criterion: dict[str, Any]) -> str:
-    parts = [
-        criterion.get("title", ""),
-        criterion.get("description", ""),
-        criterion.get("expected_result", ""),
-        criterion.get("trace", ""),
-    ]
-    return "\n".join(str(part) for part in parts if str(part).strip())
-
-
-def _manual_verifier_plan(criterion_id: str) -> dict[str, Any]:
-    return AcceptanceVerifierPlan(criterion_id=criterion_id, verifier_type="manual_or_unsupported").to_dict()
-
-
-def _semantic_tokens(text: str) -> list[str]:
-    return re.findall(r"[A-Za-z0-9_]+", text.lower())
-
-
-def _criterion_is_incomplete(criterion: dict[str, Any], semantic_text: str) -> bool:
-    if not str(criterion.get("id") or "").strip():
-        return True
-    if not semantic_text.strip():
-        return True
-    tokens = _semantic_tokens(semantic_text)
-    if len(tokens) < 4:
-        return True
-    vague = {"good", "nice", "better", "modern", "works", "done", "complete", "fast", "secure", "robust"}
-    return bool(tokens) and set(tokens).issubset(vague)
-
-
-def _plan(
-    criterion_id: str,
-    verifier_type: str,
-    setup: list[str],
-    required_fixtures: list[str],
-    actions: list[str],
-    assertions: list[str],
-    observable_expected_outcomes: list[str],
-) -> dict[str, Any]:
-    return AcceptanceVerifierPlan(
-        criterion_id=criterion_id,
-        verifier_type=verifier_type,
-        setup=setup,
-        required_fixtures=required_fixtures,
-        actions=actions,
-        assertions=assertions,
-        observable_expected_outcomes=observable_expected_outcomes,
-    ).to_dict()
-
-
-def plan_acceptance_verifier(criterion: dict[str, Any]) -> dict[str, Any]:
-    criterion_id = str(criterion.get("id") or "").strip()
-    semantic_text = _criterion_semantic_text(criterion)
-    lower = semantic_text.lower()
-    method = str(criterion.get("verification_method") or "").strip()
-    if _criterion_is_incomplete(criterion, semantic_text):
-        return _manual_verifier_plan(criterion_id)
-
-    if any(token in lower for token in ("persist", "restart", "stopped and started", "after restart", "data remains")):
-        return _plan(
-            criterion_id,
-            "persistence_restart",
-            ["start application with persistent storage"],
-            ["request or record payload with a unique identifier", "documented restart command or runtime adapter"],
-            ["create record", "stop application", "restart application", "retrieve or list records"],
-            ["record exists before restart", "same record is observable after restart"],
-            ["post-restart read response contains the pre-restart identifier and data"],
-        )
-
-    if ("after creation" in lower and "list" in lower) or ("new request" in lower and "appears" in lower and "list" in lower):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["request payload with a unique client or request identifier"],
-            ["create request", "list requests"],
-            ["create succeeds", "created identifier appears in list"],
-            ["create response reports success and returns or preserves the created identifier", "list response contains the created request"],
-        )
-
-    if "search" in lower and any(token in lower for token in ("request", "ticket", "record", "item", "client", "contact", "text")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["two request records with distinct searchable values"],
-            ["create target request", "create control request", "search requests"],
-            ["search succeeds", "target record appears", "control record is excluded"],
-            ["search response contains only records matching the search term"],
-        )
-
-    if "filter" in lower and any(token in lower for token in ("request", "ticket", "record", "item", "status", "priority")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["two request records with distinct filter values"],
-            ["create target request", "create control request", "filter requests"],
-            ["filter succeeds", "target record appears", "control record is excluded"],
-            ["filtered response contains only records matching the requested field value"],
-        )
-
-    if any(token in lower for token in ("delete", "remove")) and any(token in lower for token in ("request", "ticket", "record", "item")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["existing request record"],
-            ["create or seed request", "delete request", "read or list request"],
-            ["delete succeeds", "deleted record is no longer observable"],
-            ["post-delete read fails or list response excludes the deleted identifier and marker"],
-        )
-
-    if "status" in lower and any(token in lower for token in ("change", "update", "set", "поменять", "изменить")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["existing request record", "new status value"],
-            ["create or seed request", "change request status", "read request"],
-            ["status change succeeds", "changed status is observable after update"],
-            ["read response contains the changed status for the same request identifier"],
-        )
-
-    if any(token in lower for token in ("update", "change", "edit", "open an existing")) and any(token in lower for token in ("request", "ticket", "status", "data")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["existing request record", "updated request values"],
-            ["create or seed request", "update request", "fetch or list request"],
-            ["update succeeds", "updated fields or status are observable after update"],
-            ["read response contains the changed values for the same request identifier"],
-        )
-
-    if any(token in lower for token in ("read", "open", "view")) and any(token in lower for token in ("existing request", "existing ticket", "request", "ticket", "record", "item")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["existing request record"],
-            ["create or seed request", "read request"],
-            ["read succeeds", "read response contains the same identifier or marker"],
-            ["read response returns the created record by its identifier"],
-        )
-
-    if "create" in lower and any(token in lower for token in ("request", "ticket", "record", "item")):
-        return _plan(
-            criterion_id,
-            "http_sequence",
-            ["start application"],
-            ["request payload with a unique client or request identifier"],
-            ["create request", "read or list request"],
-            ["create succeeds", "created identifier or marker is observable after create"],
-            ["created record can be retrieved or appears in the collection response"],
-        )
-
-    if any(token in lower for token in ("tablet", "responsive", "viewport", "desktop")):
-        return _plan(
-            criterion_id,
-            "responsive_ui",
-            ["start application", "open the primary user interface"],
-            ["desktop viewport size", "tablet viewport size", "core screen route or page"],
-            ["render core screen at desktop width", "render core screen at tablet width"],
-            ["required controls remain visible", "primary workflow remains usable without hidden required actions"],
-            ["desktop and tablet captures expose the required controls and content"],
-        )
-
-    if method == "runtime_smoke" or "starts successfully" in lower or "start successfully" in lower or "documented run command" in lower:
-        return _plan(
-            criterion_id,
-            "runtime_start",
-            ["prepare documented runtime command"],
-            ["documented run command", "expected local port, health endpoint, or landing page"],
-            ["start application", "probe observable endpoint or page", "stop owned process"],
-            ["process starts", "observable endpoint or page responds", "owned process stops cleanly"],
-            ["runtime probe returns a successful response before shutdown"],
-        )
-
-    if method in ("file_check", "static_scan", "secret_scan", "file_and_secret_check", "static_asset_check") or any(token in lower for token in ("readme", "artifact", "file exists", "documented safely")):
-        return _plan(
-            criterion_id,
-            "file_artifact",
-            [],
-            ["declared artifact paths and required documentation content"],
-            ["inspect required artifact paths", "inspect required file content when specified"],
-            ["required files exist", "required observable file content is present"],
-            ["filesystem inspection reports the required artifact paths and content"],
-        )
-
-    if method == "command" or any(token in lower for token in ("build succeeds", "test command", "exit with code", "automated tests")):
-        return _plan(
-            criterion_id,
-            "command",
-            ["prepare project dependencies required by the command"],
-            ["deterministic command", "expected exit code"],
-            ["run configured command"],
-            ["command exits with the expected code", "command output contains no blocking error"],
-            ["captured exit code and output match the command expectation"],
-        )
-
-    if method == "python_import" or "imports successfully" in lower or "can be imported" in lower:
-        return _plan(
-            criterion_id,
-            "python_import",
-            ["prepare Python import path"],
-            ["target module name"],
-            ["import target module in an isolated Python process"],
-            ["module imports without exception"],
-            ["import process exits successfully and reports the imported module"],
-        )
-
-    if any(token in lower for token in ("health endpoint", "landing page", "browser-accessible", "home page", "summary counts")):
-        return _plan(
-            criterion_id,
-            "http_single",
-            ["start application"],
-            ["target URL or route", "expected response status and response content"],
-            ["request target URL once"],
-            ["response status is successful", "response exposes the expected content"],
-            ["single HTTP response contains the expected status and content"],
-        )
-
-    return _manual_verifier_plan(criterion_id)
-
-
 def generate_acceptance_criteria(project_spec: dict) -> list[dict[str, Any]]:
     criteria = []
 
     def add(title: str, description: str, priority: str, source: str, method: str, expected: str, trace: str = "", requirement_ids: list[str] | None = None):
-        criterion = {
+        criteria.append({
             "id": _stable_id("AC", len(criteria) + 1),
             "title": title,
             "description": description,
@@ -1407,9 +942,7 @@ def generate_acceptance_criteria(project_spec: dict) -> list[dict[str, Any]]:
             "status": "pending",
             "evidence": [],
             "trace": trace,
-        }
-        criterion["verifier_plan"] = plan_acceptance_verifier(criterion)
-        criteria.append(criterion)
+        })
 
     add("Project has delivery documentation", "Root documentation explains installation, run, and test commands.", "high", "system_safety", "file_check", "README.md exists and contains install/run/test guidance")
     add("Project has no placeholder implementation", "Required functionality is implemented, not replaced by TODO/pass/stub code.", "high", "system_safety", "static_scan", "No blocking placeholder patterns in source files")

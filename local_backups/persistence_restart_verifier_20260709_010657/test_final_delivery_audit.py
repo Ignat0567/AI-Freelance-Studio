@@ -206,164 +206,6 @@ def delete_item(item_id: int):
     return project, criterion
 
 
-def _persistence_criterion() -> dict:
-    return {
-        "id": "AC-PERSIST",
-        "title": "Application data persists after restart.",
-        "description": "Saved request data remains available after the application process is stopped and started again.",
-        "expected_result": "Data created before restart can be retrieved after restart.",
-        "priority": "high",
-        "verification_method": "feature_trace_static_or_smoke",
-        "evidence": [],
-    }
-
-
-def _persistence_project(tmp_path: Path, mode: str) -> tuple[dict, dict]:
-    if mode == "sqlite":
-        body = """from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import os
-import sqlite3
-
-app = FastAPI()
-
-
-class ItemIn(BaseModel):
-    name: str
-
-
-def db_path():
-    return os.environ.get('DATABASE_PATH', 'app.sqlite3')
-
-
-def init_db():
-    with sqlite3.connect(db_path()) as conn:
-        conn.execute('CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)')
-
-
-@app.get('/health')
-def health():
-    return {'status': 'ok'}
-
-
-@app.post('/api/items', status_code=201)
-def create_item(item: ItemIn):
-    init_db()
-    with sqlite3.connect(db_path()) as conn:
-        cur = conn.execute('INSERT INTO items (name) VALUES (?)', (item.name,))
-        item_id = cur.lastrowid
-        conn.commit()
-    return {'id': item_id, 'name': item.name}
-
-
-@app.get('/api/items/{item_id}')
-def read_item(item_id: int):
-    init_db()
-    with sqlite3.connect(db_path()) as conn:
-        row = conn.execute('SELECT id, name FROM items WHERE id = ?', (item_id,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail='missing')
-    return {'id': row[0], 'name': row[1]}
-"""
-    elif mode == "memory":
-        body = """from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-
-app = FastAPI()
-ITEMS = {}
-NEXT_ID = 1
-
-
-class ItemIn(BaseModel):
-    name: str
-
-
-@app.get('/health')
-def health():
-    return {'status': 'ok'}
-
-
-@app.post('/api/items', status_code=201)
-def create_item(item: ItemIn):
-    global NEXT_ID
-    record = {'id': NEXT_ID, 'name': item.name}
-    ITEMS[NEXT_ID] = record
-    NEXT_ID += 1
-    return record
-
-
-@app.get('/api/items/{item_id}')
-def read_item(item_id: int):
-    if item_id not in ITEMS:
-        raise HTTPException(status_code=404, detail='missing')
-    return ITEMS[item_id]
-"""
-    elif mode == "restart_failure":
-        body = """from pathlib import Path
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import os
-import sqlite3
-
-db_file = os.environ.get('DATABASE_PATH', 'app.sqlite3')
-counter = Path(db_file + '.starts')
-start_count = int(counter.read_text(encoding='utf-8')) if counter.exists() else 0
-if start_count >= 1:
-    raise RuntimeError('intentional restart failure')
-counter.write_text(str(start_count + 1), encoding='utf-8')
-
-app = FastAPI()
-
-
-class ItemIn(BaseModel):
-    name: str
-
-
-def init_db():
-    with sqlite3.connect(db_file) as conn:
-        conn.execute('CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)')
-
-
-@app.get('/health')
-def health():
-    return {'status': 'ok'}
-
-
-@app.post('/api/items', status_code=201)
-def create_item(item: ItemIn):
-    init_db()
-    with sqlite3.connect(db_file) as conn:
-        cur = conn.execute('INSERT INTO items (name) VALUES (?)', (item.name,))
-        item_id = cur.lastrowid
-        conn.commit()
-    return {'id': item_id, 'name': item.name}
-
-
-@app.get('/api/items/{item_id}')
-def read_item(item_id: int):
-    init_db()
-    with sqlite3.connect(db_file) as conn:
-        row = conn.execute('SELECT id, name FROM items WHERE id = ?', (item_id,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail='missing')
-    return {'id': row[0], 'name': row[1]}
-"""
-    else:
-        raise AssertionError(f"unknown persistence fixture mode: {mode}")
-    _write(tmp_path / "main.py", body)
-    _write(tmp_path / "README.md", "# Persistence Demo\n\nInstall: python -m pip install fastapi uvicorn\n\nRun: python -m uvicorn main:app\n\nTest: python -m pytest -q\n")
-    criterion = _persistence_criterion()
-    project = {
-        "title": "Persistence Demo",
-        "description": "Build a FastAPI API where data persists after restart.",
-        "project_profiles": ["fastapi"],
-        "project_spec": {"project_profiles": ["fastapi"], "project_type": "fastapi", "delivery_artifacts": ["README.md"]},
-        "acceptance_criteria": [criterion],
-        "logs": [],
-    }
-    return project, criterion
-
-
 def _record_direct_feature_evidence(project: dict):
     for criterion in project["acceptance_criteria"]:
         if criterion["verification_method"] == "feature_trace_static_or_smoke":
@@ -422,38 +264,6 @@ Open index.html.
         "acceptance_criteria": [],
         "logs": [],
     }
-
-
-def _responsive_static_project(tmp_path: Path, *, overflow: bool = False):
-    fixed_rule = ".shell { width: 1200px; overflow-x: scroll; }" if overflow else ".shell { max-width: 960px; width: 100%; }"
-    _write(tmp_path / "index.html", f"""<!doctype html>
-<html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1"><style>{fixed_rule}</style></head>
-<body>
-  <header><nav><a href="#home">Home</a><button>New request</button></nav></header>
-  <main class="shell" id="home"><form><input aria-label="Search"><button>Search</button></form></main>
-</body>
-</html>
-""")
-    _write(tmp_path / "README.md", "# Responsive Static\n\nInstall: none\n\nRun: python -m http.server 8000\n\nTest: inspect\n")
-    criterion = {
-        "id": "AC-RESPONSIVE",
-        "title": "The application layout remains usable on desktop and tablet viewport sizes.",
-        "description": "Core screens and controls remain readable and usable on ordinary desktop and tablet viewport sizes.",
-        "expected_result": "The UI remains usable on desktop and tablet widths without hiding required actions.",
-        "priority": "high",
-        "verification_method": "feature_trace_static_or_smoke",
-        "evidence": [],
-    }
-    project = {
-        "title": "Responsive Static",
-        "description": "Build a static website that works on desktop and tablet.",
-        "project_profiles": ["static_website"],
-        "project_spec": {"project_profiles": ["static_website"], "project_type": "static_website", "delivery_artifacts": ["README.md", "index.html"]},
-        "acceptance_criteria": [criterion],
-        "logs": [],
-    }
-    return project, criterion
 
 
 def _react_vite_fixture(tmp_path: Path):
@@ -999,70 +809,6 @@ def test_runtime_smoke_not_applicable_does_not_pass_mandatory_acceptance(tmp_pat
     assert evidence["runtime_status"] == "not_applicable"
 
 
-def test_runtime_start_feature_records_real_startup_evidence(tmp_path):
-    project = _fastapi_project(tmp_path)
-    criterion = {
-        "id": "AC-RUNTIME-START",
-        "title": "The application starts successfully with the documented run command.",
-        "description": "The delivered application can be started locally using the documented command.",
-        "expected_result": "The documented run command starts the application successfully.",
-        "priority": "high",
-        "verification_method": "feature_trace_static_or_smoke",
-        "evidence": [],
-    }
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": False}, [])
-
-    assert evidence["status"] == "passed"
-    assert evidence["verifier_type"] == "runtime_start"
-    assert evidence["started"] is True
-    assert evidence["verified"] is True
-    assert evidence["stopped_cleanly"] is True
-    assert evidence["response_status"] == 200
-    assert evidence["collected_evidence"]["owned_process_only"] is True
-
-
-def test_responsive_ui_static_profile_passes_lightweight_assertions(tmp_path):
-    project, criterion = _responsive_static_project(tmp_path)
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": False}, [])
-
-    assert evidence["status"] == "passed"
-    assert evidence["verifier_type"] == "responsive_ui"
-    assert evidence["desktop"]["primary_page_renders"] is True
-    assert evidence["desktop"]["primary_navigation_or_control_area_exists"] is True
-    assert evidence["tablet"]["primary_controls_reachable"] is True
-    assert evidence["tablet"]["catastrophic_horizontal_overflow"] is False
-
-
-def test_responsive_ui_unsupported_profile_is_not_verified(tmp_path):
-    criterion = {
-        "id": "AC-RESPONSIVE-UNSUPPORTED",
-        "title": "The application layout remains usable on desktop and tablet viewport sizes.",
-        "priority": "high",
-        "verification_method": "feature_trace_static_or_smoke",
-        "evidence": [],
-    }
-    project = _project_with_custom_acceptance(tmp_path, criterion)
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
-
-    assert evidence["status"] == "not_verified"
-    assert evidence["verdict"] == "not_executed"
-    assert "Unsupported UI stack" in evidence["failure_reason"]
-
-
-def test_responsive_ui_fails_catastrophic_tablet_overflow(tmp_path):
-    project, criterion = _responsive_static_project(tmp_path, overflow=True)
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
-
-    assert evidence["status"] == "failed"
-    assert evidence["verdict"] == "failed"
-    assert evidence["tablet"]["catastrophic_horizontal_overflow"] is True
-    assert "overflow" in evidence["failure_reason"]
-
-
 def test_mandatory_feature_cannot_pass_from_global_qa_alone(tmp_path):
     project = _fastapi_project(tmp_path)
     feature = next(c for c in project["acceptance_criteria"] if c["verification_method"] == "feature_trace_static_or_smoke")
@@ -1143,14 +889,11 @@ def test_acceptance_verifier_registry_contains_initial_methods():
         "command",
         "python_import",
         "runtime_smoke",
-        "runtime_start",
-        "responsive_ui",
         "static_asset_check",
         "secret_scan",
         "file_and_secret_check",
         "telegram_smoke",
         "http_sequence",
-        "persistence_restart",
         "feature_trace_static_or_smoke",
     }
 
@@ -1348,54 +1091,6 @@ def test_crud_verifier_rejects_update_response_without_persisted_state_change(tm
     assert evidence["response_status"]["read_after_update"] == 200
     assert evidence["assertion_result"] is False
     assert "not persisted" in evidence["summary"]
-
-
-def test_persistence_restart_verifier_passes_with_persistent_store(tmp_path):
-    project, criterion = _persistence_project(tmp_path, "sqlite")
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": False}, [])
-
-    assert evidence["status"] == "passed"
-    assert evidence["criterion_id"] == "AC-PERSIST"
-    assert evidence["created_marker"].startswith("persist_ac_persist_")
-    assert evidence["created_identifier"] == "1"
-    assert evidence["pre_restart_verification"]["record_exists"] is True
-    assert evidence["pre_restart_verification"]["required_fields_present"] is True
-    assert evidence["stop_result"]["stopped_cleanly"] is True
-    assert evidence["restart_result"]["status"] == "passed"
-    assert evidence["restart_result"]["real_restart"] is True
-    assert evidence["post_restart_verification"]["record_exists"] is True
-    assert evidence["post_restart_verification"]["required_fields_present"] is True
-    assert evidence["final_assertion"]["passed"] is True
-    assert "DATABASE_PATH" in evidence["collected_evidence"]["storage"]["env_override_names"]
-
-
-def test_persistence_restart_verifier_fails_for_in_memory_store(tmp_path):
-    project, criterion = _persistence_project(tmp_path, "memory")
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
-
-    assert evidence["status"] == "failed"
-    assert evidence["pre_restart_verification"]["record_exists"] is True
-    assert evidence["restart_result"]["status"] == "passed"
-    assert evidence["restart_result"]["real_restart"] is True
-    assert evidence["post_restart_verification"]["record_exists"] is False
-    assert evidence["final_assertion"]["passed"] is False
-    assert "in-memory" in evidence["failure_reason"]
-
-
-def test_persistence_restart_verifier_reports_restart_failure(tmp_path):
-    project, criterion = _persistence_project(tmp_path, "restart_failure")
-
-    evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
-
-    assert evidence["status"] == "failed"
-    assert evidence["pre_restart_verification"]["record_exists"] is True
-    assert evidence["stop_result"]["stopped_cleanly"] is True
-    assert evidence["restart_result"]["status"] == "failed"
-    assert evidence["restart_result"]["real_restart"] is False
-    assert evidence["final_assertion"]["passed"] is False
-    assert "restart" in evidence["summary"].lower()
 
 
 def test_unsupported_mandatory_verifier_does_not_pass_from_stored_direct_evidence(tmp_path):

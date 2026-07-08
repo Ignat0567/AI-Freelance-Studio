@@ -116,33 +116,6 @@ def test_policy_selection_maps_profiles_to_relevant_groups():
     assert select_policy_groups({"project_profiles": ["unusual_custom"]}) == ["generic"]
 
 
-def test_policy_selection_uses_fastapi_file_evidence_when_spec_is_generic(tmp_path):
-    (tmp_path / "requirements.txt").write_text("fastapi\nuvicorn\n", encoding="utf-8")
-    (tmp_path / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
-    project = {"title": "Generic", "logs": [], "project_profiles": ["generic"], "project_spec": {"project_profiles": ["generic"]}}
-
-    groups = select_policy_groups(project, str(tmp_path))
-
-    assert groups == ["python", "fastapi"]
-    assert "fastapi" in project["project_profiles"]
-
-
-def test_qa_detect_profile_follows_effective_detected_profile(tmp_path):
-    (tmp_path / "requirements.txt").write_text("fastapi\nuvicorn\n", encoding="utf-8")
-    (tmp_path / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
-    engine = QAEngine(
-        project={"title": "Generic", "logs": [], "project_profiles": ["generic"], "project_spec": {"project_profiles": ["generic"]}},
-        target_path=str(tmp_path),
-        project_id="p1",
-        provider="test",
-        model="test",
-        temperature=0,
-    )
-
-    assert engine.detect_profile() == "fastapi"
-    assert engine.policy_groups == ["python", "fastapi"]
-
-
 def test_static_policy_does_not_apply_python_requirements_rule(tmp_path):
     (tmp_path / "README.md").write_text("# Site\n\nInstall: none\n\nRun: open index.html\n", encoding="utf-8")
     (tmp_path / "index.html").write_text("<h1>Static</h1>", encoding="utf-8")

@@ -2824,9 +2824,6 @@ def _verify_command(criterion: dict[str, Any], project: dict, root: str, qa_resu
 def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
     evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        evidence = _runtime_smoke(project, root)
-        runtime_check = {"name": "runtime_smoke", "status": "passed" if evidence.get("status") == "passed" else "failed", "evidence": evidence}
     status = "passed" if runtime_check.get("status") == "passed" and evidence.get("status") == "passed" else "failed"
     runtime_status = evidence.get("status", "not_verified")
     return _registry_evidence(
@@ -2840,160 +2837,6 @@ def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, q
         runtime_status=runtime_status,
         adapter=evidence.get("adapter", ""),
         limitation=evidence.get("limitation", ""),
-    )
-
-
-def _verify_runtime_start(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        evidence = _runtime_smoke(project, root)
-        runtime_check = {"name": "runtime_smoke", "status": "passed" if evidence.get("status") == "passed" else "failed", "evidence": evidence}
-
-    adapter = str(evidence.get("adapter") or "")
-    unsupported = adapter == "generic" or evidence.get("status") == "not_applicable"
-    startup_ready = bool(evidence.get("started") or evidence.get("credential_free"))
-    response_ready = bool(evidence.get("status_code") and 200 <= int(evidence.get("status_code")) < 400) or bool(evidence.get("verified"))
-    stopped_cleanly = bool(evidence.get("stopped_cleanly"))
-    passed = bool(runtime_check.get("status") == "passed" and evidence.get("status") == "passed" and startup_ready and response_ready and stopped_cleanly and not unsupported)
-    status = "passed" if passed else "not_verified" if unsupported else "failed"
-    failure_reason = ""
-    if status != "passed":
-        if unsupported:
-            failure_reason = "No supported runtime adapter produced direct startup evidence"
-        else:
-            failure_reason = evidence.get("error") or f"Runtime startup evidence incomplete: status={evidence.get('status')} started={startup_ready} response_ready={response_ready} stopped_cleanly={stopped_cleanly}"
-    return _registry_evidence(
-        "runtime_start",
-        status,
-        "Runtime adapter started the app, observed readiness, and stopped cleanly" if status == "passed" else "Runtime startup was not directly verified",
-        action_steps=["Start app with selected runtime adapter", "Probe primary page or health endpoint", "Stop owned runtime process"],
-        assertions=["Runtime process starts", "Port or local process becomes ready", "Primary page or health endpoint responds", "Owned process stops cleanly"],
-        collected_evidence={
-            "adapter": adapter,
-            "started": startup_ready,
-            "verified": bool(evidence.get("verified")),
-            "response_status": evidence.get("status_code"),
-            "url": evidence.get("url", ""),
-            "stopped_cleanly": stopped_cleanly,
-            "pid": evidence.get("pid"),
-            "owned_process_only": evidence.get("owned_process_only", False),
-        },
-        failure_reason=failure_reason,
-        adapter=adapter,
-        runtime_status=evidence.get("status", "not_verified"),
-        response_status=evidence.get("status_code"),
-        url=evidence.get("url", ""),
-        started=startup_ready,
-        verified=bool(evidence.get("verified")),
-        stopped_cleanly=stopped_cleanly,
-    )
-
-
-def _html_from_runtime_or_static(project: dict, root: str, runtime_evidence: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    html = str(runtime_evidence.get("response_sample") or "")
-    source = {"source": "runtime_response_sample" if html else ""}
-    if html:
-        return html, source
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-    if "static_website" in profiles:
-        entrypoint = _static_entrypoint(root)
-        if entrypoint:
-            entry_rel, _site_root = entrypoint
-            try:
-                return _read(os.path.join(root, entry_rel)), {"source": "static_entry_html", "entry_html": entry_rel}
-            except Exception as exc:
-                return "", {"source": "static_entry_html", "error": _tail_output(str(exc))}
-    return "", source
-
-
-def _fatal_render_errors(html: str) -> list[str]:
-    lower = html.lower()
-    markers = ("uncaught runtime error", "error boundary", "traceback", "typeerror:", "referenceerror:", "syntaxerror:", "failed to compile")
-    return [marker for marker in markers if marker in lower]
-
-
-def _primary_controls_exist(html: str) -> bool:
-    return bool(re.search(r"<(nav|header|main|button|a|form|input|select|textarea)\b", html, flags=re.IGNORECASE) or re.search(r"\brole\s*=\s*['\"](?:navigation|button|main|search)['\"]", html, flags=re.IGNORECASE))
-
-
-def _catastrophic_horizontal_overflow(html: str) -> dict[str, Any]:
-    hits = []
-    for match in re.finditer(r"(?:min-width|width)\s*:\s*(\d{4,})px", html, flags=re.IGNORECASE):
-        try:
-            width = int(match.group(1))
-        except ValueError:
-            continue
-        if width > 900:
-            hits.append(match.group(0))
-    overflow_scroll = bool(re.search(r"overflow-x\s*:\s*(scroll|auto)", html, flags=re.IGNORECASE) and hits)
-    return {"catastrophic": bool(hits or overflow_scroll), "fixed_width_rules": hits[:10], "overflow_x_scroll_with_fixed_width": overflow_scroll}
-
-
-def _verify_responsive_ui(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-    if not profiles.intersection({"static_website", "react_frontend", "vite_frontend"}):
-        return _registry_evidence(
-            "responsive_ui",
-            "not_verified",
-            "Responsive UI verification is unsupported for this project profile",
-            action_steps=["Check project profile for supported browser UI runtime"],
-            assertions=["Only supported UI stacks are directly verified"],
-            collected_evidence={"profiles": sorted(profiles)},
-            failure_reason="Unsupported UI stack for lightweight responsive verification",
-        )
-
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    runtime_evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        runtime_evidence = _runtime_smoke(project, root)
-    html, html_source = _html_from_runtime_or_static(project, root, runtime_evidence)
-    status_code = runtime_evidence.get("status_code")
-    page_renders = bool((status_code is None or 200 <= int(status_code) < 400) and html.strip())
-    fatal_errors = _fatal_render_errors(html)
-    controls_exist = _primary_controls_exist(html)
-    overflow = _catastrophic_horizontal_overflow(html)
-    desktop = {
-        "primary_page_renders": page_renders,
-        "fatal_render_errors": fatal_errors,
-        "primary_navigation_or_control_area_exists": controls_exist,
-    }
-    tablet = {
-        "primary_page_renders": page_renders,
-        "primary_controls_reachable": controls_exist,
-        "catastrophic_horizontal_overflow": overflow["catastrophic"],
-        "overflow_evidence": overflow,
-    }
-    passed = page_renders and not fatal_errors and controls_exist and not overflow["catastrophic"]
-    status = "passed" if passed else "failed"
-    failure_parts = []
-    if not page_renders:
-        failure_parts.append("primary page did not render")
-    if fatal_errors:
-        failure_parts.append("fatal render error markers found")
-    if not controls_exist:
-        failure_parts.append("primary navigation/control area was not found")
-    if overflow["catastrophic"]:
-        failure_parts.append("catastrophic horizontal overflow indicators found")
-    return _registry_evidence(
-        "responsive_ui",
-        status,
-        "Desktop and tablet UI reachability assertions passed" if passed else "Responsive UI assertions failed",
-        action_steps=["Start supported UI runtime or inspect static entry page", "Assert desktop render/control reachability", "Assert tablet control reachability and overflow heuristic"],
-        assertions=["Desktop primary page renders without fatal error", "Desktop navigation/control area exists", "Tablet controls remain reachable", "No catastrophic horizontal overflow indicators"],
-        collected_evidence={
-            "profiles": sorted(profiles),
-            "runtime": _runtime_start_evidence(runtime_evidence),
-            "html_source": html_source,
-            "html_excerpt": _redact_secrets(html[:1000]),
-            "desktop": desktop,
-            "tablet": tablet,
-        },
-        failure_reason="; ".join(failure_parts),
-        desktop=desktop,
-        tablet=tablet,
-        response_status=status_code,
-        html_source=html_source,
     )
 
 
@@ -3089,10 +2932,6 @@ def _verify_telegram_smoke(criterion: dict[str, Any], project: dict, root: str, 
 
 def _verify_feature_trace_static_or_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     plan = _criterion_verifier_plan(criterion)
-    if plan.get("verifier_type") == "runtime_start":
-        return _verify_runtime_start(criterion, project, root, qa_result, checks)
-    if plan.get("verifier_type") == "responsive_ui":
-        return _verify_responsive_ui(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "http_sequence":
         return _verify_http_sequence(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "persistence_restart":
@@ -3114,8 +2953,6 @@ ACCEPTANCE_VERIFIERS = {
     "command": _verify_command,
     "python_import": _verify_python_import,
     "runtime_smoke": _verify_runtime_smoke,
-    "runtime_start": _verify_runtime_start,
-    "responsive_ui": _verify_responsive_ui,
     "static_asset_check": _verify_static_asset_check,
     "secret_scan": _verify_secret_scan,
     "file_and_secret_check": _verify_file_and_secret_check,

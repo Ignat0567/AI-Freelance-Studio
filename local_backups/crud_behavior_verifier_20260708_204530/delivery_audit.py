@@ -5,10 +5,8 @@ import shlex
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -55,7 +53,7 @@ class RuntimeAdapter:
     def run(self, project: dict, root: str) -> RuntimeAdapterResult:
         raise NotImplementedError
 
-    def start_http_server(self, project: dict, root: str, env_extra: dict[str, str] | None = None) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
+    def start_http_server(self, project: dict, root: str) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
         return RuntimeAdapterResult(False, False, False, True, {"reason": f"{self.name} does not expose a reusable HTTP runtime"}, ""), None
 
 
@@ -259,7 +257,7 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
                 result.stopped_cleanly = True
                 result.evidence["shutdown_method"] = "already_exited"
 
-    def start_http_server(self, project: dict, root: str, env_extra: dict[str, str] | None = None) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
+    def start_http_server(self, project: dict, root: str) -> tuple[RuntimeAdapterResult, RuntimeServerHandle | None]:
         profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
         if "fastapi" not in profiles:
             return RuntimeAdapterResult(False, False, False, True, {"reason": "No FastAPI profile"}, ""), None
@@ -276,10 +274,7 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
         port = _free_port()
         command = [sys.executable, "-m", "uvicorn", entrypoint[1], "--host", "127.0.0.1", "--port", str(port)]
         command_text = " ".join(command)
-        env = os.environ.copy()
-        if env_extra:
-            env.update({str(key): str(value) for key, value in env_extra.items()})
-        proc = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env)
+        proc = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         probes = []
         base_evidence = {
             "adapter": self.name,
@@ -290,7 +285,6 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
             "base_url": f"http://127.0.0.1:{port}",
             "command": command_text,
             "pid": proc.pid,
-            "env_overrides": sorted(env_extra or {}),
             "owned_process_only": True,
             "shutdown_method": "pending",
             "killed": False,
@@ -1184,47 +1178,18 @@ def _is_create_list_http_sequence(plan: dict[str, Any]) -> bool:
     return "create" in actions and "list" in actions and any(token in assertions for token in ("appears", "contains", "identifier", "list"))
 
 
-def _crud_sequence_kind(criterion: dict[str, Any], plan: dict[str, Any]) -> str:
-    if plan.get("verifier_type") != "http_sequence":
-        return ""
-    criterion_text = " ".join(str(criterion.get(key, "")) for key in ("title", "description", "expected_result")).lower()
-    actions_text = " ".join(str(item) for item in plan.get("actions", [])).lower()
-    assertions_text = " ".join(str(item) for item in plan.get("assertions", [])).lower()
-    text = " ".join((criterion_text, actions_text, assertions_text))
-    if "search" in text:
-        return "search"
-    if "filter" in text:
-        return "filter"
-    if "delete" in text or "remove" in text:
-        return "delete"
-    if "status" in (criterion_text + " " + actions_text) and (
-        "change request status" in actions_text
-        or any(token in criterion_text for token in ("change", "changed", "update", "set"))
-    ):
-        return "status_change"
-    if any(token in criterion_text for token in ("update", "edit")) or "update request" in actions_text:
-        return "update"
-    if "read succeeds" in assertions_text or (
-        any(token in criterion_text for token in ("read", "open", "view")) and "update" not in criterion_text
-    ):
-        return "read"
-    if "create" in text:
-        return "create"
-    return ""
-
-
-def _start_http_sequence_runtime(project: dict, root: str, env_extra: dict[str, str] | None = None) -> tuple[RuntimeServerHandle | None, dict[str, Any]]:
+def _start_http_sequence_runtime(project: dict, root: str) -> tuple[RuntimeServerHandle | None, dict[str, Any]]:
     _effective_project_profiles(project, root)
     for adapter in RUNTIME_ADAPTERS:
         starter = getattr(adapter, "start_http_server", None)
         if not callable(starter):
             continue
-        result, handle = starter(project, root, env_extra)
+        result, handle = starter(project, root)
         if not result.applicable:
             continue
         evidence = result.to_dict()
         evidence["adapter"] = adapter.name
-        evidence["status"] = "passed" if handle and result.started and result.verified else _adapter_status(result)
+        evidence["status"] = _adapter_status(result)
         evidence.update(result.evidence)
         if handle and result.started and result.verified:
             return handle, evidence
@@ -1261,109 +1226,6 @@ def _stop_http_sequence_runtime(handle: RuntimeServerHandle) -> dict[str, Any]:
         "shutdown_method": handle.result.evidence.get("shutdown_method", ""),
         "killed": handle.result.evidence.get("killed", False),
     }
-
-
-def _persistence_storage_config(root: str, criterion_id: str) -> tuple[dict[str, str], dict[str, Any]]:
-    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(criterion_id or "criterion")).strip("_") or "criterion"
-    storage_dir = tempfile.mkdtemp(prefix=f"freelancerstudio_{safe_id}_")
-    sqlite_path = os.path.join(storage_dir, "acceptance_verifier.sqlite3")
-    json_path = os.path.join(storage_dir, "acceptance_verifier.json")
-    env = {
-        "FREELANCERSTUDIO_ACCEPTANCE_TEST": "1",
-        "APP_ENV": "test",
-        "ENV": "test",
-        "DATABASE_PATH": sqlite_path,
-        "DB_PATH": sqlite_path,
-        "SQLITE_PATH": sqlite_path,
-        "SQLITE_DB_PATH": sqlite_path,
-        "APP_DATABASE_PATH": sqlite_path,
-        "TEST_DATABASE_PATH": sqlite_path,
-        "DATABASE_URL": f"sqlite:///{sqlite_path.replace(os.sep, '/')}",
-        "STORAGE_DIR": storage_dir,
-        "DATA_DIR": storage_dir,
-        "DATA_FILE": json_path,
-    }
-    evidence = {
-        "isolated_storage_dir": storage_dir,
-        "sqlite_path": sqlite_path,
-        "json_path": json_path,
-        "env_override_names": sorted(env),
-        "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
-    }
-    return env, evidence
-
-
-def _runtime_start_evidence(raw: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "status": raw.get("status"),
-        "adapter": raw.get("adapter"),
-        "started": raw.get("started"),
-        "verified": raw.get("verified"),
-        "pid": raw.get("pid"),
-        "base_url": raw.get("base_url"),
-        "error": raw.get("error", ""),
-        "env_overrides": raw.get("env_overrides", []),
-    }
-
-
-def _persistence_evidence(
-    criterion: dict[str, Any],
-    status: str,
-    summary: str,
-    *,
-    created_identifier: str = "",
-    marker: str = "",
-    pre_restart_verification: dict[str, Any] | None = None,
-    stop_result: dict[str, Any] | None = None,
-    restart_result: dict[str, Any] | None = None,
-    post_restart_verification: dict[str, Any] | None = None,
-    final_assertion: dict[str, Any] | None = None,
-    method_path: list[dict[str, str]] | None = None,
-    safe_request_summary: dict[str, Any] | None = None,
-    response_status: dict[str, Any] | None = None,
-    redacted_response_excerpt: dict[str, str] | None = None,
-    failure_reason: str = "",
-    collected_evidence: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    collected = dict(collected_evidence or {})
-    collected.update(
-        {
-            "created_marker": marker,
-            "created_identifier": created_identifier,
-            "pre_restart_verification": pre_restart_verification or {},
-            "stop_result": stop_result or {},
-            "restart_result": restart_result or {},
-            "post_restart_verification": post_restart_verification or {},
-            "final_assertion": final_assertion or {},
-            "method_path": method_path or [],
-            "safe_request_summary": safe_request_summary or {},
-            "response_status": response_status or {},
-            "redacted_response_excerpt": redacted_response_excerpt or {},
-        }
-    )
-    return _registry_evidence(
-        "persistence_restart",
-        status,
-        summary,
-        setup_steps=["Start runtime with isolated storage configuration", "Create and verify a uniquely identifiable record", "Stop and restart the runtime with the same storage configuration"],
-        action_steps=[f"{step.get('method')} {step.get('path')}" for step in method_path or []],
-        assertions=["Record exists before restart", "A distinct runtime process starts after clean stop", "Same identifier and marker are observable after restart"],
-        collected_evidence=collected,
-        failure_reason=failure_reason,
-        criterion_id=criterion.get("id", ""),
-        created_marker=marker,
-        created_identifier=created_identifier,
-        pre_restart_verification=pre_restart_verification or {},
-        stop_result=stop_result or {},
-        restart_result=restart_result or {},
-        post_restart_verification=post_restart_verification or {},
-        final_assertion=final_assertion or {},
-        method_path=method_path or [],
-        safe_request_summary=safe_request_summary or {},
-        response_status=response_status or {},
-        redacted_response_excerpt=redacted_response_excerpt or {},
-        verdict=status if status in ("passed", "failed", "blocked") else "not_executed",
-    )
 
 
 def _http_path_url(base_url: str, path: str) -> str:
@@ -1458,13 +1320,6 @@ def _has_required_path_parameter(path: str, parameters: list[Any]) -> bool:
     return False
 
 
-def _has_required_query_parameter(parameters: list[Any]) -> bool:
-    for parameter in parameters:
-        if isinstance(parameter, dict) and parameter.get("in") == "query" and parameter.get("required") is True:
-            return True
-    return False
-
-
 def _excluded_route(path: str, operation: dict[str, Any]) -> bool:
     text = " ".join(
         str(part)
@@ -1538,8 +1393,6 @@ def _discover_create_list_routes(openapi: dict[str, Any], criterion: dict[str, A
                     continue
                 create_candidates.append({"method": "POST", "path": str(path), "operation": operation, "request_schema": schema})
             elif method_lower == "get":
-                if _has_required_query_parameter(parameters):
-                    continue
                 list_candidates.append({"method": "GET", "path": str(path), "operation": operation})
 
     pairs = [
@@ -1562,178 +1415,6 @@ def _discover_create_list_routes(openapi: dict[str, Any], criterion: dict[str, A
     if len(best_pairs) != 1:
         return None, None, "Ambiguous create/list route discovery from OpenAPI: multiple matching POST/GET collection pairs", discovery_evidence
     return best_pairs[0][0], best_pairs[0][1], "", discovery_evidence
-
-
-def _create_route_score(route: dict[str, Any], criterion: dict[str, Any], plan: dict[str, Any]) -> int:
-    semantic_text = " ".join(
-        str(part)
-        for part in (
-            criterion.get("title", ""),
-            criterion.get("description", ""),
-            criterion.get("expected_result", ""),
-            " ".join(str(item) for item in plan.get("observable_expected_outcomes", [])),
-        )
-    )
-    criterion_tokens = _semantic_route_tokens(semantic_text)
-    route_tokens = _semantic_route_tokens(str(route.get("path") or ""))
-    return len(criterion_tokens.intersection(route_tokens))
-
-
-def _discover_create_route(openapi: dict[str, Any], criterion: dict[str, Any], plan: dict[str, Any]) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
-    routes = _openapi_route_candidates(openapi)
-    candidates = [
-        route
-        for route in routes
-        if route.get("method") == "POST" and not _route_has_path_params(route) and _route_has_json_body(route)
-    ]
-    evidence = {"create_candidates": [_route_candidate_label(candidate) for candidate in candidates[:12]]}
-    if not candidates:
-        return None, "No POST collection route with a JSON request body was discovered from OpenAPI", evidence
-    scored = [(route, _create_route_score(route, criterion, plan)) for route in candidates]
-    best_score = max(score for _route, score in scored)
-    best = [route for route, score in scored if score == best_score]
-    if len(best) != 1:
-        return None, "Ambiguous create route discovery from OpenAPI: multiple POST collection routes", evidence
-    return best[0], "", evidence
-
-
-def _operation_parameters(path_item: dict[str, Any], operation: dict[str, Any]) -> list[Any]:
-    path_parameters = path_item.get("parameters", []) if isinstance(path_item.get("parameters", []), list) else []
-    operation_parameters = operation.get("parameters", []) if isinstance(operation.get("parameters", []), list) else []
-    return path_parameters + operation_parameters
-
-
-def _query_parameters(route: dict[str, Any]) -> list[dict[str, Any]]:
-    return [parameter for parameter in route.get("parameters", []) if isinstance(parameter, dict) and parameter.get("in") == "query"]
-
-
-def _path_parameter_names(path: str) -> list[str]:
-    return re.findall(r"\{([^}/]+)\}", str(path or ""))
-
-
-def _collection_base(path: str) -> str:
-    parts = []
-    for segment in str(path or "").strip("/").split("/"):
-        if not segment:
-            continue
-        if segment.startswith("{") and segment.endswith("}"):
-            break
-        parts.append(segment)
-    return "/" + "/".join(parts) if parts else "/"
-
-
-def _route_under_collection(path: str, collection_path: str) -> bool:
-    route = _route_key(_collection_base(path))
-    collection = _route_key(collection_path)
-    return route == collection or _route_key(path).startswith(collection.rstrip("/") + "/")
-
-
-def _route_has_path_params(route: dict[str, Any]) -> bool:
-    return bool(_path_parameter_names(str(route.get("path") or "")))
-
-
-def _route_has_json_body(route: dict[str, Any]) -> bool:
-    return bool(route.get("request_schema"))
-
-
-def _replace_path_params(path: str, identifier: str) -> str:
-    safe_identifier = urllib.parse.quote(str(identifier), safe="")
-    return re.sub(r"\{[^}/]+\}", safe_identifier, str(path or ""))
-
-
-def _append_query(path: str, params: dict[str, Any]) -> str:
-    query = urllib.parse.urlencode({key: str(value) for key, value in params.items()})
-    return f"{path}?{query}" if query else path
-
-
-def _openapi_route_candidates(openapi: dict[str, Any]) -> list[dict[str, Any]]:
-    routes: list[dict[str, Any]] = []
-    paths = openapi.get("paths", {}) if isinstance(openapi, dict) else {}
-    if not isinstance(paths, dict):
-        return routes
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-        for method, operation in path_item.items():
-            method_upper = str(method).upper()
-            if method_upper not in {"GET", "POST", "PUT", "PATCH", "DELETE"} or not isinstance(operation, dict):
-                continue
-            if _excluded_route(str(path), operation):
-                continue
-            route = {
-                "method": method_upper,
-                "path": str(path),
-                "operation": operation,
-                "parameters": _operation_parameters(path_item, operation),
-                "request_schema": _json_request_schema(openapi, operation) if method_upper in {"POST", "PUT", "PATCH"} else {},
-            }
-            routes.append(route)
-    return routes
-
-
-def _find_related_route(routes: list[dict[str, Any]], collection_path: str, methods: set[str], *, require_path_param: bool = True, require_json: bool = False, prefer_tokens: list[str] | None = None) -> tuple[dict[str, Any] | None, str, list[str]]:
-    candidates = []
-    for route in routes:
-        if route.get("method") not in methods:
-            continue
-        if require_path_param != _route_has_path_params(route):
-            continue
-        if require_json and not _route_has_json_body(route):
-            continue
-        if not _route_under_collection(str(route.get("path") or ""), collection_path):
-            continue
-        candidates.append(route)
-    labels = [_route_candidate_label(candidate) for candidate in candidates]
-    if not candidates:
-        return None, f"No {('/'.join(sorted(methods)))} route related to {collection_path} was discovered", labels
-    if prefer_tokens:
-        token_preferred = [
-            route
-            for route in candidates
-            if any(token in str(route.get("path", "")).lower() or token in str(route.get("operation", {}).get("summary", "")).lower() for token in prefer_tokens)
-        ]
-        if len(token_preferred) == 1:
-            return token_preferred[0], "", labels
-    plain_item_routes = [route for route in candidates if re.search(r"/\{[^}/]+\}/?$", str(route.get("path") or ""))]
-    if len(plain_item_routes) == 1:
-        return plain_item_routes[0], "", labels
-    if len(candidates) == 1:
-        return candidates[0], "", labels
-    return None, f"Ambiguous {('/'.join(sorted(methods)))} route discovery for {collection_path}: {', '.join(labels)}", labels
-
-
-def _query_param_names(route: dict[str, Any]) -> list[str]:
-    return [str(parameter.get("name") or "") for parameter in _query_parameters(route) if str(parameter.get("name") or "").strip()]
-
-
-def _find_query_route(routes: list[dict[str, Any]], collection_path: str, kind: str) -> tuple[dict[str, Any] | None, str, str, list[str]]:
-    search_names = ("q", "query", "search", "term", "text", "name", "client", "contact")
-    filter_names = ("status", "priority", "state", "type", "category")
-    desired = search_names if kind == "search" else filter_names
-    candidates: list[tuple[dict[str, Any], str]] = []
-    for route in routes:
-        if route.get("method") != "GET" or _route_has_path_params(route):
-            continue
-        if not _route_under_collection(str(route.get("path") or ""), collection_path):
-            continue
-        query_names = _query_param_names(route)
-        for name in query_names:
-            lower_name = name.lower()
-            if lower_name in desired or any(token in lower_name for token in desired if len(token) > 2):
-                extra_required = [
-                    str(parameter.get("name") or "")
-                    for parameter in _query_parameters(route)
-                    if parameter.get("required") is True and str(parameter.get("name") or "") != name
-                ]
-                if extra_required:
-                    continue
-                candidates.append((route, name))
-    labels = [f"{_route_candidate_label(route)}?{name}" for route, name in candidates]
-    if not candidates:
-        return None, "", f"No declared {kind} query parameter was discovered for {collection_path}", labels
-    if len(candidates) != 1:
-        return None, "", f"Ambiguous {kind} query route discovery for {collection_path}: {', '.join(labels)}", labels
-    return candidates[0][0], candidates[0][1], "", labels
 
 
 def _schema_type(schema: dict[str, Any]) -> str:
@@ -1821,113 +1502,6 @@ def _build_create_payload(openapi: dict[str, Any], create_route: dict[str, Any],
     return payload, marker_field, ""
 
 
-def _schema_properties(openapi: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    resolved = _resolve_openapi_schema(openapi, schema)
-    return resolved.get("properties", {}) if isinstance(resolved.get("properties", {}), dict) else {}
-
-
-def _schema_has_field(openapi: dict[str, Any], schema: dict[str, Any], field_name: str) -> bool:
-    return field_name in _schema_properties(openapi, schema)
-
-
-def _first_string_field(openapi: dict[str, Any], schema: dict[str, Any], preferred: list[str] | None = None) -> str:
-    properties = _schema_properties(openapi, schema)
-    for name in preferred or []:
-        if name in properties and _schema_type(_resolve_openapi_schema(openapi, properties[name])) == "string":
-            return name
-    for name, prop_schema in properties.items():
-        if _schema_type(_resolve_openapi_schema(openapi, prop_schema)) == "string":
-            return str(name)
-    return ""
-
-
-def _field_value_from_payload(payload: dict[str, Any], dotted_field: str) -> Any:
-    value: Any = payload
-    for part in dotted_field.split("."):
-        if not isinstance(value, dict) or part not in value:
-            return None
-        value = value[part]
-    return value
-
-
-def _set_payload_field(payload: dict[str, Any], dotted_field: str, value: Any) -> bool:
-    target: Any = payload
-    parts = [part for part in dotted_field.split(".") if part]
-    for part in parts[:-1]:
-        if not isinstance(target, dict) or part not in target:
-            return False
-        target = target[part]
-    if not parts or not isinstance(target, dict):
-        return False
-    target[parts[-1]] = value
-    return True
-
-
-def _status_values(openapi: dict[str, Any], schema: dict[str, Any]) -> tuple[str, str]:
-    prop_schema = _schema_properties(openapi, schema).get("status", {})
-    resolved = _resolve_openapi_schema(openapi, prop_schema)
-    enum_values = [str(value) for value in resolved.get("enum", []) if str(value).strip()] if isinstance(resolved.get("enum"), list) else []
-    if len(enum_values) >= 2:
-        return enum_values[0], enum_values[1]
-    return "new", "closed"
-
-
-def _payload_variant(payload: dict[str, Any], marker_field: str, marker: str, *, field: str = "", field_value: Any = None) -> dict[str, Any]:
-    variant = json.loads(json.dumps(payload))
-    if marker_field:
-        _set_payload_field(variant, marker_field, marker)
-    if field:
-        _set_payload_field(variant, field, field_value)
-    return variant
-
-
-def _build_update_payload(openapi: dict[str, Any], update_route: dict[str, Any], create_payload: dict[str, Any], marker_field: str, updated_marker: str, *, status_change: bool = False) -> tuple[dict[str, Any], str, Any, str]:
-    schema = _resolve_openapi_schema(openapi, update_route.get("request_schema", {}))
-    if not schema or _schema_type(schema) != "object":
-        return {}, "", None, "Update route JSON schema is not an object payload"
-    properties = _schema_properties(openapi, schema)
-    required = [str(name) for name in schema.get("required", []) if str(name)]
-    payload: dict[str, Any] = {}
-    for name in required:
-        if name in create_payload:
-            payload[name] = create_payload[name]
-        else:
-            payload[name], _marker_field = _schema_value(openapi, name, properties.get(name, {}), updated_marker)
-
-    if status_change:
-        if "status" not in properties:
-            return {}, "", None, "No writable status field was discovered in the update schema"
-        _initial_status, updated_value = _status_values(openapi, schema)
-        payload["status"] = updated_value
-        return payload, "status", updated_value, ""
-
-    target_field = ""
-    if marker_field and marker_field in properties:
-        target_field = marker_field
-    if not target_field:
-        target_field = _first_string_field(openapi, schema, ["name", "title", "description", "client", "contact"])
-    if not target_field:
-        return {}, "", None, "No writable string field was discovered in the update schema"
-    payload[target_field] = updated_marker
-    return payload, target_field, updated_marker, ""
-
-
-def _filter_field_and_values(openapi: dict[str, Any], create_route: dict[str, Any], query_param: str) -> tuple[str, Any, Any, str]:
-    schema = _resolve_openapi_schema(openapi, create_route.get("request_schema", {}))
-    properties = _schema_properties(openapi, schema)
-    candidates = [query_param, "status", "priority", "state", "category"]
-    for name in candidates:
-        if name not in properties:
-            continue
-        resolved = _resolve_openapi_schema(openapi, properties[name])
-        enum_values = [value for value in resolved.get("enum", []) if str(value).strip()] if isinstance(resolved.get("enum"), list) else []
-        if len(enum_values) >= 2:
-            return name, enum_values[0], enum_values[1], ""
-        if _schema_type(resolved) == "string":
-            return name, "open", "closed", ""
-    return "", None, None, f"No writable field matching filter parameter {query_param} was discovered in the create schema"
-
-
 def _safe_request_summary(payload: dict[str, Any], marker: str, marker_field: str) -> dict[str, Any]:
     return {
         "content_type": "application/json",
@@ -1984,550 +1558,6 @@ def _list_contains_created_item(value: Any, created_identifier: str, marker: str
     return False, ""
 
 
-def _matching_response_object(value: Any, created_identifier: str, marker: str) -> dict[str, Any] | None:
-    for item in _iter_response_objects(value):
-        if not isinstance(item, dict):
-            continue
-        if created_identifier and _extract_identifier(item) == created_identifier:
-            return item
-        if _json_contains_marker(item, marker):
-            return item
-    return None
-
-
-def _required_payload_fields(openapi: dict[str, Any], create_route: dict[str, Any], payload: dict[str, Any], marker_field: str) -> list[str]:
-    schema = _resolve_openapi_schema(openapi, create_route.get("request_schema", {}))
-    fields = [str(name) for name in schema.get("required", []) if isinstance(name, str) and name in payload]
-    if marker_field and marker_field in payload:
-        fields.append(marker_field)
-    return list(dict.fromkeys(fields))
-
-
-def _verify_persisted_response(response: dict[str, Any], created_identifier: str, marker: str, required_fields: list[str]) -> dict[str, Any]:
-    item = _matching_response_object(response.get("json"), created_identifier, marker)
-    missing_fields = required_fields if item is None else [field for field in required_fields if field not in item]
-    contains_identifier = bool(item and created_identifier and _extract_identifier(item) == created_identifier)
-    contains_marker = bool(item and _json_contains_marker(item, marker))
-    return {
-        "status_code": response.get("status"),
-        "response_ok": bool(response.get("ok")),
-        "record_exists": bool(item and (contains_identifier or contains_marker)),
-        "contains_identifier": contains_identifier,
-        "contains_marker": contains_marker,
-        "required_fields": required_fields,
-        "missing_required_fields": missing_fields,
-        "required_fields_present": not missing_fields,
-    }
-
-
-def _discover_crud_route_set(openapi: dict[str, Any], criterion: dict[str, Any], plan: dict[str, Any], kind: str) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
-    if kind == "create":
-        create_route, list_route, discovery_reason, discovery_evidence = _discover_create_list_routes(openapi, criterion, plan)
-        if discovery_reason or not create_route or not list_route:
-            return None, discovery_reason, discovery_evidence
-    else:
-        create_route, discovery_reason, discovery_evidence = _discover_create_route(openapi, criterion, plan)
-        list_route = None
-        if discovery_reason or not create_route:
-            return None, discovery_reason, discovery_evidence
-
-    routes = _openapi_route_candidates(openapi)
-    route_set: dict[str, Any] = {"create": create_route}
-    if list_route:
-        route_set["list"] = list_route
-    collection_path = str(create_route.get("path") or "")
-    discovery_evidence.setdefault("related_route_candidates", {})
-
-    if kind in ("read", "update", "status_change"):
-        read_route, reason, labels = _find_related_route(routes, collection_path, {"GET"}, require_path_param=True)
-        discovery_evidence["related_route_candidates"]["read"] = labels
-        if reason or not read_route:
-            return None, reason, discovery_evidence
-        route_set["read"] = read_route
-
-    if kind in ("update", "status_change"):
-        update_route, reason, labels = _find_related_route(
-            routes,
-            collection_path,
-            {"PATCH", "PUT"},
-            require_path_param=True,
-            require_json=True,
-            prefer_tokens=["status"] if kind == "status_change" else None,
-        )
-        discovery_evidence["related_route_candidates"]["update"] = labels
-        if reason or not update_route:
-            return None, reason, discovery_evidence
-        route_set["update"] = update_route
-
-    if kind == "delete":
-        delete_route, reason, labels = _find_related_route(routes, collection_path, {"DELETE"}, require_path_param=True)
-        discovery_evidence["related_route_candidates"]["delete"] = labels
-        if reason or not delete_route:
-            return None, reason, discovery_evidence
-        route_set["delete"] = delete_route
-        read_route, _read_reason, read_labels = _find_related_route(routes, collection_path, {"GET"}, require_path_param=True)
-        discovery_evidence["related_route_candidates"]["read"] = read_labels
-        if read_route:
-            route_set["read"] = read_route
-        list_route, _list_reason, list_labels = _find_related_route(routes, collection_path, {"GET"}, require_path_param=False)
-        discovery_evidence["related_route_candidates"]["list"] = list_labels
-        if list_route:
-            route_set["list"] = list_route
-        if not route_set.get("read") and not route_set.get("list"):
-            return None, "No read or list route was discovered to verify deletion state", discovery_evidence
-
-    if kind in ("search", "filter"):
-        query_route, query_param, reason, labels = _find_query_route(routes, collection_path, kind)
-        discovery_evidence["related_route_candidates"][kind] = labels
-        if reason or not query_route:
-            return None, reason, discovery_evidence
-        route_set[kind] = query_route
-        route_set[f"{kind}_param"] = query_param
-
-    return route_set, "", discovery_evidence
-
-
-def _discover_persistence_routes(openapi: dict[str, Any], criterion: dict[str, Any], plan: dict[str, Any]) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
-    create_route, discovery_reason, discovery_evidence = _discover_create_route(openapi, criterion, plan)
-    if discovery_reason or not create_route:
-        return None, discovery_reason, discovery_evidence
-    routes = _openapi_route_candidates(openapi)
-    route_set: dict[str, Any] = {"create": create_route}
-    collection_path = str(create_route.get("path") or "")
-    discovery_evidence.setdefault("related_route_candidates", {})
-    read_route, read_reason, read_labels = _find_related_route(routes, collection_path, {"GET"}, require_path_param=True)
-    discovery_evidence["related_route_candidates"]["read"] = read_labels
-    if read_route:
-        route_set["read"] = read_route
-    list_route, list_reason, list_labels = _find_related_route(routes, collection_path, {"GET"}, require_path_param=False)
-    discovery_evidence["related_route_candidates"]["list"] = list_labels
-    if list_route:
-        route_set["list"] = list_route
-    if not route_set.get("read") and not route_set.get("list"):
-        return None, f"No read or list route was discovered for post-restart verification: {read_reason}; {list_reason}", discovery_evidence
-    return route_set, "", discovery_evidence
-
-
-def _record_http_step(method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], key: str, method: str, path: str, response: dict[str, Any]) -> None:
-    method_path.append({"method": method.upper(), "path": path.split("?", 1)[0]})
-    response_status[key] = response.get("status")
-    redacted_excerpt[key] = str(response.get("excerpt") or "")
-
-
-def _created_id_or_failure(create_response: dict[str, Any], marker: str, marker_field: str) -> tuple[str, str]:
-    created_identifier = _extract_identifier(create_response.get("json"))
-    if created_identifier:
-        return created_identifier, ""
-    if marker_field and _json_contains_marker(create_response.get("json"), marker):
-        return marker, ""
-    return "", "Create response did not expose an id-like field or preserve the unique marker"
-
-
-def _execute_create_fixture(handle: RuntimeServerHandle, openapi: dict[str, Any], create_route: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str]) -> tuple[str, str, str, bool, dict[str, Any], dict[str, Any], str]:
-    payload, marker_field, payload_reason = _build_create_payload(openapi, create_route, marker)
-    safe_summary = _safe_request_summary(payload, marker, marker_field)
-    if payload_reason:
-        return "not_verified", "Create request payload could not be built from route schema", payload_reason, False, safe_summary, {}, ""
-    create_response = _http_json_request(handle.base_url, "POST", create_route["path"], payload)
-    _record_http_step(method_path, response_status, redacted_excerpt, "create", "POST", create_route["path"], create_response)
-    if not create_response.get("ok"):
-        return "failed", "Create endpoint did not return a successful response", create_response.get("error") or f"Create endpoint returned HTTP {create_response.get('status')}", False, safe_summary, payload, ""
-    created_identifier, id_reason = _created_id_or_failure(create_response, marker, marker_field)
-    if id_reason:
-        return "failed", "Create succeeded but produced no created identifier or unique marker", id_reason, False, safe_summary, payload, ""
-    return "passed", "Fixture record was created successfully", "", True, safe_summary, payload, created_identifier
-
-
-def _fetch_persisted_record(handle: RuntimeServerHandle, route_set: dict[str, Any], created_identifier: str, marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], key: str) -> dict[str, Any]:
-    if route_set.get("read") and created_identifier and created_identifier != marker:
-        read_path = _replace_path_params(route_set["read"]["path"], created_identifier)
-        response = _http_json_request(handle.base_url, "GET", read_path)
-        _record_http_step(method_path, response_status, redacted_excerpt, key, "GET", read_path, response)
-        return response
-    if not route_set.get("list"):
-        return {"ok": False, "status": None, "json": None, "body_text": "", "excerpt": "", "error": "No list route is available and create response did not provide a concrete identifier"}
-    list_path = route_set["list"]["path"]
-    response = _http_json_request(handle.base_url, "GET", list_path)
-    _record_http_step(method_path, response_status, redacted_excerpt, key, "GET", list_path, response)
-    return response
-
-
-def _verify_persistence_restart(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    plan = _criterion_verifier_plan(criterion)
-    if plan.get("verifier_type") != "persistence_restart":
-        return _persistence_evidence(
-            criterion,
-            "not_verified",
-            "Persistence restart verifier requires a persistence_restart plan",
-            failure_reason="Verifier plan is not persistence_restart",
-            collected_evidence={"plan_verifier_type": plan.get("verifier_type", "")},
-        )
-
-    env_extra, storage_evidence = _persistence_storage_config(root, str(criterion.get("id", "")))
-    handle: RuntimeServerHandle | None = None
-    restarted_handle: RuntimeServerHandle | None = None
-    method_path: list[dict[str, str]] = []
-    response_status: dict[str, Any] = {}
-    redacted_excerpt: dict[str, str] = {}
-    safe_summary: dict[str, Any] = {}
-    created_identifier = ""
-    marker = f"persist_{re.sub(r'[^A-Za-z0-9]+', '_', str(criterion.get('id') or 'criterion')).strip('_').lower()}_{int(time.time() * 1000)}"
-    pre_verification: dict[str, Any] = {}
-    stop_result: dict[str, Any] = {}
-    restart_result: dict[str, Any] = {}
-    post_verification: dict[str, Any] = {}
-    final_assertion: dict[str, Any] = {"passed": False}
-    collected: dict[str, Any] = {"storage": storage_evidence, "verifier_plan": plan}
-    status = "failed"
-    summary = "Persistence restart verification failed"
-    failure_reason = ""
-
-    try:
-        handle, start_evidence = _start_http_sequence_runtime(project, root, env_extra)
-        collected["initial_start"] = _runtime_start_evidence(start_evidence)
-        if not handle:
-            reason = start_evidence.get("error") or "Runtime unavailable for persistence restart verification"
-            return _persistence_evidence(
-                criterion,
-                "failed" if start_evidence.get("status") == "failed" else "not_verified",
-                "Initial runtime start failed for persistence verification",
-                marker=marker,
-                failure_reason=str(reason),
-                restart_result={"status": "not_started"},
-                final_assertion={"passed": False, "reason": str(reason)},
-                collected_evidence=collected,
-            )
-
-        openapi_response = _http_json_request(handle.base_url, "GET", "/openapi.json")
-        collected["openapi_status"] = openapi_response.get("status")
-        if not openapi_response.get("ok") or not isinstance(openapi_response.get("json"), dict):
-            status = "not_verified"
-            summary = "OpenAPI route discovery was unavailable for persistence verification"
-            failure_reason = openapi_response.get("error") or f"OpenAPI response status was {openapi_response.get('status')}"
-            return _persistence_evidence(
-                criterion,
-                status,
-                summary,
-                marker=marker,
-                failure_reason=failure_reason,
-                collected_evidence=collected,
-            )
-
-        openapi = openapi_response["json"]
-        route_set, discovery_reason, discovery_evidence = _discover_persistence_routes(openapi, criterion, plan)
-        collected["route_discovery"] = discovery_evidence
-        if discovery_reason or not route_set:
-            status = "not_verified"
-            summary = "Persistence route discovery was ambiguous or incomplete"
-            failure_reason = discovery_reason
-            return _persistence_evidence(
-                criterion,
-                status,
-                summary,
-                marker=marker,
-                failure_reason=failure_reason,
-                collected_evidence=collected,
-            )
-
-        create_status, create_summary, create_failure, create_assertion, safe_summary, payload, created_identifier = _execute_create_fixture(
-            handle,
-            openapi,
-            route_set["create"],
-            marker,
-            method_path,
-            response_status,
-            redacted_excerpt,
-        )
-        if create_status != "passed":
-            return _persistence_evidence(
-                criterion,
-                create_status,
-                create_summary,
-                marker=marker,
-                created_identifier=created_identifier,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason=create_failure,
-                final_assertion={"passed": bool(create_assertion), "reason": create_failure},
-                collected_evidence=collected,
-            )
-
-        required_fields = _required_payload_fields(openapi, route_set["create"], payload, str(safe_summary.get("marker_field", "")))
-        pre_response = _fetch_persisted_record(handle, route_set, created_identifier, marker, method_path, response_status, redacted_excerpt, "pre_restart_fetch")
-        pre_verification = _verify_persisted_response(pre_response, created_identifier, marker, required_fields)
-        if not pre_verification.get("record_exists") or not pre_verification.get("required_fields_present"):
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                "Created record was not verifiable before restart",
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason="Pre-restart fetch did not contain the created identifier, marker, and required fields",
-                final_assertion={"passed": False, "reason": "pre_restart_verification_failed"},
-                collected_evidence=collected,
-            )
-
-        first_pid = handle.result.evidence.get("pid")
-        stop_result = _stop_http_sequence_runtime(handle)
-        handle = None
-        if not stop_result.get("stopped_cleanly"):
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                "Runtime did not stop cleanly before persistence restart",
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                stop_result=stop_result,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason="Owned runtime process did not stop cleanly",
-                final_assertion={"passed": False, "reason": "stop_failed"},
-                collected_evidence=collected,
-            )
-
-        restarted_handle, raw_restart = _start_http_sequence_runtime(project, root, env_extra)
-        restart_result = _runtime_start_evidence(raw_restart)
-        restart_result["same_storage_env"] = sorted(env_extra) == sorted(env_extra)
-        if restarted_handle:
-            restart_result["real_restart"] = restarted_handle.result.evidence.get("pid") != first_pid
-        else:
-            restart_result["real_restart"] = False
-        if not restarted_handle:
-            reason = raw_restart.get("error") or "Runtime restart failed"
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                "Runtime restart failed during persistence verification",
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                stop_result=stop_result,
-                restart_result=restart_result,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason=str(reason),
-                final_assertion={"passed": False, "reason": str(reason)},
-                collected_evidence=collected,
-            )
-        if not restart_result.get("real_restart"):
-            failure_reason = "Restart did not create a distinct runtime process"
-            return _persistence_evidence(
-                criterion,
-                "failed",
-                failure_reason,
-                marker=marker,
-                created_identifier=created_identifier,
-                pre_restart_verification=pre_verification,
-                stop_result=stop_result,
-                restart_result=restart_result,
-                safe_request_summary=safe_summary,
-                method_path=method_path,
-                response_status=response_status,
-                redacted_response_excerpt=redacted_excerpt,
-                failure_reason=failure_reason,
-                final_assertion={"passed": False, "reason": "not_a_real_restart"},
-                collected_evidence=collected,
-            )
-
-        post_response = _fetch_persisted_record(restarted_handle, route_set, created_identifier, marker, method_path, response_status, redacted_excerpt, "post_restart_fetch")
-        post_verification = _verify_persisted_response(post_response, created_identifier, marker, required_fields)
-        identity_persisted = bool(post_verification.get("contains_identifier") or (created_identifier == marker and post_verification.get("contains_marker")))
-        final_assertion = {
-            "passed": bool(identity_persisted and post_verification.get("contains_marker") and post_verification.get("required_fields_present") and restart_result.get("real_restart")),
-            "identity_persisted": identity_persisted,
-            "marker_persisted": bool(post_verification.get("contains_marker")),
-            "required_fields_present": bool(post_verification.get("required_fields_present")),
-            "real_restart": bool(restart_result.get("real_restart")),
-        }
-        if final_assertion["passed"]:
-            status = "passed"
-            summary = "Created record survived a real application restart with the same storage configuration"
-            failure_reason = ""
-        else:
-            status = "failed"
-            summary = "Created record did not survive application restart"
-            failure_reason = "Post-restart fetch did not contain the same identifier, marker, and required fields; in-memory or non-persistent storage is likely"
-        return _persistence_evidence(
-            criterion,
-            status,
-            summary,
-            marker=marker,
-            created_identifier=created_identifier,
-            pre_restart_verification=pre_verification,
-            stop_result=stop_result,
-            restart_result=restart_result,
-            post_restart_verification=post_verification,
-            final_assertion=final_assertion,
-            method_path=method_path,
-            safe_request_summary=safe_summary,
-            response_status=response_status,
-            redacted_response_excerpt=redacted_excerpt,
-            failure_reason=failure_reason,
-            collected_evidence=collected,
-        )
-    finally:
-        if handle is not None:
-            collected["initial_runtime_cleanup"] = _stop_http_sequence_runtime(handle)
-        if restarted_handle is not None:
-            collected["post_restart_stop_result"] = _stop_http_sequence_runtime(restarted_handle)
-
-
-def _execute_create_observable_sequence(handle: RuntimeServerHandle, openapi: dict[str, Any], route_set: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str]) -> tuple[str, str, str, bool, dict[str, Any], dict[str, Any], str]:
-    create_route = route_set["create"]
-    list_route = route_set["list"]
-    status, summary, failure_reason, assertion_result, safe_summary, payload, created_identifier = _execute_create_fixture(handle, openapi, create_route, marker, method_path, response_status, redacted_excerpt)
-    if status != "passed":
-        return status, summary, failure_reason, assertion_result, safe_summary, payload, created_identifier
-    list_response = _http_json_request(handle.base_url, "GET", list_route["path"])
-    _record_http_step(method_path, response_status, redacted_excerpt, "list", "GET", list_route["path"], list_response)
-    if not list_response.get("ok"):
-        return "failed", "List endpoint did not return a successful response", list_response.get("error") or f"List endpoint returned HTTP {list_response.get('status')}", False, safe_summary, payload, created_identifier
-    assertion_result, _match_source = _list_contains_created_item(list_response.get("json"), created_identifier, marker)
-    if not assertion_result:
-        return "failed", "Created item is absent from the list endpoint response", "List response did not contain the created identifier or unique marker", False, safe_summary, payload, created_identifier
-    return "passed", "Created item appears in the list endpoint response", "", True, safe_summary, payload, created_identifier
-
-
-def _execute_read_sequence(handle: RuntimeServerHandle, openapi: dict[str, Any], route_set: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str]) -> tuple[str, str, str, bool, dict[str, Any], str]:
-    status, summary, failure_reason, assertion_result, safe_summary, _payload, created_identifier = _execute_create_fixture(handle, openapi, route_set["create"], marker, method_path, response_status, redacted_excerpt)
-    if status != "passed":
-        return status, summary, failure_reason, assertion_result, safe_summary, created_identifier
-    if created_identifier == marker:
-        return "not_verified", "Read route requires a concrete created identifier", "Create response did not expose an id-like value for the item read route", False, safe_summary, created_identifier
-    read_path = _replace_path_params(route_set["read"]["path"], created_identifier)
-    read_response = _http_json_request(handle.base_url, "GET", read_path)
-    _record_http_step(method_path, response_status, redacted_excerpt, "read", "GET", read_path, read_response)
-    if not read_response.get("ok"):
-        return "failed", "Read endpoint did not return the created record", read_response.get("error") or f"Read endpoint returned HTTP {read_response.get('status')}", False, safe_summary, created_identifier
-    read_contains = _json_contains_marker(read_response.get("json"), marker) or _extract_identifier(read_response.get("json")) == created_identifier
-    if not read_contains:
-        return "failed", "Read endpoint response did not contain the created record", "Read response did not contain the created identifier or unique marker", False, safe_summary, created_identifier
-    return "passed", "Created record can be opened/read by identifier", "", True, safe_summary, created_identifier
-
-
-def _execute_update_sequence(handle: RuntimeServerHandle, openapi: dict[str, Any], route_set: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], *, status_change: bool = False) -> tuple[str, str, str, bool, dict[str, Any], str, dict[str, Any]]:
-    status, summary, failure_reason, assertion_result, safe_summary, create_payload, created_identifier = _execute_create_fixture(handle, openapi, route_set["create"], marker, method_path, response_status, redacted_excerpt)
-    if status != "passed":
-        return status, summary, failure_reason, assertion_result, safe_summary, created_identifier, {}
-    if created_identifier == marker:
-        return "not_verified", "Update route requires a concrete created identifier", "Create response did not expose an id-like value for the item update route", False, safe_summary, created_identifier, {}
-    read_path = _replace_path_params(route_set["read"]["path"], created_identifier)
-    before_response = _http_json_request(handle.base_url, "GET", read_path)
-    _record_http_step(method_path, response_status, redacted_excerpt, "read_before_update", "GET", read_path, before_response)
-    if not before_response.get("ok"):
-        return "failed", "Read-before-update endpoint did not return the created record", before_response.get("error") or f"Read endpoint returned HTTP {before_response.get('status')}", False, safe_summary, created_identifier, {}
-    before_contains = _json_contains_marker(before_response.get("json"), marker) or _extract_identifier(before_response.get("json")) == created_identifier
-    if not before_contains:
-        return "failed", "Read-before-update response did not contain the fixture record", "Read-before-update response did not contain the created identifier or unique marker", False, safe_summary, created_identifier, {}
-    updated_marker = f"{marker}_updated"
-    update_payload, updated_field, updated_value, payload_reason = _build_update_payload(openapi, route_set["update"], create_payload, safe_summary.get("marker_field", ""), updated_marker, status_change=status_change)
-    safe_summary.setdefault("requests", {})["update"] = _safe_request_summary(update_payload, updated_marker, updated_field)
-    if payload_reason:
-        return "not_verified", "Update request payload could not be built from route schema", payload_reason, False, safe_summary, created_identifier, {}
-    update_path = _replace_path_params(route_set["update"]["path"], created_identifier)
-    update_response = _http_json_request(handle.base_url, str(route_set["update"]["method"]), update_path, update_payload)
-    _record_http_step(method_path, response_status, redacted_excerpt, "update", str(route_set["update"]["method"]), update_path, update_response)
-    if not update_response.get("ok"):
-        return "failed", "Update endpoint did not return a successful response", update_response.get("error") or f"Update endpoint returned HTTP {update_response.get('status')}", False, safe_summary, created_identifier, {}
-    after_response = _http_json_request(handle.base_url, "GET", read_path)
-    _record_http_step(method_path, response_status, redacted_excerpt, "read_after_update", "GET", read_path, after_response)
-    if not after_response.get("ok"):
-        return "failed", "Read-after-update endpoint did not return the record", after_response.get("error") or f"Read endpoint returned HTTP {after_response.get('status')}", False, safe_summary, created_identifier, {}
-    changed_value_observed = _json_contains_marker(after_response.get("json"), str(updated_value))
-    same_record_observed = _extract_identifier(after_response.get("json")) == created_identifier or _json_contains_marker(after_response.get("json"), created_identifier)
-    if not changed_value_observed or not same_record_observed:
-        return "failed", "Updated value was not persisted in the read response", "Read-after-update response did not contain the changed value for the same record", False, safe_summary, created_identifier, {"updated_field": updated_field, "updated_value": updated_value}
-    summary = "Changed status persisted and is observable" if status_change else "Updated field value persisted and is observable"
-    return "passed", summary, "", True, safe_summary, created_identifier, {"updated_field": updated_field, "updated_value": updated_value}
-
-
-def _execute_delete_sequence(handle: RuntimeServerHandle, openapi: dict[str, Any], route_set: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str]) -> tuple[str, str, str, bool, dict[str, Any], str]:
-    status, summary, failure_reason, assertion_result, safe_summary, _payload, created_identifier = _execute_create_fixture(handle, openapi, route_set["create"], marker, method_path, response_status, redacted_excerpt)
-    if status != "passed":
-        return status, summary, failure_reason, assertion_result, safe_summary, created_identifier
-    if created_identifier == marker:
-        return "not_verified", "Delete route requires a concrete created identifier", "Create response did not expose an id-like value for the item delete route", False, safe_summary, created_identifier
-    delete_path = _replace_path_params(route_set["delete"]["path"], created_identifier)
-    delete_response = _http_json_request(handle.base_url, "DELETE", delete_path)
-    _record_http_step(method_path, response_status, redacted_excerpt, "delete", "DELETE", delete_path, delete_response)
-    if not delete_response.get("ok"):
-        return "failed", "Delete endpoint did not return a successful response", delete_response.get("error") or f"Delete endpoint returned HTTP {delete_response.get('status')}", False, safe_summary, created_identifier
-    if route_set.get("read"):
-        read_path = _replace_path_params(route_set["read"]["path"], created_identifier)
-        read_response = _http_json_request(handle.base_url, "GET", read_path)
-        _record_http_step(method_path, response_status, redacted_excerpt, "read_after_delete", "GET", read_path, read_response)
-        if read_response.get("ok") and (_json_contains_marker(read_response.get("json"), marker) or _extract_identifier(read_response.get("json")) == created_identifier):
-            return "failed", "Deleted record is still readable", "Read-after-delete response still contains the deleted identifier or marker", False, safe_summary, created_identifier
-        if not route_set.get("list"):
-            return "passed", "Deleted record is no longer observable", "", True, safe_summary, created_identifier
-    list_response = _http_json_request(handle.base_url, "GET", route_set["list"]["path"])
-    _record_http_step(method_path, response_status, redacted_excerpt, "list_after_delete", "GET", route_set["list"]["path"], list_response)
-    if not list_response.get("ok"):
-        return "failed", "List-after-delete endpoint did not return a successful response", list_response.get("error") or f"List endpoint returned HTTP {list_response.get('status')}", False, safe_summary, created_identifier
-    still_present, _match_source = _list_contains_created_item(list_response.get("json"), created_identifier, marker)
-    if still_present:
-        return "failed", "Deleted record is still present in the list response", "List-after-delete response still contains the deleted identifier or marker", False, safe_summary, created_identifier
-    return "passed", "Deleted record is no longer observable", "", True, safe_summary, created_identifier
-
-
-def _execute_search_or_filter_sequence(handle: RuntimeServerHandle, openapi: dict[str, Any], route_set: dict[str, Any], marker: str, kind: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str]) -> tuple[str, str, str, bool, dict[str, Any], str, dict[str, Any]]:
-    create_route = route_set["create"]
-    base_payload, marker_field, payload_reason = _build_create_payload(openapi, create_route, marker)
-    safe_summary = _safe_request_summary(base_payload, marker, marker_field)
-    safe_summary.setdefault("requests", {})[kind] = {"query_param": route_set.get(f"{kind}_param", "")}
-    if payload_reason:
-        return "not_verified", "Create request payload could not be built from route schema", payload_reason, False, safe_summary, "", {}
-    if not marker_field:
-        return "not_verified", f"{kind.title()} fixtures require a writable marker field", "Create schema did not expose a writable string field for target/control markers", False, safe_summary, "", {}
-    target_marker = f"{marker}_target"
-    control_marker = f"{marker}_control"
-    query_param = str(route_set.get(f"{kind}_param") or "")
-    query_value = target_marker
-    extra: dict[str, Any] = {"target_marker": target_marker, "control_marker": control_marker, "query_param": query_param}
-    target_payload = _payload_variant(base_payload, marker_field, target_marker)
-    control_payload = _payload_variant(base_payload, marker_field, control_marker)
-    if kind == "filter":
-        filter_field, target_value, control_value, filter_reason = _filter_field_and_values(openapi, create_route, query_param)
-        if filter_reason:
-            return "not_verified", "Filter fixture payloads could not be built from route schema", filter_reason, False, safe_summary, "", extra
-        target_payload = _payload_variant(target_payload, marker_field, target_marker, field=filter_field, field_value=target_value)
-        control_payload = _payload_variant(control_payload, marker_field, control_marker, field=filter_field, field_value=control_value)
-        query_value = target_value
-        extra.update({"filter_field": filter_field, "target_filter_value": target_value, "control_filter_value": control_value})
-    target_response = _http_json_request(handle.base_url, "POST", create_route["path"], target_payload)
-    _record_http_step(method_path, response_status, redacted_excerpt, "create_target", "POST", create_route["path"], target_response)
-    if not target_response.get("ok"):
-        return "failed", "Target fixture create endpoint did not return a successful response", target_response.get("error") or f"Create endpoint returned HTTP {target_response.get('status')}", False, safe_summary, "", extra
-    control_response = _http_json_request(handle.base_url, "POST", create_route["path"], control_payload)
-    _record_http_step(method_path, response_status, redacted_excerpt, "create_control", "POST", create_route["path"], control_response)
-    if not control_response.get("ok"):
-        return "failed", "Control fixture create endpoint did not return a successful response", control_response.get("error") or f"Create endpoint returned HTTP {control_response.get('status')}", False, safe_summary, "", extra
-    target_identifier = _extract_identifier(target_response.get("json")) or target_marker
-    query_path = _append_query(route_set[kind]["path"], {query_param: query_value})
-    query_response = _http_json_request(handle.base_url, "GET", query_path)
-    _record_http_step(method_path, response_status, redacted_excerpt, kind, "GET", query_path, query_response)
-    if not query_response.get("ok"):
-        return "failed", f"{kind.title()} endpoint did not return a successful response", query_response.get("error") or f"{kind.title()} endpoint returned HTTP {query_response.get('status')}", False, safe_summary, target_identifier, extra
-    target_present = _json_contains_marker(query_response.get("json"), target_marker)
-    control_present = _json_contains_marker(query_response.get("json"), control_marker)
-    extra.update({"target_present": target_present, "control_present": control_present})
-    if not target_present or control_present:
-        return "failed", f"{kind.title()} response did not isolate the requested record", f"Expected target_present=True and control_present=False, got target_present={target_present}, control_present={control_present}", False, safe_summary, target_identifier, extra
-    return "passed", f"{kind.title()} response includes the target record and excludes the control record", "", True, safe_summary, target_identifier, extra
-
-
 def _http_sequence_evidence(
     criterion: dict[str, Any],
     status: str,
@@ -2558,9 +1588,9 @@ def _http_sequence_evidence(
         "http_sequence",
         status,
         summary,
-        setup_steps=["Start runtime via selected runtime adapter", "Discover API routes from project OpenAPI evidence"],
+        setup_steps=["Start runtime via selected runtime adapter", "Discover create/list API routes from project OpenAPI evidence"],
         action_steps=[f"{step.get('method')} {step.get('path')}" for step in method_path or []],
-        assertions=["HTTP actions return expected statuses", "Observable response state matches the criterion-specific CRUD assertion"],
+        assertions=["Create response status is successful", "Created identifier or unique marker appears in the list response"],
         collected_evidence=collected,
         failure_reason=failure_reason,
         criterion_id=criterion.get("id", ""),
@@ -2577,14 +1607,13 @@ def _http_sequence_evidence(
 
 def _verify_http_sequence(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     plan = _criterion_verifier_plan(criterion)
-    kind = _crud_sequence_kind(criterion, plan)
-    if not kind:
+    if not _is_create_list_http_sequence(plan):
         return _http_sequence_evidence(
             criterion,
             "not_verified",
-            "HTTP sequence verifier supports CRUD plans only",
+            "HTTP sequence verifier supports create/list plans only",
             plan=plan,
-            failure_reason="Verifier plan is not an unambiguous CRUD HTTP sequence",
+            failure_reason="Verifier plan is not an unambiguous create/list HTTP sequence",
             collected_evidence={"plan_verifier_type": plan.get("verifier_type", "")},
         )
 
@@ -2612,7 +1641,7 @@ def _verify_http_sequence(criterion: dict[str, Any], project: dict, root: str, q
     status = "not_verified"
     summary = "HTTP sequence verification did not execute"
     failure_reason = ""
-    collected: dict[str, Any] = {"runtime": runtime_evidence, "unique_marker": marker, "crud_sequence_kind": kind}
+    collected: dict[str, Any] = {"runtime": runtime_evidence, "unique_marker": marker}
     try:
         openapi_response = _http_json_request(handle.base_url, "GET", "/openapi.json")
         collected["openapi_status"] = openapi_response.get("status")
@@ -2622,46 +1651,58 @@ def _verify_http_sequence(criterion: dict[str, Any], project: dict, root: str, q
             failure_reason = openapi_response.get("error") or f"OpenAPI response status was {openapi_response.get('status')}"
         else:
             openapi = openapi_response["json"]
-            route_set, discovery_reason, discovery_evidence = _discover_crud_route_set(openapi, criterion, plan, kind)
+            create_route, list_route, discovery_reason, discovery_evidence = _discover_create_list_routes(openapi, criterion, plan)
             collected["route_discovery"] = discovery_evidence
             if discovery_reason:
                 status = "not_verified"
-                summary = "CRUD route discovery was ambiguous or incomplete"
+                summary = "Create/list route discovery was ambiguous or incomplete"
                 failure_reason = discovery_reason
             else:
-                extra: dict[str, Any] = {}
-                if kind == "create":
-                    status, summary, failure_reason, assertion_result, safe_summary, _payload, created_identifier = _execute_create_observable_sequence(
-                        handle, openapi, route_set, marker, method_path, response_status, redacted_excerpt
-                    )
-                elif kind == "read":
-                    status, summary, failure_reason, assertion_result, safe_summary, created_identifier = _execute_read_sequence(
-                        handle, openapi, route_set, marker, method_path, response_status, redacted_excerpt
-                    )
-                elif kind in ("update", "status_change"):
-                    status, summary, failure_reason, assertion_result, safe_summary, created_identifier, extra = _execute_update_sequence(
-                        handle,
-                        openapi,
-                        route_set,
-                        marker,
-                        method_path,
-                        response_status,
-                        redacted_excerpt,
-                        status_change=kind == "status_change",
-                    )
-                elif kind == "delete":
-                    status, summary, failure_reason, assertion_result, safe_summary, created_identifier = _execute_delete_sequence(
-                        handle, openapi, route_set, marker, method_path, response_status, redacted_excerpt
-                    )
-                elif kind in ("search", "filter"):
-                    status, summary, failure_reason, assertion_result, safe_summary, created_identifier, extra = _execute_search_or_filter_sequence(
-                        handle, openapi, route_set, marker, kind, method_path, response_status, redacted_excerpt
-                    )
-                else:
+                method_path = [
+                    {"method": "POST", "path": create_route["path"]},
+                    {"method": "GET", "path": list_route["path"]},
+                ]
+                payload, marker_field, payload_reason = _build_create_payload(openapi, create_route, marker)
+                safe_summary = _safe_request_summary(payload, marker, marker_field)
+                if payload_reason:
                     status = "not_verified"
-                    summary = "HTTP sequence verifier does not support this CRUD plan kind"
-                    failure_reason = f"Unsupported CRUD sequence kind: {kind}"
-                collected.update(extra)
+                    summary = "Create request payload could not be built from route schema"
+                    failure_reason = payload_reason
+                else:
+                    create_response = _http_json_request(handle.base_url, "POST", create_route["path"], payload)
+                    response_status["create"] = create_response.get("status")
+                    redacted_excerpt["create"] = str(create_response.get("excerpt") or "")
+                    if not create_response.get("ok"):
+                        status = "failed"
+                        summary = "Create endpoint did not return a successful response"
+                        failure_reason = create_response.get("error") or f"Create endpoint returned HTTP {create_response.get('status')}"
+                        assertion_result = False
+                    else:
+                        created_identifier = _extract_identifier(create_response.get("json")) or (marker if marker_field else "")
+                        if not created_identifier:
+                            status = "failed"
+                            summary = "Create succeeded but produced no created identifier or unique marker"
+                            failure_reason = "Create response did not expose an id-like field and no unique marker was accepted in the request payload"
+                            assertion_result = False
+                        else:
+                            list_response = _http_json_request(handle.base_url, "GET", list_route["path"])
+                            response_status["list"] = list_response.get("status")
+                            redacted_excerpt["list"] = str(list_response.get("excerpt") or "")
+                            if not list_response.get("ok"):
+                                status = "failed"
+                                summary = "List endpoint did not return a successful response"
+                                failure_reason = list_response.get("error") or f"List endpoint returned HTTP {list_response.get('status')}"
+                                assertion_result = False
+                            else:
+                                assertion_result, match_source = _list_contains_created_item(list_response.get("json"), created_identifier, marker)
+                                collected["match_source"] = match_source
+                                if assertion_result:
+                                    status = "passed"
+                                    summary = "Created item appears in the list endpoint response"
+                                else:
+                                    status = "failed"
+                                    summary = "Created item is absent from the list endpoint response"
+                                    failure_reason = "List response did not contain the created identifier or unique marker"
     finally:
         collected["runtime_stop"] = _stop_http_sequence_runtime(handle)
 
@@ -2824,9 +1865,6 @@ def _verify_command(criterion: dict[str, Any], project: dict, root: str, qa_resu
 def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
     evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        evidence = _runtime_smoke(project, root)
-        runtime_check = {"name": "runtime_smoke", "status": "passed" if evidence.get("status") == "passed" else "failed", "evidence": evidence}
     status = "passed" if runtime_check.get("status") == "passed" and evidence.get("status") == "passed" else "failed"
     runtime_status = evidence.get("status", "not_verified")
     return _registry_evidence(
@@ -2840,160 +1878,6 @@ def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, q
         runtime_status=runtime_status,
         adapter=evidence.get("adapter", ""),
         limitation=evidence.get("limitation", ""),
-    )
-
-
-def _verify_runtime_start(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        evidence = _runtime_smoke(project, root)
-        runtime_check = {"name": "runtime_smoke", "status": "passed" if evidence.get("status") == "passed" else "failed", "evidence": evidence}
-
-    adapter = str(evidence.get("adapter") or "")
-    unsupported = adapter == "generic" or evidence.get("status") == "not_applicable"
-    startup_ready = bool(evidence.get("started") or evidence.get("credential_free"))
-    response_ready = bool(evidence.get("status_code") and 200 <= int(evidence.get("status_code")) < 400) or bool(evidence.get("verified"))
-    stopped_cleanly = bool(evidence.get("stopped_cleanly"))
-    passed = bool(runtime_check.get("status") == "passed" and evidence.get("status") == "passed" and startup_ready and response_ready and stopped_cleanly and not unsupported)
-    status = "passed" if passed else "not_verified" if unsupported else "failed"
-    failure_reason = ""
-    if status != "passed":
-        if unsupported:
-            failure_reason = "No supported runtime adapter produced direct startup evidence"
-        else:
-            failure_reason = evidence.get("error") or f"Runtime startup evidence incomplete: status={evidence.get('status')} started={startup_ready} response_ready={response_ready} stopped_cleanly={stopped_cleanly}"
-    return _registry_evidence(
-        "runtime_start",
-        status,
-        "Runtime adapter started the app, observed readiness, and stopped cleanly" if status == "passed" else "Runtime startup was not directly verified",
-        action_steps=["Start app with selected runtime adapter", "Probe primary page or health endpoint", "Stop owned runtime process"],
-        assertions=["Runtime process starts", "Port or local process becomes ready", "Primary page or health endpoint responds", "Owned process stops cleanly"],
-        collected_evidence={
-            "adapter": adapter,
-            "started": startup_ready,
-            "verified": bool(evidence.get("verified")),
-            "response_status": evidence.get("status_code"),
-            "url": evidence.get("url", ""),
-            "stopped_cleanly": stopped_cleanly,
-            "pid": evidence.get("pid"),
-            "owned_process_only": evidence.get("owned_process_only", False),
-        },
-        failure_reason=failure_reason,
-        adapter=adapter,
-        runtime_status=evidence.get("status", "not_verified"),
-        response_status=evidence.get("status_code"),
-        url=evidence.get("url", ""),
-        started=startup_ready,
-        verified=bool(evidence.get("verified")),
-        stopped_cleanly=stopped_cleanly,
-    )
-
-
-def _html_from_runtime_or_static(project: dict, root: str, runtime_evidence: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    html = str(runtime_evidence.get("response_sample") or "")
-    source = {"source": "runtime_response_sample" if html else ""}
-    if html:
-        return html, source
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-    if "static_website" in profiles:
-        entrypoint = _static_entrypoint(root)
-        if entrypoint:
-            entry_rel, _site_root = entrypoint
-            try:
-                return _read(os.path.join(root, entry_rel)), {"source": "static_entry_html", "entry_html": entry_rel}
-            except Exception as exc:
-                return "", {"source": "static_entry_html", "error": _tail_output(str(exc))}
-    return "", source
-
-
-def _fatal_render_errors(html: str) -> list[str]:
-    lower = html.lower()
-    markers = ("uncaught runtime error", "error boundary", "traceback", "typeerror:", "referenceerror:", "syntaxerror:", "failed to compile")
-    return [marker for marker in markers if marker in lower]
-
-
-def _primary_controls_exist(html: str) -> bool:
-    return bool(re.search(r"<(nav|header|main|button|a|form|input|select|textarea)\b", html, flags=re.IGNORECASE) or re.search(r"\brole\s*=\s*['\"](?:navigation|button|main|search)['\"]", html, flags=re.IGNORECASE))
-
-
-def _catastrophic_horizontal_overflow(html: str) -> dict[str, Any]:
-    hits = []
-    for match in re.finditer(r"(?:min-width|width)\s*:\s*(\d{4,})px", html, flags=re.IGNORECASE):
-        try:
-            width = int(match.group(1))
-        except ValueError:
-            continue
-        if width > 900:
-            hits.append(match.group(0))
-    overflow_scroll = bool(re.search(r"overflow-x\s*:\s*(scroll|auto)", html, flags=re.IGNORECASE) and hits)
-    return {"catastrophic": bool(hits or overflow_scroll), "fixed_width_rules": hits[:10], "overflow_x_scroll_with_fixed_width": overflow_scroll}
-
-
-def _verify_responsive_ui(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-    if not profiles.intersection({"static_website", "react_frontend", "vite_frontend"}):
-        return _registry_evidence(
-            "responsive_ui",
-            "not_verified",
-            "Responsive UI verification is unsupported for this project profile",
-            action_steps=["Check project profile for supported browser UI runtime"],
-            assertions=["Only supported UI stacks are directly verified"],
-            collected_evidence={"profiles": sorted(profiles)},
-            failure_reason="Unsupported UI stack for lightweight responsive verification",
-        )
-
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    runtime_evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    if not runtime_check:
-        runtime_evidence = _runtime_smoke(project, root)
-    html, html_source = _html_from_runtime_or_static(project, root, runtime_evidence)
-    status_code = runtime_evidence.get("status_code")
-    page_renders = bool((status_code is None or 200 <= int(status_code) < 400) and html.strip())
-    fatal_errors = _fatal_render_errors(html)
-    controls_exist = _primary_controls_exist(html)
-    overflow = _catastrophic_horizontal_overflow(html)
-    desktop = {
-        "primary_page_renders": page_renders,
-        "fatal_render_errors": fatal_errors,
-        "primary_navigation_or_control_area_exists": controls_exist,
-    }
-    tablet = {
-        "primary_page_renders": page_renders,
-        "primary_controls_reachable": controls_exist,
-        "catastrophic_horizontal_overflow": overflow["catastrophic"],
-        "overflow_evidence": overflow,
-    }
-    passed = page_renders and not fatal_errors and controls_exist and not overflow["catastrophic"]
-    status = "passed" if passed else "failed"
-    failure_parts = []
-    if not page_renders:
-        failure_parts.append("primary page did not render")
-    if fatal_errors:
-        failure_parts.append("fatal render error markers found")
-    if not controls_exist:
-        failure_parts.append("primary navigation/control area was not found")
-    if overflow["catastrophic"]:
-        failure_parts.append("catastrophic horizontal overflow indicators found")
-    return _registry_evidence(
-        "responsive_ui",
-        status,
-        "Desktop and tablet UI reachability assertions passed" if passed else "Responsive UI assertions failed",
-        action_steps=["Start supported UI runtime or inspect static entry page", "Assert desktop render/control reachability", "Assert tablet control reachability and overflow heuristic"],
-        assertions=["Desktop primary page renders without fatal error", "Desktop navigation/control area exists", "Tablet controls remain reachable", "No catastrophic horizontal overflow indicators"],
-        collected_evidence={
-            "profiles": sorted(profiles),
-            "runtime": _runtime_start_evidence(runtime_evidence),
-            "html_source": html_source,
-            "html_excerpt": _redact_secrets(html[:1000]),
-            "desktop": desktop,
-            "tablet": tablet,
-        },
-        failure_reason="; ".join(failure_parts),
-        desktop=desktop,
-        tablet=tablet,
-        response_status=status_code,
-        html_source=html_source,
     )
 
 
@@ -3089,14 +1973,8 @@ def _verify_telegram_smoke(criterion: dict[str, Any], project: dict, root: str, 
 
 def _verify_feature_trace_static_or_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     plan = _criterion_verifier_plan(criterion)
-    if plan.get("verifier_type") == "runtime_start":
-        return _verify_runtime_start(criterion, project, root, qa_result, checks)
-    if plan.get("verifier_type") == "responsive_ui":
-        return _verify_responsive_ui(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "http_sequence":
         return _verify_http_sequence(criterion, project, root, qa_result, checks)
-    if plan.get("verifier_type") == "persistence_restart":
-        return _verify_persistence_restart(criterion, project, root, qa_result, checks)
     return _registry_evidence(
         "feature_trace_static_or_smoke",
         "not_verified",
@@ -3114,14 +1992,11 @@ ACCEPTANCE_VERIFIERS = {
     "command": _verify_command,
     "python_import": _verify_python_import,
     "runtime_smoke": _verify_runtime_smoke,
-    "runtime_start": _verify_runtime_start,
-    "responsive_ui": _verify_responsive_ui,
     "static_asset_check": _verify_static_asset_check,
     "secret_scan": _verify_secret_scan,
     "file_and_secret_check": _verify_file_and_secret_check,
     "telegram_smoke": _verify_telegram_smoke,
     "http_sequence": _verify_http_sequence,
-    "persistence_restart": _verify_persistence_restart,
     "feature_trace_static_or_smoke": _verify_feature_trace_static_or_smoke,
 }
 
