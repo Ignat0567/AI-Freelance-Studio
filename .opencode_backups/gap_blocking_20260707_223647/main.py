@@ -36,14 +36,29 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Все тонкости, нюансы и грабли, выявленные в процессе разработки.
 _CRITICAL_RULES = (
     "CRITICAL RULES — VIOLATING ANY WILL CAUSE PROJECT REJECTION:\n"
-    "- Do not hardcode secrets or credentials; use configuration, environment variables, or explicit placeholders.\n"
+    "- os.getenv() MUST always provide a default value: os.getenv('KEY', 'default'). NEVER call os.getenv() without a second argument.\n"
+    "- Use ONLY ESM (import/export) for JS/TS — NEVER CommonJS (require/module.exports).\n"
+    "- EVERY function must have proper error handling: try/except for Python, try/catch for JS/TS.\n"
+    "- NO hardcoded values — use env vars, config constants, or function parameters.\n"
     "- ALL file paths use forward slash (/) not backslash (\\) even on Windows.\n"
     "- Import names MUST exactly match the exports of the dependency file — verify before importing.\n"
     "- Test assertions MUST use the exact field names/types from actual models/schemas.\n"
     "- Tests MUST only test endpoints that actually exist in the API code — cross-reference before writing.\n"
-    "- Do not leave placeholder/stub implementation, fake output, or skipped/falsified tests.\n"
+    "- For React projects: backend returns JSON only (dict/list), NOT HTML templates. NO Jinja2 templates. Enable CORS middleware for the frontend origin.\n"
+    "- For simple projects: use FastAPI + Jinja2 templates + vanilla JS + CSS. Use direct /static/path in templates, NOT url_for().\n"
+    "- In Jinja2 templates use DIRECT paths: /static/style.css, NOT {{ url_for('static', filename='style.css') }}.\n"
+    "- PyMuPDF: import as 'import fitz' (not 'import PyMuPDF'). For opening PDFs from upload: fitz.open(stream=bytes, filetype='pdf'), NOT fitz.open('filename.pdf').\n"
+    "- uvicorn.run() must NOT have debug=True. Use: uvicorn.run(app, host=host, port=port) or with reload=True recommended.\n"
+    "- In requirements.txt: use 'python-dotenv' NOT 'dotenv'. For PyMuPDF use 'PyMuPDF' NOT 'fitz'.\n"
+    "- Do NOT add numpy, pandas, scipy, matplotlib, sklearn, scikit-learn to requirements.txt — they are almost never actually needed.\n"
+    "- For SQLAlchemy: pick sync OR async — NEVER mix. Sync: create_engine(). Async: create_async_engine() + AsyncSession. Driver: psycopg2-binary (sync PG) or asyncpg (async PG) or aiosqlite (async SQLite).\n"
+    "- Optional[X] imports: use ONLY from typing import Optional. Do NOT mix Optional from different sources.\n"
+    "- __init__.py must exist in every Python package directory (any directory containing .py files).\n"
     "- Container names in docker-compose.yml must NOT start with a digit. Use underscores or letters.\n"
-    "- ALL dependencies used in code MUST appear in the project's dependency manifest.\n"
+    "- ALL dependencies used in code MUST appear in requirements.txt (Python) or package.json (JS).\n"
+    "- Use sync route handlers (def, not async def) for simple projects. Only use async def when using async DB drivers or making concurrent HTTP calls.\n"
+    "- Frontend projects MUST use Tailwind CSS with PostCSS (@tailwind directives, tailwind.config.js, postcss.config.js, package.json with type=module).\n"
+    "- If ESM config files exist (vite.config.js, tailwind.config.js, postcss.config.js), package.json MUST have '\"type\": \"module\"'.\n"
 )
 
 
@@ -90,9 +105,6 @@ acceptance_summary = project_spec_module.acceptance_summary
 detect_project_profiles = project_spec_module.detect_project_profiles
 record_acceptance_evidence = project_spec_module.record_acceptance_evidence
 ensure_acceptance_evidence_history = project_spec_module.ensure_acceptance_evidence_history
-append_agent_review_issues = project_spec_module.append_agent_review_issues
-build_product_judge_input = project_spec_module.build_product_judge_input
-Issue = project_spec_module.Issue
 run_final_delivery_audit = delivery_audit_module.run_final_delivery_audit
 write_delivery_report = delivery_audit_module.write_delivery_report
 
@@ -711,7 +723,7 @@ AGENT_MODELS = {
 }
 
 # ── Resume / Phase tracking ──────────────────────────────────────────────────
-_PHASE_ORDER = ["planning", "designing", "testing", "coding", "review", "qa", "product_judge"]
+_PHASE_ORDER = ["planning", "designing", "testing", "coding", "review", "qa"]
 
 _TERMINAL_PROJECT_STATES = {
     "completed",
@@ -733,7 +745,6 @@ _STATE_DISPLAY = {
     "verifying": "Verifying",
     "repairing": "Repairing",
     "final_audit": "Final audit",
-    "product_judge": "Product judge",
     "completed": "Completed",
     "failed": "Failed",
     "failed_qa": "Failed QA",
@@ -745,44 +756,18 @@ _STATE_DISPLAY = {
     "cancelled": "Cancelled",
 }
 
-AGENT_STAGE_METADATA = {
-    "alex": {"stage": "planning", "display_role": "Project Manager"},
-    "maya": {"stage": "planning", "display_role": "Business Analyst"},
-    "elena": {"stage": "designing", "display_role": "UI/UX Designer"},
-    "bugcatcher": {"stage": "testing", "display_role": "QA Engineer"},
-    "codex": {"stage": "coding", "display_role": "Software Architect"},
-    "sentinel": {"stage": "review", "display_role": "Security Auditor"},
-    "lupa": {"stage": "review", "display_role": "Code Reviewer"},
-    "goldie": {"stage": "finance", "display_role": "Financial Advisor"},
-}
-
-PIPELINE_STAGE_METADATA = {
-    "planning": {"label": "Planning"},
-    "designing": {"label": "Design"},
-    "testing": {"label": "QA (TDD)"},
-    "coding": {"label": "Generating"},
-    "review": {"label": "Review"},
-    "qa": {"label": "QA"},
-    "verifying": {"label": "Verifying"},
-    "repairing": {"label": "Repairing"},
-    "final_audit": {"label": "Final Audit"},
-    "product_judge": {"label": "Product Judge"},
-}
-PIPELINE_UI_STAGE_ORDER = ["planning", "designing", "testing", "coding", "review", "verifying", "repairing", "final_audit", "product_judge"]
-
 _ALLOWED_STATE_TRANSITIONS = {
-    "created": {"meeting", "planning", "cancelled", "needs_human_input", "needs_credentials"},
+    "created": {"meeting", "planning", "cancelled"},
     "meeting": {"planning", "cancelled", "blocked", "failed"},
-    "planning": {"awaiting_input", "designing", "cancelled", "failed", "blocked", "needs_human_input", "needs_credentials"},
+    "planning": {"awaiting_input", "designing", "cancelled", "failed", "blocked", "needs_human_input"},
     "awaiting_input": {"planning", "designing", "cancelled", "needs_human_input"},
     "designing": {"testing", "cancelled", "failed", "blocked"},
     "testing": {"coding", "verifying", "cancelled", "failed", "blocked"},
     "coding": {"review", "verifying", "cancelled", "failed", "blocked", "needs_credentials"},
     "review": {"review", "verifying", "repairing", "cancelled", "failed", "blocked"},
-    "verifying": {"repairing", "final_audit", "needs_user_input", "needs_human_input", "needs_credentials", "failed_qa", "cancelled", "failed", "blocked"},
+    "verifying": {"repairing", "final_audit", "needs_user_input", "needs_credentials", "failed_qa", "cancelled", "failed", "blocked"},
     "repairing": {"review", "verifying", "failed_qa", "cancelled", "failed", "blocked"},
-    "final_audit": {"product_judge", "completed", "repairing", "failed_qa", "cancelled", "failed", "blocked"},
-    "product_judge": {"completed", "repairing", "failed_qa", "cancelled", "failed", "blocked"},
+    "final_audit": {"completed", "repairing", "failed_qa", "cancelled", "failed", "blocked"},
     "needs_user_input": {"verifying", "cancelled", "failed_qa", "failed"},
     "needs_human_input": {"planning", "verifying", "cancelled", "failed"},
     "failed_qa": {"planning", "verifying", "cancelled"},
@@ -814,7 +799,6 @@ def _delivery_gates_satisfied(project: dict) -> bool:
         project.get("_generation_finished")
         and project.get("_qa_passed")
         and project.get("_final_audit_passed")
-        and project.get("_product_judge_passed")
     )
 
 
@@ -841,7 +825,7 @@ def _set_project_status(project: dict, new_state: str, *, reason: str = "", forc
             project["logs"].append("[PROJECT STATE] Completion blocked (project is cancelled).")
             return False
         if not _delivery_gates_satisfied(project):
-            project["logs"].append("[PROJECT STATE] Completion blocked (generation, QA, final audit, and Product Judge are mandatory).")
+            project["logs"].append("[PROJECT STATE] Completion blocked (generation, QA, and final audit are mandatory).")
             return False
 
     if not force and not _can_transition(project, new_state):
@@ -862,7 +846,6 @@ def _reset_delivery_gates(project: dict):
     project["_generation_finished"] = False
     project["_qa_passed"] = False
     project["_final_audit_passed"] = False
-    project["_product_judge_passed"] = False
 
 
 def _mark_generation_finished(project: dict, finished: bool):
@@ -870,75 +853,16 @@ def _mark_generation_finished(project: dict, finished: bool):
     if not finished:
         project["_qa_passed"] = False
         project["_final_audit_passed"] = False
-        project["_product_judge_passed"] = False
 
 
 def _mark_qa_passed(project: dict, passed: bool):
     project["_qa_passed"] = bool(passed)
     if not passed:
         project["_final_audit_passed"] = False
-        project["_product_judge_passed"] = False
 
 
 def _mark_final_audit_passed(project: dict, passed: bool):
     project["_final_audit_passed"] = bool(passed)
-    if not passed:
-        project["_product_judge_passed"] = False
-
-
-def _mark_product_judge_passed(project: dict, passed: bool):
-    project["_product_judge_passed"] = bool(passed)
-
-
-def _record_requirement_gap_assumptions(project: dict) -> list[dict]:
-    spec = project.get("project_spec") if isinstance(project.get("project_spec"), dict) else {}
-    gaps = spec.get("requirement_gaps", []) if isinstance(spec, dict) else []
-    assumptions = []
-    for gap in gaps:
-        if not isinstance(gap, dict):
-            continue
-        if gap.get("severity") in ("blocker", "critical"):
-            continue
-        assumptions.append(gap)
-    if assumptions:
-        project["requirement_assumptions"] = assumptions
-        project.setdefault("logs", []).append(f"[REQUIREMENT GAPS] Continuing autonomously with {len(assumptions)} recorded non-critical assumption(s).")
-    return assumptions
-
-
-def _requirement_gap_blocker(project: dict) -> tuple[str | None, list[dict]]:
-    spec = project.get("project_spec") if isinstance(project.get("project_spec"), dict) else {}
-    gaps = spec.get("requirement_gaps", []) if isinstance(spec, dict) else []
-    if not isinstance(gaps, list):
-        return None, []
-    missing_credentials = [gap for gap in gaps if isinstance(gap, dict) and gap.get("category") == "missing_credential"]
-    if missing_credentials:
-        return "needs_credentials", missing_credentials
-    critical_ambiguity = [
-        gap for gap in gaps
-        if isinstance(gap, dict) and gap.get("category") == "ambiguity" and gap.get("severity") in ("critical", "blocker")
-    ]
-    if critical_ambiguity:
-        return "needs_human_input", critical_ambiguity
-    return None, []
-
-
-def _apply_requirement_gap_blockers(project: dict) -> bool:
-    _record_requirement_gap_assumptions(project)
-    state, gaps = _requirement_gap_blocker(project)
-    if not state:
-        return False
-    project["blocking_requirement_gaps"] = gaps
-    if state == "needs_credentials":
-        project["needs_credentials"] = True
-        project["manual_steps"] = [gap.get("suggested_question", "Provide required external credentials.") for gap in gaps]
-    else:
-        project["needs_human_input"] = True
-        project["manual_steps"] = [gap.get("suggested_question", "Clarify critical requirement ambiguity.") for gap in gaps]
-    _mark_generation_finished(project, False)
-    _set_project_status(project, state, reason="critical requirement gap")
-    project.setdefault("logs", []).append(f"[REQUIREMENT GAPS] Blocking before coding: {len(gaps)} critical gap(s) require {state.replace('_', ' ')}.")
-    return True
 
 
 def _is_cancelled(project: dict) -> bool:
@@ -992,132 +916,6 @@ def _project_contract_ready(project: dict) -> tuple[bool, list[str]]:
     if not isinstance(qa_plan, dict) or not qa_plan.get("levels"):
         errors.append("Missing project-specific QA plan")
     return not errors, errors
-
-
-def _parse_product_judge_response(raw: str) -> dict:
-    text = str(raw or "").strip()
-    if text.startswith("```json"):
-        text = text.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif text.startswith("```"):
-        text = text.split("```", 1)[1].split("```", 1)[0].strip()
-    try:
-        parsed = json.loads(text)
-    except Exception:
-        return {"status": "invalid", "objections": [], "parse_error": "Product Judge did not return structured JSON"}
-    if not isinstance(parsed, dict):
-        return {"status": "invalid", "objections": [], "parse_error": "Product Judge JSON root must be an object"}
-    objections = parsed.get("objections", [])
-    if not isinstance(objections, list):
-        objections = []
-    return {"status": str(parsed.get("status", "unknown")).lower(), "objections": objections}
-
-
-def _valid_product_judge_objections(project: dict, objections: list[dict]) -> list[dict]:
-    requirement_ids = {req.get("id") for req in project.get("project_spec", {}).get("requirements", []) if isinstance(req, dict)}
-    criterion_ids = {criterion.get("id") for criterion in project.get("acceptance_criteria", []) if isinstance(criterion, dict)}
-    valid = []
-    for index, objection in enumerate(objections, start=1):
-        if not isinstance(objection, dict):
-            continue
-        requirement_id = str(objection.get("requirement_id") or "").strip()
-        criterion_id = str(objection.get("criterion_id") or "").strip()
-        if requirement_id and requirement_ids and requirement_id not in requirement_ids:
-            continue
-        if criterion_id and criterion_ids and criterion_id not in criterion_ids:
-            continue
-        if not requirement_id and not criterion_id:
-            continue
-        title = str(objection.get("title") or objection.get("summary") or "").strip()
-        if not title:
-            continue
-        severity = str(objection.get("severity") or "high").lower()
-        if severity not in ("blocker", "critical", "high", "medium", "low"):
-            severity = "high"
-        normalized = dict(objection)
-        normalized.update({"index": index, "requirement_id": requirement_id, "criterion_id": criterion_id, "title": title, "severity": severity})
-        valid.append(normalized)
-    return valid
-
-
-def _product_judge_objections_to_issues(project: dict, objections: list[dict]) -> list[dict]:
-    issues = project.setdefault("issues", [])
-    created = []
-    existing_keys = {
-        (issue.get("source"), issue.get("requirement_id"), issue.get("criterion_id"), issue.get("title"))
-        for issue in issues
-        if isinstance(issue, dict)
-    }
-    for objection in objections:
-        key = ("product_judge", objection.get("requirement_id", ""), objection.get("criterion_id", ""), objection.get("title", ""))
-        if key in existing_keys:
-            continue
-        issue = Issue(
-            id=f"ISSUE-JUDGE-{len([i for i in issues if isinstance(i, dict) and i.get('source') == 'product_judge']) + 1:03d}",
-            source="product_judge",
-            severity=objection.get("severity", "high"),
-            requirement_id=objection.get("requirement_id", ""),
-            criterion_id=objection.get("criterion_id", ""),
-            title=objection.get("title", "Product Judge objection"),
-            evidence={"product_judge_objection": objection, "requires_verifier_evidence": True},
-            reproduction=list(objection.get("reproduction", [])) if isinstance(objection.get("reproduction"), list) else [],
-            owner="codex",
-            status="open",
-            attempts=0,
-            verification_method=str(objection.get("verification_method") or "product_judge_objection"),
-        ).to_dict()
-        issues.append(issue)
-        existing_keys.add(key)
-        created.append(issue)
-    return created
-
-
-def _call_product_judge(bundle: dict, provider: str | None = None, model: str | None = None) -> dict:
-    prompt = (
-        "You are an independent Product Judge. You cannot edit files or suggest hidden fixes. "
-        "Try to prove the product is not ready using only the provided evidence bundle. "
-        "Do not include chain-of-thought or hidden reasoning. Return ONLY JSON with: "
-        "status ('pass' or 'fail') and objections. Each objection must include requirement_id or criterion_id, severity, title, evidence, reproduction, and verification_method.\n\n"
-        f"PRODUCT JUDGE INPUT BUNDLE:\n{json.dumps(bundle, ensure_ascii=False, indent=2)}"
-    )
-    provider = provider or get_agent_provider_model("lupa")[0]
-    model = model or get_agent_provider_model("lupa")[1]
-    raw = ask_studio_ai_with_history(
-        provider=provider,
-        model_name=model,
-        system_prompt="Independent Product Judge. Read-only. Return structured JSON only; no hidden reasoning.",
-        chat_history=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        max_tokens=2048,
-    )
-    return _parse_product_judge_response(raw)
-
-
-def _run_product_judge_stage(project: dict, qa_result: dict | None = None) -> tuple[bool, list[str]]:
-    bundle = build_product_judge_input(project, qa_result)
-    project["product_judge_input"] = bundle
-    try:
-        result = _call_product_judge(bundle)
-    except Exception as exc:
-        result = {"status": "invalid", "objections": [], "parse_error": str(exc)}
-    valid_objections = _valid_product_judge_objections(project, result.get("objections", []))
-    created_issues = _product_judge_objections_to_issues(project, valid_objections)
-    report = {
-        "status": result.get("status", "invalid"),
-        "valid_objection_count": len(valid_objections),
-        "created_issue_ids": [issue.get("id") for issue in created_issues],
-        "parse_error": result.get("parse_error", ""),
-    }
-    project["product_judge_report"] = report
-    project.setdefault("logs", []).append(f"Product Judge completed: {len(valid_objections)} valid objection(s).")
-    if valid_objections:
-        return False, [f"{obj.get('criterion_id') or obj.get('requirement_id')}: {obj.get('title')}" for obj in valid_objections]
-    if result.get("status") != "pass":
-        return False, [result.get("parse_error") or "Product Judge did not return structured pass with zero valid objections"]
-    qa_ok = bool((qa_result or {}).get("success"))
-    audit_ok = project.get("final_delivery_report", {}).get("status") == "passed"
-    if not qa_ok or not audit_ok:
-        return False, ["Product Judge pass requires existing QA and final audit evidence"]
-    return True, []
 
 
 def _should_execute_phase(project: dict, phase_name: str) -> bool:
@@ -1354,7 +1152,6 @@ def get_agents():
     for agent_id, agent in DEFAULT_AGENTS.items():
         cfg = agent_configs.get(agent_id, {})
         entry = {**agent, "id": agent_id}
-        entry.update(AGENT_STAGE_METADATA.get(agent_id, {}))
         entry["enabled"] = cfg.get("enabled", agent.get("enabled", True))
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
@@ -1375,8 +1172,6 @@ def get_agents():
     for cid, cagent in agent_configs.get("_custom_agents", {}).items():
         cfg = agent_configs.get(cid, {})
         entry = {**cagent, "id": cid, "builtin": False}
-        entry.setdefault("stage", cagent.get("stage", "custom"))
-        entry.setdefault("display_role", cagent.get("role", "Custom Agent"))
         entry["enabled"] = cfg.get("enabled", cagent.get("enabled", True))
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
@@ -1395,18 +1190,6 @@ def get_agents():
             entry["active_model"] = SYSTEM_SETTINGS["global_model"]
         result[cid] = entry
     return result
-
-
-@app.get("/api/pipeline/metadata")
-def get_pipeline_metadata():
-    return {
-        "stage_order": PIPELINE_UI_STAGE_ORDER,
-        "stages": {
-            stage: {"id": stage, **PIPELINE_STAGE_METADATA.get(stage, {"label": _STATE_DISPLAY.get(stage, stage.replace("_", " ").title())})}
-            for stage in PIPELINE_UI_STAGE_ORDER
-        },
-        "agent_stages": AGENT_STAGE_METADATA,
-    }
 
 
 def _all_agent_ids() -> set:
@@ -3613,9 +3396,6 @@ def async_studio_production_pipeline(project_id: str):
             return
 
         _ensure_project_contract(project)
-        if _apply_requirement_gap_blockers(project):
-            _save_projects_state()
-            return
 
         # ── Phase 1: Alex (PM) — Sprint Plan ──────────────────────────────────
         if _should_execute_phase(project, "planning"):
@@ -3939,7 +3719,6 @@ def async_studio_production_pipeline(project_id: str):
                 # Phase 5a: BugCatcher (QC Review)
                 bc = _try_opencode_review("bugcatcher", "BugCatcher", feedback_context)
                 project["bugcatcher_review_v" + str(iteration)] = bc["result"]
-                append_agent_review_issues(project, "bugcatcher", bc["result"], iteration)
 
                 # Phase 5b: Sentinel (Security Review)
                 sentinel_cfg = agent_configs.get("sentinel", {})
@@ -3947,7 +3726,6 @@ def async_studio_production_pipeline(project_id: str):
                 if sentinel_enabled:
                     sn = _try_opencode_review("sentinel", "Sentinel", feedback_context)
                     project["sentinel_review_v" + str(iteration)] = sn["result"]
-                    append_agent_review_issues(project, "sentinel", sn["result"], iteration)
                 else:
                     sn = {"has_issues": False, "result": ""}
 
@@ -3957,7 +3735,6 @@ def async_studio_production_pipeline(project_id: str):
                 if lupa_enabled:
                     lp = _try_opencode_review("lupa", "Lupa", feedback_context)
                     project["lupa_review_v" + str(iteration)] = lp["result"]
-                    append_agent_review_issues(project, "lupa", lp["result"], iteration)
                 else:
                     lp = {"has_issues": False, "result": ""}
 
@@ -4050,19 +3827,6 @@ def async_studio_production_pipeline(project_id: str):
                     return
                 if final_ok:
                     _mark_final_audit_passed(project, True)
-                    _save_phase(project, "product_judge")
-                    _set_project_status(project, "product_judge")
-                    judge_ok, judge_errors = _run_product_judge_stage(project, qa_result)
-                    if _abort_if_cancelled(project, "after product judge"):
-                        return
-                    if judge_ok:
-                        _mark_product_judge_passed(project, True)
-                    else:
-                        _mark_product_judge_passed(project, False)
-                        project["product_judge_errors"] = judge_errors
-                        _set_project_status(project, "failed_qa", reason="product judge objections")
-                        project["logs"].append("Product Judge found unresolved objections. Project is not completed.")
-                        return
                     if _set_project_status(project, "completed"):
                         project["logs"].append("ALL VERIFICATIONS PASSED! Project fully verified and ready for delivery!")
                     else:
@@ -4077,11 +3841,6 @@ def async_studio_production_pipeline(project_id: str):
                 _set_project_status(project, "needs_credentials")
                 project["manual_steps"] = qa_result.get("manual_steps", [])
                 project["logs"].append("Project needs external credentials before verification can complete.")
-            elif qa_result.get("needs_human_input"):
-                _mark_qa_passed(project, False)
-                _set_project_status(project, "needs_human_input")
-                project["manual_steps"] = qa_result.get("manual_steps", [])
-                project["logs"].append("Project needs human clarification before verification can continue.")
             elif qa_result.get("manual_steps"):
                 _mark_qa_passed(project, False)
                 _set_project_status(project, "needs_user_input")
@@ -4174,19 +3933,6 @@ def _run_qa_only(project_id: str, target_path: str):
             return
         if final_ok:
             _mark_final_audit_passed(project, True)
-            _save_phase(project, "product_judge")
-            _set_project_status(project, "product_judge")
-            judge_ok, judge_errors = _run_product_judge_stage(project, qa_result)
-            if _abort_if_cancelled(project, "after retry product judge"):
-                return
-            if judge_ok:
-                _mark_product_judge_passed(project, True)
-            else:
-                _mark_product_judge_passed(project, False)
-                project["product_judge_errors"] = judge_errors
-                _set_project_status(project, "failed_qa", reason="product judge objections")
-                project["logs"].append("❌ Retry passed QA/final audit but Product Judge found unresolved objections.")
-                return
             if _set_project_status(project, "completed"):
                 project["logs"].append("✅ RETRY PASSED! All verifications successful!")
             else:
@@ -4201,11 +3947,6 @@ def _run_qa_only(project_id: str, target_path: str):
         _set_project_status(project, "needs_credentials")
         project["manual_steps"] = qa_result.get("manual_steps", [])
         project["logs"].append("⚠️ Still needs external credentials.")
-    elif qa_result.get("needs_human_input"):
-        _mark_qa_passed(project, False)
-        _set_project_status(project, "needs_human_input")
-        project["manual_steps"] = qa_result.get("manual_steps", [])
-        project["logs"].append("⚠️ Still needs human clarification.")
     elif qa_result["manual_steps"]:
         _mark_qa_passed(project, False)
         _set_project_status(project, "needs_user_input")
@@ -4231,9 +3972,6 @@ def restart_project_pipeline(project_id: str, background_tasks: BackgroundTasks)
     project.pop("needs_user_input", None)
     project.pop("manual_steps", None)
     project.pop("qa_errors", None)
-    project.pop("product_judge_input", None)
-    project.pop("product_judge_report", None)
-    project.pop("product_judge_errors", None)
     project.pop("bugcatcher_review_v1", None)
     project.pop("bugcatcher_review_v2", None)
     project.pop("bugcatcher_review_v3", None)

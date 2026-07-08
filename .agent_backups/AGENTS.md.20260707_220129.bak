@@ -1,0 +1,22 @@
+# AI FreelancerStudio Agent Rules
+
+- Use Windows and PowerShell conventions for commands and paths.
+- Inspect relevant files and current state before editing.
+- Make the smallest compatible change that preserves existing behavior.
+- Create a git checkpoint before each phase of code work.
+- Preserve the state machine, completion gates, OpenCode direct repair, full QA reruns, final audit, agents, and working features.
+- Never weaken, delete, skip, or fake tests.
+- Treat JSON repair as a legacy fallback only.
+- Do not expose secrets in code, logs, reports, commits, or responses.
+- Root Studio pytest must not collect `generated_projects/**/tests`.
+- Run focused tests after each phase.
+- Commit only after tests pass.
+- Final reports must include files changed, tests run, exact results, and any remaining limitation.
+
+## Key Files
+
+- `main.py`
+- `project_spec.py`
+- `qa_engine.py`
+- `opencode_bridge.py`
+- `delivery_audit.py`

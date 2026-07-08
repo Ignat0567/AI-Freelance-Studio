@@ -6,15 +6,9 @@ import pytest
 from project_spec import (
     ACCEPTANCE_EVIDENCE_FIELDS,
     ACCEPTANCE_EVIDENCE_HISTORY_KEY,
-    ISSUE_FIELDS,
-    Issue,
-    append_agent_review_issues,
-    build_product_judge_input,
-    detect_requirement_gaps,
     ensure_acceptance_evidence_history,
     ensure_project_spec_bundle,
     generate_acceptance_criteria,
-    normalize_agent_review_issues,
     orphan_mandatory_requirements,
     record_acceptance_evidence,
     requirement_dependency_errors,
@@ -25,168 +19,6 @@ from project_spec import (
 
 def _project(title: str, description: str) -> dict:
     return {"title": title, "description": description, "chat_history": [], "logs": []}
-
-
-def test_issue_model_has_required_structured_fields():
-    issue = Issue(
-        id="ISSUE-001",
-        source="final_delivery_audit",
-        severity="critical",
-        requirement_id="REQ-001",
-        criterion_id="AC-001",
-        title="Runtime smoke failed",
-        evidence={"status": "failed"},
-        reproduction=["python -m pytest -q"],
-        owner="qa",
-        status="open",
-        attempts=1,
-        verification_method="runtime_smoke",
-    )
-
-    data = issue.to_dict()
-
-    assert tuple(data) == ISSUE_FIELDS
-    assert data["id"] == "ISSUE-001"
-    assert data["evidence"] == {"status": "failed"}
-    assert data["reproduction"] == ["python -m pytest -q"]
-
-
-def test_issue_model_defaults_are_json_serializable_and_independent():
-    first = Issue("ISSUE-001", "qa_engine", "high", "REQ-001", "AC-001", "First")
-    second = Issue("ISSUE-002", "qa_engine", "medium", "REQ-002", "AC-002", "Second")
-
-    first.evidence["detail"] = "failed import"
-    first.reproduction.append("python -m pytest")
-    restored = json.loads(json.dumps(first.to_dict()))
-
-    assert restored["owner"] == "unassigned"
-    assert restored["status"] == "open"
-    assert restored["attempts"] == 0
-    assert restored["verification_method"] == ""
-    assert second.evidence == {}
-    assert second.reproduction == []
-
-
-def test_bugcatcher_findings_normalize_to_open_issue_with_original_text_evidence():
-    report = """VERDICT: FAIL
-Critical bug: checkout accepts negative quantities.
-Reproduction steps:
-1. Add item with quantity -1
-2. Submit checkout
-"""
-
-    issues = normalize_agent_review_issues("bugcatcher", report, iteration=2)
-
-    assert len(issues) == 1
-    issue = issues[0]
-    assert tuple(issue) == ISSUE_FIELDS
-    assert issue["id"] == "ISSUE-BUGCATCHER-002-001"
-    assert issue["source"] == "bugcatcher"
-    assert issue["severity"] == "critical"
-    assert issue["status"] == "open"
-    assert issue["owner"] == "codex"
-    assert issue["verification_method"] == "qa_review"
-    assert issue["evidence"]["original_text_report"] == report
-    assert "Reproduction steps:" in issue["reproduction"]
-
-
-def test_sentinel_and_lupa_findings_normalize_with_agent_specific_methods():
-    sentinel = normalize_agent_review_issues("sentinel", "VERDICT: FAIL\nHigh risk: API key exposure.", iteration=1)[0]
-    lupa = normalize_agent_review_issues("lupa", "VERDICT: FAIL\nLow quality issue: duplicated parsing logic.", iteration=1)[0]
-
-    assert sentinel["source"] == "sentinel"
-    assert sentinel["severity"] == "high"
-    assert sentinel["verification_method"] == "security_review"
-    assert lupa["source"] == "lupa"
-    assert lupa["severity"] == "low"
-    assert lupa["verification_method"] == "code_review"
-
-
-def test_agent_pass_text_does_not_close_existing_issue():
-    project = {
-        "issues": [
-            Issue("ISSUE-BUGCATCHER-001-001", "bugcatcher", "high", "REQ-001", "AC-001", "Existing", status="open").to_dict()
-        ]
-    }
-
-    appended = append_agent_review_issues(project, "bugcatcher", "VERDICT: PASS\nAll previously reported issues look fixed.", iteration=2)
-
-    assert appended == []
-    assert len(project["issues"]) == 1
-    assert project["issues"][0]["status"] == "open"
-
-
-def test_product_judge_input_contains_only_allowed_serialized_fields():
-    project = _project("Judge Demo", "Build a FastAPI todo API with tests.")
-    ensure_project_spec_bundle(project)
-    criterion_id = project["acceptance_criteria"][0]["id"]
-    record_acceptance_evidence(
-        project,
-        criterion_id,
-        "passed",
-        {"source": "unit_test", "method": "command", "summary": "README exists", "command": "test -f README.md"},
-    )
-    project["issues"] = [
-        Issue("ISSUE-OPEN", "qa_engine", "high", "REQ-001", criterion_id, "Open issue", evidence={"fingerprint": "abc"}).to_dict(),
-        Issue("ISSUE-CLOSED", "qa_engine", "high", "REQ-001", criterion_id, "Closed issue", status="closed").to_dict(),
-    ]
-    project["bugcatcher_review_v1"] = "VERDICT: FAIL\nBug found."
-    project["sentinel_review_v2"] = "VERDICT: PASS\nNo security blockers."
-    project["final_delivery_report"] = {
-        "runtime_verification": {"status": "passed", "adapter": "fastapi"},
-        "known_limitations": ["Credential-free local verification only"],
-        "status": "passed",
-    }
-    qa_result = {
-        "success": True,
-        "rounds_completed": 2,
-        "total_errors": 0,
-        "errors": [],
-        "policy_groups": ["python", "fastapi"],
-        "repair_history": [{"repair_round": 1, "success": True}],
-    }
-
-    bundle = build_product_judge_input(project, qa_result)
-    restored = json.loads(json.dumps(bundle))
-
-    assert tuple(restored) == (
-        "original_request",
-        "requirement_graph",
-        "acceptance_criteria",
-        "evidence",
-        "open_issues",
-        "qa_summary",
-        "runtime_evidence",
-        "security_review_summaries",
-        "known_limitations",
-    )
-    assert restored["original_request"] == project["project_spec"]["original_user_request"]
-    assert restored["requirement_graph"]
-    assert restored["acceptance_criteria"] == project["acceptance_criteria"]
-    assert criterion_id in restored["evidence"]
-    assert [issue["id"] for issue in restored["open_issues"]] == ["ISSUE-OPEN"]
-    assert restored["qa_summary"]["success"] is True
-    assert restored["qa_summary"]["policy_groups"] == ["python", "fastapi"]
-    assert restored["runtime_evidence"] == {"status": "passed", "adapter": "fastapi"}
-    assert restored["security_review_summaries"]["bugcatcher"] == [{"iteration": 1, "summary": "VERDICT: FAIL\nBug found."}]
-    assert restored["security_review_summaries"]["sentinel"] == [{"iteration": 2, "summary": "VERDICT: PASS\nNo security blockers."}]
-    assert restored["known_limitations"] == ["Credential-free local verification only"]
-    assert "final_delivery_report" not in restored
-    assert "logs" not in restored
-
-
-def test_product_judge_input_falls_back_to_spec_limitations_and_project_qa_result():
-    project = _project("Generic", "Create a custom local tool.")
-    ensure_project_spec_bundle(project)
-    project["project_spec"]["risks"] = ["Manual UX judgment may still be needed"]
-    project["qa_result"] = {"success": False, "rounds_completed": 1, "total_errors": 1, "errors": ["pytest failed"], "needs_human_input": True}
-
-    bundle = build_product_judge_input(project)
-
-    assert bundle["known_limitations"] == ["Manual UX judgment may still be needed"]
-    assert bundle["runtime_evidence"] == {}
-    assert bundle["qa_summary"]["success"] is False
-    assert bundle["qa_summary"]["needs_human_input"] is True
 
 
 def test_scenario_1_simple_fastapi_profile_detected():
@@ -356,39 +188,6 @@ def test_scenario_5_credential_requirement_is_explicit():
 
     assert any(c["name"] == "OPENAI_API_KEY" for c in spec["required_credentials"])
     assert "Credentials are documented safely" in titles
-
-
-def test_requirement_gap_detection_returns_structured_categories():
-    text = (
-        "Build a modern dashboard that must use React and must not use React. "
-        "Integrate Stripe and verify real payment flow with 100% uptime."
-    )
-
-    gaps = detect_requirement_gaps(text)
-    by_category = {gap["category"]: gap for gap in gaps}
-
-    assert set(("ambiguity", "contradiction", "missing_credential", "impossible_verification_method")) <= set(by_category)
-    for gap in gaps:
-        assert set(("id", "category", "severity", "summary", "evidence", "suggested_question", "status")) <= set(gap)
-        assert gap["id"].startswith("GAP-")
-        assert gap["status"] == "unresolved"
-
-
-def test_requirement_gap_detection_reports_missing_external_service_detail():
-    gaps = detect_requirement_gaps("Build an app that integrates Discord notifications for users.", [])
-
-    assert any(gap["category"] == "missing_external_service_detail" for gap in gaps)
-
-
-def test_project_spec_bundle_includes_requirement_gaps_without_prompting_user():
-    project = _project("Vague AI Tool", "Build a fast OpenAI app and prove users will love it.")
-
-    bundle = ensure_project_spec_bundle(project)
-    gaps = bundle["project_spec"]["requirement_gaps"]
-
-    assert gaps
-    assert project["project_spec"]["requirement_gaps"] == gaps
-    assert all("suggested_question" in gap for gap in gaps)
 
 
 def test_file_based_static_and_vite_detection(tmp_path: Path):

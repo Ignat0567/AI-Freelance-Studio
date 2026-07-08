@@ -1,6 +1,5 @@
 import os
 import re
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -18,120 +17,6 @@ ACCEPTANCE_EVIDENCE_FIELDS = (
     "artifacts",
 )
 ACCEPTANCE_EVIDENCE_HISTORY_KEY = "acceptance_evidence"
-ISSUE_FIELDS = (
-    "id",
-    "source",
-    "severity",
-    "requirement_id",
-    "criterion_id",
-    "title",
-    "evidence",
-    "reproduction",
-    "owner",
-    "status",
-    "attempts",
-    "verification_method",
-)
-
-
-@dataclass
-class Issue:
-    id: str
-    source: str
-    severity: str
-    requirement_id: str
-    criterion_id: str
-    title: str
-    evidence: dict[str, Any] = field(default_factory=dict)
-    reproduction: list[str] = field(default_factory=list)
-    owner: str = "unassigned"
-    status: str = "open"
-    attempts: int = 0
-    verification_method: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-AGENT_REVIEW_VERIFICATION_METHODS = {
-    "bugcatcher": "qa_review",
-    "sentinel": "security_review",
-    "lupa": "code_review",
-}
-
-
-def _agent_issue_severity(agent_id: str, report_text: str) -> str:
-    text = (report_text or "").lower()
-    for severity in ("blocker", "critical", "high", "medium", "low"):
-        if re.search(rf"\b{severity}\b", text):
-            return severity
-    if agent_id == "sentinel":
-        return "high"
-    return "medium"
-
-
-def _agent_issue_title(agent_id: str, report_text: str) -> str:
-    for line in (report_text or "").splitlines():
-        cleaned = line.strip(" -#*\t")
-        if not cleaned or cleaned.upper().startswith("VERDICT:"):
-            continue
-        return cleaned[:120]
-    labels = {"bugcatcher": "QA review finding", "sentinel": "Security review finding", "lupa": "Code review finding"}
-    return labels.get(agent_id, "Agent review finding")
-
-
-def _agent_report_has_findings(report_text: str) -> bool:
-    text = report_text or ""
-    upper = text.upper()
-    if "VERDICT: PASS" in upper:
-        return False
-    if "VERDICT: FAIL" in upper:
-        return True
-    return bool(re.search(r"\b(issue|bug|defect|vulnerab|risk|failure|failed|regression)\b", text, flags=re.IGNORECASE))
-
-
-def _agent_issue_reproduction(report_text: str) -> list[str]:
-    steps = []
-    capture = False
-    for line in (report_text or "").splitlines():
-        cleaned = line.strip(" -\t")
-        if not cleaned:
-            capture = False
-            continue
-        if re.search(r"\b(repro|reproduction|steps?|command)\b", cleaned, flags=re.IGNORECASE):
-            capture = True
-        if capture:
-            steps.append(cleaned)
-    return steps[:10]
-
-
-def normalize_agent_review_issues(agent_id: str, report_text: str, iteration: int = 1) -> list[dict[str, Any]]:
-    agent_key = str(agent_id or "").lower()
-    if agent_key not in AGENT_REVIEW_VERIFICATION_METHODS or not _agent_report_has_findings(report_text):
-        return []
-
-    issue = Issue(
-        id=f"ISSUE-{agent_key.upper()}-{max(1, int(iteration)):03d}-001",
-        source=agent_key,
-        severity=_agent_issue_severity(agent_key, report_text),
-        requirement_id="",
-        criterion_id="",
-        title=_agent_issue_title(agent_key, report_text),
-        evidence={"original_text_report": report_text or ""},
-        reproduction=_agent_issue_reproduction(report_text),
-        owner="codex",
-        status="open",
-        attempts=0,
-        verification_method=AGENT_REVIEW_VERIFICATION_METHODS[agent_key],
-    )
-    return [issue.to_dict()]
-
-
-def append_agent_review_issues(project: dict, agent_id: str, report_text: str, iteration: int = 1) -> list[dict[str, Any]]:
-    issues = normalize_agent_review_issues(agent_id, report_text, iteration)
-    if issues:
-        project.setdefault("issues", []).extend(issues)
-    return issues
 
 
 def _utc_timestamp() -> str:
@@ -350,98 +235,6 @@ def _credential_requirements(text: str) -> list[dict[str, str]]:
     return credentials
 
 
-def detect_requirement_gaps(text: str, credentials: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
-    credentials = credentials or _credential_requirements(text)
-    lower = (text or "").lower()
-    sentences = _sentences(text)
-    gaps: list[dict[str, Any]] = []
-
-    def add(category: str, severity: str, summary: str, evidence: str, suggested_question: str):
-        gap_id = f"GAP-{len(gaps) + 1:03d}"
-        gaps.append({
-            "id": gap_id,
-            "category": category,
-            "severity": severity,
-            "summary": summary,
-            "evidence": evidence,
-            "suggested_question": suggested_question,
-            "status": "unresolved",
-        })
-
-    ambiguity_terms = (
-        "modern", "user-friendly", "user friendly", "beautiful", "intuitive", "fast",
-        "scalable", "secure", "robust", "etc", "and so on", "as needed", "nice",
-    )
-    for sentence in sentences:
-        sentence_lower = sentence.lower()
-        term = next((term for term in ambiguity_terms if term in sentence_lower), None)
-        if term:
-            add(
-                "ambiguity",
-                "medium",
-                "Requirement uses a subjective or open-ended term without measurable acceptance detail.",
-                sentence,
-                f"What concrete behavior or measurable acceptance criteria should define '{term}'?",
-            )
-            break
-
-    contradiction_pairs = (
-        ("use database", "without database"),
-        ("with database", "no database"),
-        ("online", "offline only"),
-        ("must use react", "must not use react"),
-        ("must use fastapi", "must not use fastapi"),
-        ("store user data", "do not store user data"),
-    )
-    for required, forbidden in contradiction_pairs:
-        if required in lower and forbidden in lower:
-            add(
-                "contradiction",
-                "high",
-                "Requirement contains mutually incompatible instructions.",
-                f"Both '{required}' and '{forbidden}' were requested.",
-                "Which of these conflicting instructions should take precedence?",
-            )
-            break
-
-    for credential in credentials:
-        name = credential.get("name", "EXTERNAL_SERVICE_CREDENTIAL")
-        add(
-            "missing_credential",
-            "blocker",
-            "External credential is required before full implementation or live verification can be completed.",
-            name,
-            f"Can you provide or confirm the placeholder/environment variable strategy for {name}?",
-        )
-
-    services = _external_services(text, credentials)
-    if services and not any(k in lower for k in ("endpoint", "webhook", "model", "scope", "bot token", "api key", "sandbox", "test mode", "callback url")):
-        add(
-            "missing_external_service_detail",
-            "high",
-            "External service is named without integration details needed for implementation and QA.",
-            ", ".join(services),
-            "Which exact service endpoint, mode, scopes, callback URLs, and test/sandbox behavior should be used?",
-        )
-
-    impossible_verification_patterns = (
-        "100% uptime", "guarantee uptime", "prove users will", "verify users will",
-        "rank #1", "rank first", "real payment", "production payment", "millions of users",
-    )
-    for pattern in impossible_verification_patterns:
-        if pattern in lower:
-            add(
-                "impossible_verification_method",
-                "high",
-                "Requested verification depends on production-scale, third-party, or subjective outcomes that cannot be proven locally before delivery.",
-                pattern,
-                "What local, automated, or sandbox acceptance check should replace this verification requirement?",
-            )
-            break
-
-    return gaps
-
-
 def detect_project_profiles(project_spec: dict | None = None, project_path: str | None = None, text: str = "") -> list[str]:
     blob = "\n".join(
         str(x)
@@ -509,7 +302,6 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
     original = _original_request(project)
     features = _feature_phrases(source_text)
     credentials = _credential_requirements(source_text)
-    requirement_gaps = detect_requirement_gaps(source_text, credentials)
     profiles = detect_project_profiles(text=source_text, project_path=existing_path)
 
     technology = []
@@ -562,7 +354,6 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
         "technology_requirements": _dedupe(technology),
         "external_services": _external_services(source_text, credentials),
         "required_credentials": credentials,
-        "requirement_gaps": requirement_gaps,
         "expected_entrypoint": expected_entrypoint,
         "installation_method": install_method,
         "run_method": run_method,
@@ -783,70 +574,6 @@ def acceptance_summary(project: dict) -> str:
         reqs = ",".join(c.get("requirement_ids", [])) or "none"
         lines.append(f"{c.get('id')}: {c.get('title')} | REQs: {reqs} | Verify: {c.get('verification_method')} | Expected: {c.get('expected_result')}")
     return "\n".join(lines)
-
-
-PRODUCT_JUDGE_INPUT_FIELDS = (
-    "original_request",
-    "requirement_graph",
-    "acceptance_criteria",
-    "evidence",
-    "open_issues",
-    "qa_summary",
-    "runtime_evidence",
-    "security_review_summaries",
-    "known_limitations",
-)
-
-
-def _open_issues(project: dict) -> list[dict[str, Any]]:
-    return [issue for issue in project.get("issues", []) if isinstance(issue, dict) and str(issue.get("status", "open")).lower() == "open"]
-
-
-def _review_summaries(project: dict) -> dict[str, list[dict[str, Any]]]:
-    summaries = {"bugcatcher": [], "sentinel": [], "lupa": []}
-    for agent_id in summaries:
-        prefix = f"{agent_id}_review_v"
-        for key in sorted(k for k in project if k.startswith(prefix)):
-            value = project.get(key)
-            if value:
-                try:
-                    iteration = int(key.rsplit("v", 1)[1])
-                except (IndexError, ValueError):
-                    iteration = None
-                summaries[agent_id].append({"iteration": iteration, "summary": str(value)})
-    return summaries
-
-
-def _qa_summary(project: dict, qa_result: dict[str, Any] | None) -> dict[str, Any]:
-    source = qa_result or project.get("qa_result") or project.get("latest_qa_result") or {}
-    return {
-        "success": bool(source.get("success")),
-        "rounds_completed": source.get("rounds_completed"),
-        "total_errors": source.get("total_errors"),
-        "errors": source.get("errors", []),
-        "needs_credentials": bool(source.get("needs_credentials")),
-        "needs_human_input": bool(source.get("needs_human_input")),
-        "policy_groups": source.get("policy_groups", []),
-        "repair_history": source.get("repair_history", []),
-    }
-
-
-def build_product_judge_input(project: dict, qa_result: dict[str, Any] | None = None) -> dict[str, Any]:
-    spec = project.get("project_spec", {}) if isinstance(project.get("project_spec"), dict) else {}
-    report = project.get("final_delivery_report", {}) if isinstance(project.get("final_delivery_report"), dict) else {}
-    ensure_acceptance_evidence_history(project)
-    bundle = {
-        "original_request": spec.get("original_user_request") or _original_request(project),
-        "requirement_graph": requirement_graph(spec),
-        "acceptance_criteria": project.get("acceptance_criteria", []),
-        "evidence": project.get(ACCEPTANCE_EVIDENCE_HISTORY_KEY, {}),
-        "open_issues": _open_issues(project),
-        "qa_summary": _qa_summary(project, qa_result),
-        "runtime_evidence": report.get("runtime_verification", {}),
-        "security_review_summaries": _review_summaries(project),
-        "known_limitations": report.get("known_limitations", spec.get("risks", [])),
-    }
-    return {field: bundle[field] for field in PRODUCT_JUDGE_INPUT_FIELDS}
 
 
 def record_acceptance_evidence(project: dict, criterion_id: str, status: str, evidence: dict[str, Any]) -> None:

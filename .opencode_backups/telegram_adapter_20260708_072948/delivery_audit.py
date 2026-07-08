@@ -423,170 +423,6 @@ class ReactViteRuntimeAdapter(RuntimeAdapter):
             _stop_owned_process(proc, result)
 
 
-def _python_modules_for_import(root: str) -> list[str]:
-    modules = []
-    for rel in ("config.py", "bot.py", "handlers/commands.py", "handlers/callbacks.py", "handlers/admin.py", "services/database.py", "services/joke_service.py"):
-        if os.path.isfile(os.path.join(root, rel)):
-            modules.append(rel[:-3].replace("/", "."))
-    return modules
-
-
-def _run_import_smoke(root: str, modules: list[str]) -> dict[str, Any]:
-    if not modules:
-        return {"exit_code": 0, "modules": [], "imported": [], "failed": []}
-    code = (
-        "import importlib, json, os, sys, traceback\n"
-        "root = sys.argv[1]\n"
-        "mods = sys.argv[2:]\n"
-        "sys.path.insert(0, root)\n"
-        "os.environ.setdefault('BOT_TOKEN', 'replace_me')\n"
-        "os.environ.setdefault('ADMIN_ID', '0')\n"
-        "os.environ.setdefault('DATABASE_PATH', 'data/test_bot.db')\n"
-        "imported = []\n"
-        "failed = []\n"
-        "for mod in mods:\n"
-        "    try:\n"
-        "        importlib.import_module(mod)\n"
-        "        imported.append(mod)\n"
-        "    except Exception as exc:\n"
-        "        failed.append({'module': mod, 'error': type(exc).__name__ + ': ' + str(exc), 'traceback_tail': traceback.format_exc()[-1200:]})\n"
-        "print(json.dumps({'modules': mods, 'imported': imported, 'failed': failed}))\n"
-        "sys.exit(1 if failed else 0)\n"
-    )
-    result = _run_command([sys.executable, "-c", code, root, *modules], root, timeout=60)
-    details: dict[str, Any] = {"modules": modules, "imported": [], "failed": []}
-    stdout = result.get("stdout_tail", "").strip()
-    if stdout:
-        try:
-            details = json.loads(stdout.splitlines()[-1])
-        except json.JSONDecodeError:
-            pass
-    details.update(result)
-    return details
-
-
-def _read_project_text(root: str, rels: list[str]) -> dict[str, str]:
-    texts = {}
-    for rel in rels:
-        path = os.path.join(root, rel)
-        if os.path.isfile(path):
-            texts[rel] = _read(path)
-    return texts
-
-
-def _telegram_env_safety(root: str) -> dict[str, Any]:
-    env_example = os.path.join(root, ".env.example")
-    gitignore = os.path.join(root, ".gitignore")
-    env_file = os.path.join(root, ".env")
-    evidence = {
-        "env_example_exists": os.path.isfile(env_example),
-        "bot_token_documented": False,
-        "env_example_secret_like": False,
-        "env_file_secret_like": False,
-        "gitignore_exists": os.path.isfile(gitignore),
-        "gitignore_ignores_env": False,
-    }
-    if os.path.isfile(env_example):
-        text = _read(env_example)
-        evidence["bot_token_documented"] = "BOT_TOKEN" in text
-        token_match = re.search(r"(?m)^BOT_TOKEN\s*=\s*(.+)$", text)
-        evidence["env_example_secret_like"] = bool(token_match and re.match(r"^\d{7,}:[A-Za-z0-9_-]{20,}$", token_match.group(1).strip()))
-    if os.path.isfile(env_file):
-        evidence["env_file_secret_like"] = bool(re.search(r"(?m)^BOT_TOKEN\s*=\s*\d{7,}:[A-Za-z0-9_-]{20,}\s*$", _read(env_file)))
-    if os.path.isfile(gitignore):
-        evidence["gitignore_ignores_env"] = any(line.strip() in (".env", "*.env") for line in _read(gitignore).splitlines())
-    evidence["safe"] = bool(
-        evidence["env_example_exists"]
-        and evidence["bot_token_documented"]
-        and evidence["gitignore_exists"]
-        and evidence["gitignore_ignores_env"]
-        and not evidence["env_example_secret_like"]
-        and not evidence["env_file_secret_like"]
-    )
-    return evidence
-
-
-def _telegram_static_smoke(root: str) -> dict[str, Any]:
-    rels = ["bot.py", "handlers/commands.py", "handlers/callbacks.py", "handlers/admin.py", "keyboards/inline.py"]
-    texts = _read_project_text(root, rels)
-    combined = "\n".join(texts.values())
-    command_hits = sorted(set(re.findall(r"Command\(\s*['\"]([^'\"]+)['\"]", combined)))
-    slash_hits = sorted(set(re.findall(r"/(start|help|joke|category|top|favorite|search|stats|users|broadcast)\b", combined)))
-    key_commands = sorted(set(command_hits + slash_hits).intersection({"start", "help"}))
-    router_modules = [rel for rel, text in texts.items() if "Router(" in text or "router =" in text]
-    include_router = "include_router" in combined or "include_routers" in combined
-    callback_values = []
-    for match in re.finditer(r"callback_data['\"]?\s*[:=]\s*f?['\"]([^'\"]+)['\"]", combined):
-        callback_values.append(match.group(1))
-    too_long = [value for value in callback_values if len(value.encode("utf-8")) > 64]
-    return {
-        "handler_files": sorted(texts),
-        "router_modules": router_modules,
-        "handler_registration_detected": bool(router_modules and include_router),
-        "key_commands": key_commands,
-        "key_command_smoke_passed": {cmd: cmd in key_commands for cmd in ("start", "help")},
-        "callback_data_values": callback_values,
-        "callback_data_too_long": too_long,
-        "callback_data_max_bytes": max((len(value.encode("utf-8")) for value in callback_values), default=0),
-    }
-
-
-def _telegram_database_service_smoke(root: str) -> dict[str, Any]:
-    applicable = any(os.path.isfile(os.path.join(root, rel)) for rel in ("services/database.py", "services/joke_service.py", "database.py"))
-    modules = [module for module in ("services.database", "services.joke_service", "database") if os.path.isfile(os.path.join(root, module.replace(".", os.sep) + ".py"))]
-    if not applicable:
-        return {"applicable": False, "status": "not_applicable", "modules": []}
-    result = _run_import_smoke(root, modules)
-    return {"applicable": True, "status": "passed" if result.get("exit_code") == 0 else "failed", "modules": modules, "import_result": result}
-
-
-class TelegramBotRuntimeAdapter(RuntimeAdapter):
-    name = "telegram_bot"
-
-    def run(self, project: dict, root: str) -> RuntimeAdapterResult:
-        profiles = _project_profiles(project)
-        if "telegram_bot" not in profiles:
-            return RuntimeAdapterResult(False, False, False, True, {"reason": "No Telegram bot profile"}, "")
-
-        modules = _python_modules_for_import(root)
-        import_result = _run_import_smoke(root, modules)
-        env_safety = _telegram_env_safety(root)
-        static_smoke = _telegram_static_smoke(root)
-        db_smoke = _telegram_database_service_smoke(root)
-        network_behavior = {
-            "status": "not_verified",
-            "reason": "Real Telegram network behavior requires BOT_TOKEN credentials and is intentionally not exercised by credential-free runtime verification.",
-        }
-        evidence = {
-            "adapter": self.name,
-            "credential_free": True,
-            "started": False,
-            "imports": import_result,
-            "env_safety": env_safety,
-            "handler_registration": static_smoke,
-            "database_service_smoke": db_smoke,
-            "network_behavior": network_behavior,
-        }
-        missing = []
-        if not modules:
-            missing.append("importable Telegram modules")
-        if import_result.get("exit_code") != 0:
-            missing.append("imports")
-        if not env_safety.get("safe"):
-            missing.append("config/.env safety")
-        if not static_smoke.get("handler_registration_detected"):
-            missing.append("handler registration")
-        if not all(static_smoke.get("key_command_smoke_passed", {}).values()):
-            missing.append("key commands")
-        if static_smoke.get("callback_data_too_long"):
-            missing.append("callback_data length")
-        if db_smoke.get("applicable") and db_smoke.get("status") != "passed":
-            missing.append("database/service smoke")
-        verified = not missing
-        evidence["missing_local_checks"] = missing
-        return RuntimeAdapterResult(True, False, verified, True, evidence, "" if verified else "; ".join(missing))
-
-
 class StaticWebRuntimeAdapter(RuntimeAdapter):
     name = "static_web"
 
@@ -679,19 +515,16 @@ class StaticWebRuntimeAdapter(RuntimeAdapter):
                 result.evidence["shutdown_method"] = "already_exited"
 
 
-RUNTIME_ADAPTERS = [FastAPIRuntimeAdapter(), ReactViteRuntimeAdapter(), TelegramBotRuntimeAdapter(), StaticWebRuntimeAdapter()]
-KNOWN_RUNTIME_PROFILES = {"fastapi", "react_frontend", "vite_frontend", "telegram_bot", "static_website"}
+RUNTIME_ADAPTERS = [FastAPIRuntimeAdapter(), ReactViteRuntimeAdapter(), StaticWebRuntimeAdapter()]
 
 
 def _adapter_status(result: RuntimeAdapterResult) -> str:
     if not result.applicable:
         return "not_applicable"
-    start_ok = result.started or bool(result.evidence.get("credential_free"))
-    return "passed" if start_ok and result.verified and result.stopped_cleanly else "failed"
+    return "passed" if result.started and result.verified and result.stopped_cleanly else "failed"
 
 
 def _runtime_smoke(project: dict, root: str) -> dict[str, Any]:
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
     for adapter in RUNTIME_ADAPTERS:
         result = adapter.run(project, root)
         if not result.applicable:
@@ -704,30 +537,8 @@ def _runtime_smoke(project: dict, root: str) -> dict[str, Any]:
         data.update(result.evidence)
         return data
 
-    runnable_profiles = sorted(profiles.intersection(KNOWN_RUNTIME_PROFILES))
-    if runnable_profiles:
-        return {
-            "status": "failed",
-            "applicable": False,
-            "started": False,
-            "verified": False,
-            "stopped_cleanly": True,
-            "profiles": sorted(profiles),
-            "known_runnable_profiles": runnable_profiles,
-            "error": "Runnable known profile has no applicable runtime adapter",
-        }
-
-    return {
-        "status": "passed",
-        "adapter": "generic",
-        "applicable": True,
-        "started": False,
-        "verified": True,
-        "stopped_cleanly": True,
-        "profiles": sorted(profiles),
-        "limitation": "No specific runtime adapter is available for this unknown project type; generic verification is limited to audit metadata, README/run instructions, files, QA, and acceptance evidence.",
-        "error": "",
-    }
+    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
+    return {"status": "not_applicable", "applicable": False, "started": False, "verified": False, "stopped_cleanly": True, "evidence": {"profiles": list(profiles)}, "error": ""}
 
 
 def _verify_readme(root: str) -> tuple[bool, dict[str, Any]]:
@@ -999,10 +810,8 @@ def _verify_command(criterion: dict[str, Any], project: dict, root: str, qa_resu
 
 
 def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    status = "passed" if runtime_check.get("status") == "passed" and evidence.get("status") == "passed" else "failed"
-    return _registry_evidence("runtime_smoke", status, "Runtime smoke result mapped to acceptance criterion", runtime_status=evidence.get("status", "not_verified"), adapter=evidence.get("adapter", ""), limitation=evidence.get("limitation", ""))
+    status = "passed" if _check_status(checks, "runtime_smoke") == "passed" else "failed"
+    return _registry_evidence("runtime_smoke", status, "Runtime smoke result mapped to acceptance criterion")
 
 
 def _verify_static_asset_check(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1065,18 +874,6 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
     return not failed, failed
 
 
-def _open_blocking_issues(project: dict) -> list[dict[str, Any]]:
-    blocking = []
-    for issue in project.get("issues", []):
-        if not isinstance(issue, dict):
-            continue
-        if str(issue.get("status", "open")).lower() != "open":
-            continue
-        if str(issue.get("severity", "")).lower() in ("critical", "high"):
-            blocking.append(issue)
-    return blocking
-
-
 def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     spec = project.get("project_spec", {})
@@ -1106,7 +903,7 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     _add(checks, "regression_status", "passed" if not unresolved_regressions else "failed", {"unresolved_regressions": unresolved_regressions})
 
     runtime = _runtime_smoke(project, root)
-    _add(checks, "runtime_smoke", "passed" if runtime.get("status") == "passed" else "failed", runtime)
+    _add(checks, "runtime_smoke", "passed" if runtime.get("status") in ("passed", "not_applicable") else "failed", runtime)
 
     active_ops = []
     if project.get("_qa_active"):
@@ -1114,17 +911,6 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     if project.get("_repair_active"):
         active_ops.append("repair")
     _add(checks, "active_operations", "passed" if not active_ops else "failed", {"active": active_ops})
-
-    blocking_issues = _open_blocking_issues(project)
-    _add(
-        checks,
-        "open_blocking_issues",
-        "passed" if not blocking_issues else "failed",
-        {
-            "open_issue_ids": [issue.get("id") for issue in blocking_issues],
-            "open_issue_severities": [issue.get("severity") for issue in blocking_issues],
-        },
-    )
 
     ac_ok, failed_criteria = _evaluate_acceptance(project, root, qa_result, checks)
     _add(checks, "acceptance_criteria", "passed" if ac_ok else "failed", {"failed_mandatory": [c.get("id") for c in failed_criteria]})

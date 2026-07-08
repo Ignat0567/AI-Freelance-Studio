@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 
-import delivery_audit
 from delivery_audit import ACCEPTANCE_VERIFIERS, FastAPIRuntimeAdapter, ReactViteRuntimeAdapter, RuntimeAdapterResult, StaticWebRuntimeAdapter, TelegramBotRuntimeAdapter, run_final_delivery_audit, verify_acceptance_criterion
 from project_spec import ACCEPTANCE_EVIDENCE_HISTORY_KEY, ensure_project_spec_bundle, record_acceptance_evidence
 
@@ -543,45 +542,6 @@ def test_final_audit_uses_static_web_runtime_adapter(tmp_path):
     assert report["runtime_verification"]["status_code"] == 200
 
 
-def test_known_runnable_profile_fails_without_applicable_runtime_adapter(tmp_path, monkeypatch):
-    project = _fastapi_project(tmp_path)
-    monkeypatch.setattr(delivery_audit, "RUNTIME_ADAPTERS", [])
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["status"] == "failed"
-    assert report["runtime_verification"]["status"] == "failed"
-    assert report["runtime_verification"]["known_runnable_profiles"] == ["fastapi"]
-    assert any(check["name"] == "runtime_smoke" and check["status"] == "failed" for check in report["checks"])
-
-
-def test_unknown_project_type_uses_limited_generic_runtime_verification(tmp_path):
-    project = _project_with_custom_acceptance(
-        tmp_path,
-        {"id": "AC-FILE", "title": "Files", "priority": "low", "verification_method": "file_check", "evidence": []},
-    )
-    project["project_profiles"] = ["custom_unknown_profile"]
-    project["project_spec"]["project_profiles"] = ["custom_unknown_profile"]
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["runtime_verification"]["status"] == "passed"
-    assert report["runtime_verification"]["adapter"] == "generic"
-    assert "limited" in report["runtime_verification"]["limitation"]
-
-
-def test_runtime_smoke_not_applicable_does_not_pass_mandatory_acceptance(tmp_path):
-    criterion = {"id": "AC-RUNTIME", "title": "Runtime", "priority": "high", "verification_method": "runtime_smoke"}
-    checks = [{"name": "runtime_smoke", "status": "passed", "evidence": {"status": "not_applicable"}}]
-
-    evidence = verify_acceptance_criterion(criterion, {}, str(tmp_path), {"success": True}, checks)
-
-    assert evidence["status"] == "failed"
-    assert evidence["runtime_status"] == "not_applicable"
-
-
 def test_mandatory_feature_cannot_pass_from_global_qa_alone(tmp_path):
     project = _fastapi_project(tmp_path)
     feature = next(c for c in project["acceptance_criteria"] if c["verification_method"] == "feature_trace_static_or_smoke")
@@ -880,75 +840,6 @@ def test_final_audit_blocks_credentials(tmp_path):
 
     assert report["status"] == "blocked_by_credentials"
     assert report["credentials_still_required"][0]["name"] == "OPENAI_API_KEY"
-
-
-def test_final_audit_blocks_open_high_or_critical_issue(tmp_path):
-    project = _fastapi_project(tmp_path)
-    _record_direct_feature_evidence(project)
-    project["acceptance_criteria"] = [
-        criterion
-        for criterion in project["acceptance_criteria"]
-        if criterion["verification_method"] in ACCEPTANCE_VERIFIERS
-    ]
-    project["issues"] = [
-        {
-            "id": "ISSUE-QA-ABC",
-            "source": "qa_engine",
-            "severity": "high",
-            "requirement_id": "",
-            "criterion_id": "",
-            "title": "Runtime failed before repair",
-            "evidence": {"fingerprint": "abc"},
-            "reproduction": ["python -m pytest -q"],
-            "owner": "codex",
-            "status": "open",
-            "attempts": 1,
-            "verification_method": "build_and_tests",
-        }
-    ]
-    qa_result = {"success": True, "rounds_completed": 2, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["status"] == "failed"
-    assert any(
-        check["name"] == "open_blocking_issues"
-        and check["status"] == "failed"
-        and check["evidence"]["open_issue_ids"] == ["ISSUE-QA-ABC"]
-        for check in report["checks"]
-    )
-
-
-def test_final_audit_allows_closed_high_issue_with_verification_evidence(tmp_path):
-    project = _fastapi_project(tmp_path)
-    _record_direct_feature_evidence(project)
-    project["acceptance_criteria"] = [
-        criterion
-        for criterion in project["acceptance_criteria"]
-        if criterion["verification_method"] in ACCEPTANCE_VERIFIERS
-    ]
-    project["issues"] = [
-        {
-            "id": "ISSUE-QA-ABC",
-            "source": "qa_engine",
-            "severity": "high",
-            "requirement_id": "",
-            "criterion_id": "",
-            "title": "Runtime failed before repair",
-            "evidence": {"fingerprint": "abc", "resolution": {"source": "qa_engine", "status": "passed", "round": 2}},
-            "reproduction": ["python -m pytest -q"],
-            "owner": "codex",
-            "status": "closed",
-            "attempts": 1,
-            "verification_method": "build_and_tests",
-        }
-    ]
-    qa_result = {"success": True, "rounds_completed": 2, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["status"] == "passed"
-    assert any(check["name"] == "open_blocking_issues" and check["status"] == "passed" for check in report["checks"])
 
 
 def test_final_audit_preserves_acceptance_evidence_history_across_qa_rounds(tmp_path):

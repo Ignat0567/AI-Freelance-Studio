@@ -1,8 +1,7 @@
 from pathlib import Path
 
 import qa_engine
-import main
-from qa_engine import OPENCODE_FIX_APPLIED, POLICY_GROUP_RULES, QAEngine, policy_prompt_rules, select_policy_groups
+from qa_engine import OPENCODE_FIX_APPLIED, POLICY_GROUP_RULES, QAEngine, select_policy_groups
 
 
 class ScriptedQAEngine(QAEngine):
@@ -77,33 +76,6 @@ def test_policy_groups_are_declared_for_supported_profiles():
     assert "vite_runtime_scripts" in POLICY_GROUP_RULES["react_vite"]
     assert "static_assets" in POLICY_GROUP_RULES["static_web"]
     assert "readme_instructions" in POLICY_GROUP_RULES["generic"]
-
-
-def test_global_rules_keep_only_universal_constraints():
-    global_text = main._CRITICAL_RULES + "\n" + qa_engine._SHARED_QA_RULES
-
-    assert "os.getenv() MUST" not in global_text
-    assert "Use ONLY ESM" not in global_text
-    assert "EVERY function" not in global_text
-    assert "Frontend projects MUST use Tailwind" not in global_text
-    assert "No hardcoded secrets" in global_text or "Do not hardcode secrets" in global_text
-    assert "fake output" in global_text
-
-
-def test_project_specific_rules_live_in_profile_policy_prompts():
-    python_rules = policy_prompt_rules(["python"])
-    react_rules = policy_prompt_rules(["react_vite"])
-    static_rules = policy_prompt_rules(["static_web"])
-    generic_rules = policy_prompt_rules(["generic"])
-
-    assert "os.getenv()" in python_rules
-    assert "try/except" in python_rules
-    assert "ESM import/export" in react_rules
-    assert "CommonJS" in react_rules
-    assert "Tailwind CSS" in react_rules
-    assert "os.getenv()" not in react_rules
-    assert "Tailwind CSS" not in static_rules
-    assert "ESM" not in generic_rules
 
 
 def test_policy_selection_maps_profiles_to_relevant_groups():

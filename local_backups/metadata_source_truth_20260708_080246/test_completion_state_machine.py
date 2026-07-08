@@ -211,14 +211,3 @@ def test_product_judge_valid_objection_becomes_open_issue_without_hidden_log(mon
     assert issue["criterion_id"] == criterion_id
     assert issue["evidence"]["requires_verifier_evidence"] is True
     assert not any("hidden_reasoning" in log for log in project["logs"])
-
-
-def test_backend_pipeline_metadata_is_source_of_truth_for_stages_and_agents():
-    metadata = main.get_pipeline_metadata()
-    agents = main.get_agents()
-
-    assert metadata["stage_order"] == main.PIPELINE_UI_STAGE_ORDER
-    assert metadata["stages"]["product_judge"]["label"] == "Product Judge"
-    assert metadata["agent_stages"]["codex"]["stage"] == "coding"
-    assert agents["codex"]["stage"] == "coding"
-    assert agents["codex"]["display_role"] == "Software Architect"

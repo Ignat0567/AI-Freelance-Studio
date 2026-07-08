@@ -680,7 +680,6 @@ class StaticWebRuntimeAdapter(RuntimeAdapter):
 
 
 RUNTIME_ADAPTERS = [FastAPIRuntimeAdapter(), ReactViteRuntimeAdapter(), TelegramBotRuntimeAdapter(), StaticWebRuntimeAdapter()]
-KNOWN_RUNTIME_PROFILES = {"fastapi", "react_frontend", "vite_frontend", "telegram_bot", "static_website"}
 
 
 def _adapter_status(result: RuntimeAdapterResult) -> str:
@@ -691,7 +690,6 @@ def _adapter_status(result: RuntimeAdapterResult) -> str:
 
 
 def _runtime_smoke(project: dict, root: str) -> dict[str, Any]:
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
     for adapter in RUNTIME_ADAPTERS:
         result = adapter.run(project, root)
         if not result.applicable:
@@ -704,30 +702,8 @@ def _runtime_smoke(project: dict, root: str) -> dict[str, Any]:
         data.update(result.evidence)
         return data
 
-    runnable_profiles = sorted(profiles.intersection(KNOWN_RUNTIME_PROFILES))
-    if runnable_profiles:
-        return {
-            "status": "failed",
-            "applicable": False,
-            "started": False,
-            "verified": False,
-            "stopped_cleanly": True,
-            "profiles": sorted(profiles),
-            "known_runnable_profiles": runnable_profiles,
-            "error": "Runnable known profile has no applicable runtime adapter",
-        }
-
-    return {
-        "status": "passed",
-        "adapter": "generic",
-        "applicable": True,
-        "started": False,
-        "verified": True,
-        "stopped_cleanly": True,
-        "profiles": sorted(profiles),
-        "limitation": "No specific runtime adapter is available for this unknown project type; generic verification is limited to audit metadata, README/run instructions, files, QA, and acceptance evidence.",
-        "error": "",
-    }
+    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
+    return {"status": "not_applicable", "applicable": False, "started": False, "verified": False, "stopped_cleanly": True, "evidence": {"profiles": list(profiles)}, "error": ""}
 
 
 def _verify_readme(root: str) -> tuple[bool, dict[str, Any]]:
@@ -999,10 +975,8 @@ def _verify_command(criterion: dict[str, Any], project: dict, root: str, qa_resu
 
 
 def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    status = "passed" if runtime_check.get("status") == "passed" and evidence.get("status") == "passed" else "failed"
-    return _registry_evidence("runtime_smoke", status, "Runtime smoke result mapped to acceptance criterion", runtime_status=evidence.get("status", "not_verified"), adapter=evidence.get("adapter", ""), limitation=evidence.get("limitation", ""))
+    status = "passed" if _check_status(checks, "runtime_smoke") == "passed" else "failed"
+    return _registry_evidence("runtime_smoke", status, "Runtime smoke result mapped to acceptance criterion")
 
 
 def _verify_static_asset_check(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1065,18 +1039,6 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
     return not failed, failed
 
 
-def _open_blocking_issues(project: dict) -> list[dict[str, Any]]:
-    blocking = []
-    for issue in project.get("issues", []):
-        if not isinstance(issue, dict):
-            continue
-        if str(issue.get("status", "open")).lower() != "open":
-            continue
-        if str(issue.get("severity", "")).lower() in ("critical", "high"):
-            blocking.append(issue)
-    return blocking
-
-
 def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     spec = project.get("project_spec", {})
@@ -1106,7 +1068,7 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     _add(checks, "regression_status", "passed" if not unresolved_regressions else "failed", {"unresolved_regressions": unresolved_regressions})
 
     runtime = _runtime_smoke(project, root)
-    _add(checks, "runtime_smoke", "passed" if runtime.get("status") == "passed" else "failed", runtime)
+    _add(checks, "runtime_smoke", "passed" if runtime.get("status") in ("passed", "not_applicable") else "failed", runtime)
 
     active_ops = []
     if project.get("_qa_active"):
@@ -1114,17 +1076,6 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     if project.get("_repair_active"):
         active_ops.append("repair")
     _add(checks, "active_operations", "passed" if not active_ops else "failed", {"active": active_ops})
-
-    blocking_issues = _open_blocking_issues(project)
-    _add(
-        checks,
-        "open_blocking_issues",
-        "passed" if not blocking_issues else "failed",
-        {
-            "open_issue_ids": [issue.get("id") for issue in blocking_issues],
-            "open_issue_severities": [issue.get("severity") for issue in blocking_issues],
-        },
-    )
 
     ac_ok, failed_criteria = _evaluate_acceptance(project, root, qa_result, checks)
     _add(checks, "acceptance_criteria", "passed" if ac_ok else "failed", {"failed_mandatory": [c.get("id") for c in failed_criteria]})

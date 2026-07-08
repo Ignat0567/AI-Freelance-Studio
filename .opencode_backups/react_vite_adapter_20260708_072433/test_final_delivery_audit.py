@@ -1,8 +1,7 @@
 import sys
 from pathlib import Path
 
-import delivery_audit
-from delivery_audit import ACCEPTANCE_VERIFIERS, FastAPIRuntimeAdapter, ReactViteRuntimeAdapter, RuntimeAdapterResult, StaticWebRuntimeAdapter, TelegramBotRuntimeAdapter, run_final_delivery_audit, verify_acceptance_criterion
+from delivery_audit import ACCEPTANCE_VERIFIERS, FastAPIRuntimeAdapter, RuntimeAdapterResult, StaticWebRuntimeAdapter, run_final_delivery_audit, verify_acceptance_criterion
 from project_spec import ACCEPTANCE_EVIDENCE_HISTORY_KEY, ensure_project_spec_bundle, record_acceptance_evidence
 
 
@@ -98,132 +97,6 @@ Open index.html.
     }
 
 
-def _react_vite_fixture(tmp_path: Path):
-    server_js = """const http = require('http');
-const port = Number(process.env.PORT || 4173);
-const host = process.env.HOST || '127.0.0.1';
-const html = '<!doctype html><div id="root">React Fixture</div>';
-const server = http.createServer((req, res) => {
-  res.writeHead(200, {'content-type': 'text/html'});
-  res.end(html);
-});
-server.listen(port, host);
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-"""
-    build_js = """const fs = require('fs');
-fs.mkdirSync('dist', {recursive: true});
-fs.writeFileSync('dist/index.html', '<!doctype html><div id="root">built</div>');
-"""
-    package_json = {
-        "name": "react-vite-fixture",
-        "private": True,
-        "type": "commonjs",
-        "scripts": {"build": "node build.js", "preview": "node server.js", "dev": "node server.js"},
-        "dependencies": {"@vitejs/plugin-react": "fixture", "vite": "fixture", "react": "fixture", "react-dom": "fixture"},
-    }
-    import json
-    _write(tmp_path / "package.json", json.dumps(package_json))
-    _write(tmp_path / "server.js", server_js)
-    _write(tmp_path / "build.js", build_js)
-    _write(tmp_path / "index.html", "<!doctype html><div id='root'></div>")
-    _write(tmp_path / "README.md", """# React Vite Fixture
-
-## Install
-npm install
-
-## Run
-npm run preview
-
-## Test
-npm run build
-""")
-    return {
-        "title": "React Vite Fixture",
-        "description": "Build a React Vite app.",
-        "project_profiles": ["react_frontend", "vite_frontend"],
-        "project_spec": {"project_profiles": ["react_frontend", "vite_frontend"], "delivery_artifacts": ["README.md", "package.json"]},
-        "acceptance_criteria": [],
-        "logs": [],
-    }
-
-
-def _telegram_fixture(tmp_path: Path):
-    _write(tmp_path / ".env.example", "BOT_TOKEN=replace_me\nADMIN_ID=0\nDATABASE_PATH=data/bot.db\n")
-    _write(tmp_path / ".gitignore", ".env\n__pycache__/\n")
-    _write(tmp_path / "README.md", """# Telegram Bot
-
-## Install
-python -m pip install -r requirements.txt
-
-## Run
-python bot.py
-
-## Test
-python -m pytest -q
-""")
-    _write(tmp_path / "requirements.txt", "python-dotenv\n")
-    _write(tmp_path / "config.py", """import os
-BOT_TOKEN = os.getenv('BOT_TOKEN', 'replace_me')
-ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
-DATABASE_PATH = os.getenv('DATABASE_PATH', 'data/bot.db')
-""")
-    _write(tmp_path / "bot.py", """from handlers import callbacks, commands
-
-class Dispatcher:
-    def __init__(self):
-        self.routers = []
-    def include_router(self, router):
-        self.routers.append(router)
-
-dp = Dispatcher()
-dp.include_router(commands.router)
-dp.include_router(callbacks.router)
-""")
-    _write(tmp_path / "handlers" / "__init__.py", "")
-    _write(tmp_path / "handlers" / "commands.py", """class Router:
-    pass
-
-def Command(name):
-    return name
-
-router = Router()
-START = Command('start')
-HELP = Command('help')
-""")
-    _write(tmp_path / "handlers" / "callbacks.py", """class Router:
-    pass
-
-router = Router()
-FAV = {'callback_data': 'fav:abc123'}
-MORE = {'callback_data': 'more:random'}
-""")
-    _write(tmp_path / "services" / "__init__.py", "")
-    _write(tmp_path / "services" / "database.py", """class Database:
-    def __init__(self, path=':memory:'):
-        self.path = path
-    def init(self):
-        return True
-""")
-    _write(tmp_path / "services" / "joke_service.py", """from services.database import Database
-
-class JokeService:
-    def __init__(self, db=None):
-        self.db = db or Database()
-""")
-    return {
-        "title": "Telegram Fixture",
-        "description": "Build a Telegram bot with start and help commands.",
-        "project_profiles": ["telegram_bot", "python_application"],
-        "project_spec": {
-            "project_profiles": ["telegram_bot", "python_application"],
-            "delivery_artifacts": ["README.md", "requirements.txt", ".env.example", ".gitignore"],
-            "required_credentials": [{"name": "TELEGRAM_BOT_TOKEN"}],
-        },
-        "acceptance_criteria": [],
-        "logs": [],
-    }
-
-
 def test_final_audit_passes_verified_fastapi_project(tmp_path):
     project = _fastapi_project(tmp_path)
     _record_direct_feature_evidence(project)
@@ -284,7 +157,7 @@ def test_fastapi_runtime_adapter_verifies_and_stops_cleanly(tmp_path):
     assert result.evidence["free_port"] > 0
     assert result.evidence["pid"]
     assert result.evidence["owned_process_only"] is True
-    assert result.evidence["shutdown_method"] in ("terminate", "already_exited", "taskkill_tree")
+    assert result.evidence["shutdown_method"] in ("terminate", "already_exited")
     assert result.evidence["killed"] is False
     assert any(probe["success"] and probe["path"] == "/health" for probe in result.evidence["probes"])
 
@@ -376,162 +249,6 @@ def test_static_web_runtime_adapter_blocks_missing_local_assets_before_server_st
     assert result.error == "Missing local static assets"
 
 
-def test_react_vite_runtime_adapter_not_applicable_for_other_profiles(tmp_path):
-    result = ReactViteRuntimeAdapter().run({"project_profiles": ["static_website"]}, str(tmp_path))
-
-    assert result.to_dict() == {
-        "applicable": False,
-        "started": False,
-        "verified": False,
-        "stopped_cleanly": True,
-        "evidence": {"reason": "No React/Vite profile"},
-        "error": "",
-    }
-
-
-def test_react_vite_runtime_adapter_requires_package_json(tmp_path):
-    project = {"project_profiles": ["react_frontend", "vite_frontend"], "project_spec": {"project_profiles": ["react_frontend", "vite_frontend"]}}
-
-    result = ReactViteRuntimeAdapter().run(project, str(tmp_path))
-
-    assert result.applicable is True
-    assert result.started is False
-    assert result.verified is False
-    assert result.stopped_cleanly is True
-    assert result.error == "Missing package.json"
-
-
-def test_react_vite_runtime_adapter_requires_build_and_runtime_scripts(tmp_path):
-    import json
-    _write(tmp_path / "package.json", json.dumps({"scripts": {"build": "node build.js"}}))
-    project = {"project_profiles": ["vite_frontend"], "project_spec": {"project_profiles": ["vite_frontend"]}}
-
-    result = ReactViteRuntimeAdapter().run(project, str(tmp_path))
-
-    assert result.applicable is True
-    assert result.started is False
-    assert result.verified is False
-    assert result.evidence["missing_scripts"] == ["preview_or_dev"]
-    assert result.error == "Missing required package scripts"
-
-
-def test_react_vite_runtime_adapter_builds_starts_probes_and_stops(tmp_path):
-    project = _react_vite_fixture(tmp_path)
-
-    result = ReactViteRuntimeAdapter().run(project, str(tmp_path))
-
-    assert result.applicable is True
-    assert result.started is True
-    assert result.verified is True
-    assert result.stopped_cleanly is True
-    assert result.error == ""
-    assert result.evidence["package_json"] == "package.json"
-    assert result.evidence["build_result"]["exit_code"] == 0
-    assert result.evidence["runtime_script"] == "preview"
-    assert result.evidence["status_code"] == 200
-    assert "React Fixture" in result.evidence["response_sample"]
-    assert result.evidence["owned_process_only"] is True
-    assert result.evidence["shutdown_method"] in ("terminate", "already_exited")
-    assert result.evidence["killed"] is False
-
-
-def test_react_vite_runtime_adapter_uses_free_port_for_probe(tmp_path):
-    project = _react_vite_fixture(tmp_path)
-
-    result = ReactViteRuntimeAdapter().run(project, str(tmp_path))
-    port = result.evidence["free_port"]
-
-    assert isinstance(port, int)
-    assert port > 0
-    assert result.evidence["command"] == "npm.cmd run preview" if sys.platform == "win32" else result.evidence["command"] == "npm run preview"
-    assert f":{port}" in result.evidence["url"]
-    assert any(probe["success"] and f":{port}" in probe["url"] for probe in result.evidence["probes"])
-
-
-def test_final_audit_uses_react_vite_runtime_adapter_before_static(tmp_path):
-    project = _react_vite_fixture(tmp_path)
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["runtime_verification"]["status"] == "passed"
-    assert report["runtime_verification"]["adapter"] == "react_vite"
-    assert report["runtime_verification"]["status_code"] == 200
-
-
-def test_telegram_runtime_adapter_not_applicable_for_other_profiles(tmp_path):
-    result = TelegramBotRuntimeAdapter().run({"project_profiles": ["fastapi"]}, str(tmp_path))
-
-    assert result.to_dict() == {
-        "applicable": False,
-        "started": False,
-        "verified": False,
-        "stopped_cleanly": True,
-        "evidence": {"reason": "No Telegram bot profile"},
-        "error": "",
-    }
-
-
-def test_telegram_runtime_adapter_verifies_credential_free_local_smoke(tmp_path):
-    project = _telegram_fixture(tmp_path)
-
-    result = TelegramBotRuntimeAdapter().run(project, str(tmp_path))
-
-    assert result.applicable is True
-    assert result.started is False
-    assert result.verified is True
-    assert result.stopped_cleanly is True
-    assert result.error == ""
-    assert result.evidence["credential_free"] is True
-    assert result.evidence["imports"]["failed"] == []
-    assert "bot" in result.evidence["imports"]["imported"]
-    assert result.evidence["env_safety"]["safe"] is True
-    assert result.evidence["handler_registration"]["handler_registration_detected"] is True
-    assert result.evidence["handler_registration"]["key_command_smoke_passed"] == {"start": True, "help": True}
-    assert result.evidence["handler_registration"]["callback_data_too_long"] == []
-    assert result.evidence["database_service_smoke"]["status"] == "passed"
-    assert result.evidence["network_behavior"]["status"] == "not_verified"
-
-
-def test_telegram_runtime_adapter_rejects_real_looking_env_secret(tmp_path):
-    project = _telegram_fixture(tmp_path)
-    _write(tmp_path / ".env.example", "BOT_TOKEN=123456789:abcdefghijklmnopqrstuvwxyzABCDE\n")
-
-    result = TelegramBotRuntimeAdapter().run(project, str(tmp_path))
-
-    assert result.applicable is True
-    assert result.verified is False
-    assert result.evidence["env_safety"]["safe"] is False
-    assert "config/.env safety" in result.evidence["missing_local_checks"]
-
-
-def test_telegram_runtime_adapter_rejects_long_callback_data(tmp_path):
-    project = _telegram_fixture(tmp_path)
-    _write(tmp_path / "handlers" / "callbacks.py", """class Router:
-    pass
-
-router = Router()
-BAD = {'callback_data': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
-""")
-
-    result = TelegramBotRuntimeAdapter().run(project, str(tmp_path))
-
-    assert result.verified is False
-    assert result.evidence["handler_registration"]["callback_data_too_long"]
-    assert "callback_data length" in result.evidence["missing_local_checks"]
-
-
-def test_final_audit_uses_telegram_runtime_adapter_without_network_credentials(tmp_path):
-    project = _telegram_fixture(tmp_path)
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["runtime_verification"]["status"] == "passed"
-    assert report["runtime_verification"]["adapter"] == "telegram_bot"
-    assert report["runtime_verification"]["network_behavior"]["status"] == "not_verified"
-
-
 def test_final_audit_uses_static_web_runtime_adapter(tmp_path):
     project = _static_project(tmp_path)
     qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
@@ -541,45 +258,6 @@ def test_final_audit_uses_static_web_runtime_adapter(tmp_path):
     assert report["runtime_verification"]["status"] == "passed"
     assert report["runtime_verification"]["adapter"] == "static_web"
     assert report["runtime_verification"]["status_code"] == 200
-
-
-def test_known_runnable_profile_fails_without_applicable_runtime_adapter(tmp_path, monkeypatch):
-    project = _fastapi_project(tmp_path)
-    monkeypatch.setattr(delivery_audit, "RUNTIME_ADAPTERS", [])
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["status"] == "failed"
-    assert report["runtime_verification"]["status"] == "failed"
-    assert report["runtime_verification"]["known_runnable_profiles"] == ["fastapi"]
-    assert any(check["name"] == "runtime_smoke" and check["status"] == "failed" for check in report["checks"])
-
-
-def test_unknown_project_type_uses_limited_generic_runtime_verification(tmp_path):
-    project = _project_with_custom_acceptance(
-        tmp_path,
-        {"id": "AC-FILE", "title": "Files", "priority": "low", "verification_method": "file_check", "evidence": []},
-    )
-    project["project_profiles"] = ["custom_unknown_profile"]
-    project["project_spec"]["project_profiles"] = ["custom_unknown_profile"]
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["runtime_verification"]["status"] == "passed"
-    assert report["runtime_verification"]["adapter"] == "generic"
-    assert "limited" in report["runtime_verification"]["limitation"]
-
-
-def test_runtime_smoke_not_applicable_does_not_pass_mandatory_acceptance(tmp_path):
-    criterion = {"id": "AC-RUNTIME", "title": "Runtime", "priority": "high", "verification_method": "runtime_smoke"}
-    checks = [{"name": "runtime_smoke", "status": "passed", "evidence": {"status": "not_applicable"}}]
-
-    evidence = verify_acceptance_criterion(criterion, {}, str(tmp_path), {"success": True}, checks)
-
-    assert evidence["status"] == "failed"
-    assert evidence["runtime_status"] == "not_applicable"
 
 
 def test_mandatory_feature_cannot_pass_from_global_qa_alone(tmp_path):
@@ -880,75 +558,6 @@ def test_final_audit_blocks_credentials(tmp_path):
 
     assert report["status"] == "blocked_by_credentials"
     assert report["credentials_still_required"][0]["name"] == "OPENAI_API_KEY"
-
-
-def test_final_audit_blocks_open_high_or_critical_issue(tmp_path):
-    project = _fastapi_project(tmp_path)
-    _record_direct_feature_evidence(project)
-    project["acceptance_criteria"] = [
-        criterion
-        for criterion in project["acceptance_criteria"]
-        if criterion["verification_method"] in ACCEPTANCE_VERIFIERS
-    ]
-    project["issues"] = [
-        {
-            "id": "ISSUE-QA-ABC",
-            "source": "qa_engine",
-            "severity": "high",
-            "requirement_id": "",
-            "criterion_id": "",
-            "title": "Runtime failed before repair",
-            "evidence": {"fingerprint": "abc"},
-            "reproduction": ["python -m pytest -q"],
-            "owner": "codex",
-            "status": "open",
-            "attempts": 1,
-            "verification_method": "build_and_tests",
-        }
-    ]
-    qa_result = {"success": True, "rounds_completed": 2, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["status"] == "failed"
-    assert any(
-        check["name"] == "open_blocking_issues"
-        and check["status"] == "failed"
-        and check["evidence"]["open_issue_ids"] == ["ISSUE-QA-ABC"]
-        for check in report["checks"]
-    )
-
-
-def test_final_audit_allows_closed_high_issue_with_verification_evidence(tmp_path):
-    project = _fastapi_project(tmp_path)
-    _record_direct_feature_evidence(project)
-    project["acceptance_criteria"] = [
-        criterion
-        for criterion in project["acceptance_criteria"]
-        if criterion["verification_method"] in ACCEPTANCE_VERIFIERS
-    ]
-    project["issues"] = [
-        {
-            "id": "ISSUE-QA-ABC",
-            "source": "qa_engine",
-            "severity": "high",
-            "requirement_id": "",
-            "criterion_id": "",
-            "title": "Runtime failed before repair",
-            "evidence": {"fingerprint": "abc", "resolution": {"source": "qa_engine", "status": "passed", "round": 2}},
-            "reproduction": ["python -m pytest -q"],
-            "owner": "codex",
-            "status": "closed",
-            "attempts": 1,
-            "verification_method": "build_and_tests",
-        }
-    ]
-    qa_result = {"success": True, "rounds_completed": 2, "total_errors": 0, "round_history": [], "errors": []}
-
-    report = run_final_delivery_audit(project, str(tmp_path), qa_result)
-
-    assert report["status"] == "passed"
-    assert any(check["name"] == "open_blocking_issues" and check["status"] == "passed" for check in report["checks"])
 
 
 def test_final_audit_preserves_acceptance_evidence_history_across_qa_rounds(tmp_path):

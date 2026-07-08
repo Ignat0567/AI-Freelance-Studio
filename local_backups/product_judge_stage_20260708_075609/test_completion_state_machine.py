@@ -31,9 +31,6 @@ def test_c_completion_requires_final_audit_step():
     assert main._set_project_status(p, "final_audit")
 
     main._mark_final_audit_passed(p, True)
-    assert not main._set_project_status(p, "completed")
-    assert main._set_project_status(p, "product_judge")
-    main._mark_product_judge_passed(p, True)
     assert main._set_project_status(p, "completed")
     assert p["status"] == "completed"
 
@@ -54,7 +51,6 @@ def test_e_cancelled_project_cannot_complete_from_stale_callback():
     main._mark_generation_finished(p, True)
     main._mark_qa_passed(p, True)
     main._mark_final_audit_passed(p, True)
-    main._mark_product_judge_passed(p, True)
 
     assert not main._set_project_status(p, "completed")
     assert p["status"] == "cancelled"
@@ -142,83 +138,6 @@ def test_invalid_generating_to_completed_even_if_gates_are_true():
     main._mark_generation_finished(p, True)
     main._mark_qa_passed(p, True)
     main._mark_final_audit_passed(p, True)
-    main._mark_product_judge_passed(p, True)
 
     assert not main._set_project_status(p, "completed")
     assert p["status"] == "coding"
-
-
-def _judge_project() -> dict:
-    project = _project("final_audit")
-    project.update({"title": "Judge Demo", "description": "Build a todo API.", "chat_history": []})
-    main.ensure_project_spec_bundle(project)
-    project["final_delivery_report"] = {"status": "passed", "runtime_verification": {"status": "passed"}, "known_limitations": []}
-    return project
-
-
-def test_product_judge_structured_pass_requires_existing_evidence(monkeypatch):
-    project = _judge_project()
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "errors": []}
-    monkeypatch.setattr(main, "_call_product_judge", lambda bundle: {"status": "pass", "objections": []})
-
-    ok, errors = main._run_product_judge_stage(project, qa_result)
-
-    assert ok is True
-    assert errors == []
-    assert project["product_judge_report"]["valid_objection_count"] == 0
-    assert "product_judge_input" in project
-
-
-def test_product_judge_text_pass_alone_does_not_pass(monkeypatch):
-    project = _judge_project()
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "errors": []}
-    monkeypatch.setattr(main, "_call_product_judge", lambda bundle: main._parse_product_judge_response("PASS"))
-
-    ok, errors = main._run_product_judge_stage(project, qa_result)
-
-    assert ok is False
-    assert errors
-    assert project["product_judge_report"]["status"] == "invalid"
-    assert project.get("issues", []) == []
-
-
-def test_product_judge_valid_objection_becomes_open_issue_without_hidden_log(monkeypatch):
-    project = _judge_project()
-    requirement_id = project["project_spec"]["requirements"][0]["id"]
-    criterion_id = project["acceptance_criteria"][0]["id"]
-    qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "errors": []}
-    objection = {
-        "requirement_id": requirement_id,
-        "criterion_id": criterion_id,
-        "severity": "high",
-        "title": "No evidence proves the core todo behavior works",
-        "evidence": "Acceptance evidence is documentation-only.",
-        "reproduction": ["Run behavior test for todo creation"],
-        "verification_method": "behavior_smoke",
-        "hidden_reasoning": "do not log this",
-    }
-    monkeypatch.setattr(main, "_call_product_judge", lambda bundle: {"status": "fail", "objections": [objection]})
-
-    ok, errors = main._run_product_judge_stage(project, qa_result)
-
-    assert ok is False
-    assert errors == [f"{criterion_id}: No evidence proves the core todo behavior works"]
-    assert len(project["issues"]) == 1
-    issue = project["issues"][0]
-    assert issue["source"] == "product_judge"
-    assert issue["status"] == "open"
-    assert issue["requirement_id"] == requirement_id
-    assert issue["criterion_id"] == criterion_id
-    assert issue["evidence"]["requires_verifier_evidence"] is True
-    assert not any("hidden_reasoning" in log for log in project["logs"])
-
-
-def test_backend_pipeline_metadata_is_source_of_truth_for_stages_and_agents():
-    metadata = main.get_pipeline_metadata()
-    agents = main.get_agents()
-
-    assert metadata["stage_order"] == main.PIPELINE_UI_STAGE_ORDER
-    assert metadata["stages"]["product_judge"]["label"] == "Product Judge"
-    assert metadata["agent_stages"]["codex"]["stage"] == "coding"
-    assert agents["codex"]["stage"] == "coding"
-    assert agents["codex"]["display_role"] == "Software Architect"

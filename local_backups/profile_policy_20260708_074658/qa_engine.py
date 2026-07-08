@@ -12,50 +12,6 @@ from project_spec import Issue
 MAX_ROUNDS = 4
 MAX_REPAIR_ATTEMPTS = 3
 OPENCODE_FIX_APPLIED = "__opencode_fix_applied__"
-POLICY_GROUPS = ("python", "fastapi", "telegram", "node", "react_vite", "static_web", "generic")
-POLICY_GROUP_RULES = {
-    "python": ("python_requirements", "python_pytest", "python_source_quality", "python_getenv_defaults"),
-    "fastapi": ("fastapi_root_entrypoint", "fastapi_uvicorn_docs", "cors_safety", "fastapi_route_style"),
-    "telegram": ("telegram_env_safety", "telegram_gitignore", "telegram_local_smoke", "python_getenv_defaults"),
-    "node": ("npm_build", "js_dependency_manifest"),
-    "react_vite": ("npm_build", "vite_runtime_scripts", "esm_modules", "tailwind_postcss"),
-    "static_web": ("static_assets",),
-    "generic": ("readme_instructions", "placeholder_scan"),
-}
-POLICY_GROUP_PROMPT_RULES = {
-    "python": (
-        "- Python: os.getenv() calls must provide safe defaults when used for optional/local config.\n"
-        "- Python: dependencies used by code must appear in requirements.txt. Use python-dotenv, not dotenv; use PyMuPDF, not fitz, as the package name.\n"
-        "- Python: use targeted try/except around I/O, network, parsing, subprocess, and external-service boundaries; do not wrap every pure function blindly.\n"
-        "- Python: Optional must come from typing consistently; package directories containing .py modules need __init__.py.\n"
-    ),
-    "fastapi": (
-        "- FastAPI: expose a root main.py or app.py entrypoint.\n"
-        "- FastAPI: use python -m uvicorn in docs; uvicorn.run() must not use debug=True.\n"
-        "- FastAPI: keep route handler sync/async style consistent with the database/client stack.\n"
-        "- FastAPI: if CORS is enabled, do not combine wildcard origins with credentials.\n"
-    ),
-    "telegram": (
-        "- Telegram: document BOT_TOKEN in .env.example with placeholders only, never a real-looking token.\n"
-        "- Telegram: .gitignore must exclude .env, and local smoke checks must not require real network credentials.\n"
-    ),
-    "node": (
-        "- Node: dependencies used by code must appear in package.json.\n"
-        "- Node: run npm install and npm run build when a build script exists.\n"
-    ),
-    "react_vite": (
-        "- React/Vite: use ESM import/export consistently; do not mix with CommonJS require/module.exports.\n"
-        "- React/Vite: package.json must have type=module when ESM config files exist.\n"
-        "- React/Vite: use Tailwind CSS with PostCSS for generated React frontend styling.\n"
-        "- React frontend with backend: backend API should return JSON, not HTML templates.\n"
-    ),
-    "static_web": (
-        "- Static web: keep assets local or explicitly documented, and ensure referenced local files exist.\n"
-    ),
-    "generic": (
-        "- Generic: keep README install/run/test instructions accurate for the delivered artifact.\n"
-    ),
-}
 
 IGNORED_QA_DIRS = {
     ".git",
@@ -151,56 +107,6 @@ def _project_files(root_path):
     return [os.path.relpath(fpath, root_path) for _root, _fname, fpath in _walk_project_files(root_path)]
 
 
-def _project_profiles(project):
-    if not isinstance(project, dict):
-        return []
-    profiles = project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", [])
-    return [str(profile) for profile in profiles if profile]
-
-
-def select_policy_groups(project, root_path=None):
-    profiles = set(_project_profiles(project))
-    groups = []
-    if profiles.intersection({"python_application", "python_cli", "fastapi", "telegram_bot"}):
-        groups.append("python")
-    if "fastapi" in profiles:
-        groups.append("fastapi")
-    if "telegram_bot" in profiles:
-        groups.append("telegram")
-    if profiles.intersection({"node_project", "node_backend"}):
-        groups.append("node")
-    if profiles.intersection({"react_frontend", "vite_frontend"}):
-        groups.append("react_vite")
-        if "node" not in groups:
-            groups.append("node")
-    if "static_website" in profiles:
-        groups.append("static_web")
-
-    if not groups and root_path and os.path.isdir(root_path):
-        files = {p.replace("\\", "/") for p in _project_files(root_path)}
-        if any(path.endswith(".py") for path in files):
-            groups.append("python")
-        if "package.json" in files:
-            groups.append("node")
-        if "vite.config.js" in files or "vite.config.ts" in files or any(path.endswith((".jsx", ".tsx")) for path in files):
-            groups.append("react_vite")
-            if "node" not in groups:
-                groups.append("node")
-        if "index.html" in files or any(path.endswith(".html") for path in files):
-            groups.append("static_web")
-
-    if not groups:
-        groups.append("generic")
-    return [group for group in POLICY_GROUPS if group in set(groups)]
-
-
-def policy_prompt_rules(policy_groups):
-    selected = [group for group in POLICY_GROUPS if group in set(policy_groups or [])]
-    if not selected:
-        selected = ["generic"]
-    return "".join(POLICY_GROUP_PROMPT_RULES[group] for group in selected)
-
-
 _SNAPSHOT_FILE_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".md", ".txt", ".html", ".css", ".env", ".yml", ".yaml", ".cfg", ".ini", ".toml", ".xml", ".svg"}
 _SNAPSHOT_DIR_IGNORE = {".git", ".pytest_cache", "__pycache__", "node_modules", ".venv", "venv", "dist", "build", "data", ".egg-info"}
 
@@ -252,12 +158,20 @@ def _has_any_file(root_path, names):
 
 _SHARED_QA_RULES = (
     "CRITICAL RULES — VIOLATING ANY WILL CAUSE REJECTION:\n"
-    "- Do not hardcode secrets or credentials; use config, environment variables, or explicit placeholders.\n"
+    "- os.getenv() MUST always provide a default value: os.getenv('KEY', 'default').\n"
+    "- Use ONLY ESM (import/export) for JS/TS — NEVER CommonJS (require/module.exports).\n"
+    "- EVERY function must have try/except (Python) or try/catch (JS/TS) error handling.\n"
+    "- NO hardcoded values — use env vars, config constants, or parameters.\n"
     "- Import names MUST exactly match the exports of the dependency files.\n"
-    "- Dependencies used in code MUST be listed in the applicable dependency manifest.\n"
+    "- ALL dependencies used in code MUST be listed in requirements.txt (Python) or package.json (JS).\n"
+    "- In requirements.txt: use 'python-dotenv' NOT 'dotenv'. Use 'PyMuPDF' NOT 'fitz'.\n"
+    "- Do NOT add numpy, pandas, scipy, matplotlib, sklearn to requirements (rarely needed).\n"
+    "- For SQLAlchemy: sync OR async — NEVER mix. Driver: psycopg2-binary (sync PG), asyncpg (async PG), aiosqlite (async SQLite).\n"
+    "- Async consistency: pick sync OR async — NEVER mix sync engine with async queries.\n"
+    "- If ESM config files exist (vite.config.js, tailwind.config.js, postcss.config.js), package.json MUST have '\"type\": \"module\"'.\n"
     "- All tests must have correct field names matching actual model definitions.\n"
     "- Tests must only test endpoints that exist in the actual API code.\n"
-    "- Do not leave placeholder/stub implementation, fake output, or skipped/falsified tests.\n"
+    "- Optional[X] imports: use ONLY from typing import Optional, not mixed sources.\n"
 )
 
 CODEX_FIX_PROMPT = (
@@ -265,7 +179,6 @@ CODEX_FIX_PROMPT = (
     "failed the following verification checks:\n\n{errors}\n\n"
     "Please FIX the issues.\n"
     f"{_SHARED_QA_RULES}\n"
-    "PROFILE-SPECIFIC RULES:\n{policy_rules}\n"
     "Return ONLY valid JSON with the same structure as before:\n"
     '{{"files": {{"filename.py": "fixed code using \\\\n for newlines", ...}}}}\n'
     "Only include files that need fixing. Do NOT include files that are already correct. "
@@ -322,7 +235,6 @@ class QAEngine:
         self.previous_check_status = {}
         self.needs_credentials = False
         self.needs_human_input = False
-        self.policy_groups = select_policy_groups(project, target_path)
 
     def log(self, msg):
         self.logs.append(msg)
@@ -549,11 +461,10 @@ class QAEngine:
         errors = []
         files = _project_files(self.target_path)
         normalized = {p.replace("\\", "/") for p in files}
-        policies = set(self.policy_groups)
 
-        has_python = "python" in policies and any(p.endswith(".py") for p in normalized)
+        has_python = any(p.endswith(".py") for p in normalized)
         has_fastapi = False
-        has_package_json = bool(policies.intersection({"node", "react_vite"})) and "package.json" in normalized
+        has_package_json = "package.json" in normalized
         root_readme = os.path.join(self.target_path, "README.md")
 
         if not os.path.isfile(root_readme):
@@ -566,7 +477,7 @@ class QAEngine:
                 errors.append("README.md is missing install instructions")
             if not any(token in readme_lower for token in ("run", "запуск", "uvicorn", "python", "npm run")):
                 errors.append("README.md is missing run instructions")
-            if "fastapi" in policies and has_python and "uvicorn" in readme_lower and "python -m uvicorn" not in readme_lower:
+            if has_python and "uvicorn" in readme_lower and "python -m uvicorn" not in readme_lower:
                 errors.append("README.md should use 'python -m uvicorn ...' so it works when uvicorn.exe is not on PATH")
 
         source_stub_patterns = (
@@ -589,36 +500,35 @@ class QAEngine:
                 errors.append(f"Cannot read source file {rel}: {e}")
                 continue
             lower = content.lower()
-            if "fastapi" in policies and "fastapi(" in lower:
+            if "fastapi(" in lower:
                 has_fastapi = True
             for pattern in source_stub_patterns:
                 if pattern.lower() in lower:
                     errors.append(f"Stub/placeholder implementation found in {rel}: {pattern}")
                     break
 
-        if "python" in policies and has_python and "requirements.txt" not in normalized:
+        if has_python and "requirements.txt" not in normalized:
             errors.append("Python project is missing root requirements.txt")
-        if "fastapi" in policies and has_fastapi and "main.py" not in normalized and "app.py" not in normalized:
+        if has_fastapi and "main.py" not in normalized and "app.py" not in normalized:
             errors.append("FastAPI project must expose a root entrypoint (main.py or app.py)")
 
         security_docs = []
         for rel in normalized:
             if rel.lower().endswith(("readme.md", "security_audit.md", "security.md")):
                 security_docs.append(rel)
-        if policies.intersection({"fastapi", "python"}):
-            source_text = "\n".join(
-                _read_text(os.path.join(self.target_path, rel.replace("/", os.sep)))
-                for rel in normalized
-                if rel.endswith(".py")
-            )
-            cors_enabled = "CORSMiddleware" in source_text or "add_middleware(" in source_text and "allow_origins" in source_text
-            if cors_enabled:
-                if 'allow_origins=["*"]' in source_text and "allow_credentials=True" in source_text:
-                    errors.append("Unsafe CORS configuration: wildcard origins with credentials enabled")
-            for rel in security_docs:
-                doc = _read_text(os.path.join(self.target_path, rel.replace("/", os.sep))).lower()
-                if "cors" in doc and any(phrase in doc for phrase in ("cors не включ", "cors is not", "no cors", "cors не установлен")) and cors_enabled:
-                    errors.append(f"Documentation contradicts implementation: {rel} says CORS is disabled but code enables CORS")
+        source_text = "\n".join(
+            _read_text(os.path.join(self.target_path, rel.replace("/", os.sep)))
+            for rel in normalized
+            if rel.endswith(".py")
+        )
+        cors_enabled = "CORSMiddleware" in source_text or "add_middleware(" in source_text and "allow_origins" in source_text
+        if cors_enabled:
+            if 'allow_origins=["*"]' in source_text and "allow_credentials=True" in source_text:
+                errors.append("Unsafe CORS configuration: wildcard origins with credentials enabled")
+        for rel in security_docs:
+            doc = _read_text(os.path.join(self.target_path, rel.replace("/", os.sep))).lower()
+            if "cors" in doc and any(phrase in doc for phrase in ("cors не включ", "cors is not", "no cors", "cors не установлен")) and cors_enabled:
+                errors.append(f"Documentation contradicts implementation: {rel} says CORS is disabled but code enables CORS")
 
         if has_package_json:
             try:
@@ -666,8 +576,8 @@ class QAEngine:
 
     def stage_profile_checks(self):
         profile = self.detect_profile()
-        self.log(f"[QA Profile]: Detected {profile}. Policy groups: {', '.join(self.policy_groups)}.")
-        if "telegram" in self.policy_groups:
+        self.log(f"[QA Profile]: Detected {profile}.")
+        if profile == "telegram_bot":
             return self._stage_telegram_bot_checks()
         return True, [], []
 
@@ -1014,7 +924,6 @@ asyncio.run(main())
                 "round_history": self.round_history,
                 "failure_registry": self.failure_registry,
                 "repair_history": self.repair_history,
-                "policy_groups": self.policy_groups,
                 "needs_credentials": self.needs_credentials,
                 "needs_human_input": self.needs_human_input,
             }
@@ -1185,7 +1094,6 @@ asyncio.run(main())
             "failure_registry": self.failure_registry,
             "repair_history": self.repair_history,
             "issues": self.project.get("issues", []),
-            "policy_groups": self.policy_groups,
             "needs_credentials": self.needs_credentials,
             "needs_human_input": self.needs_human_input,
         }
@@ -1228,7 +1136,7 @@ asyncio.run(main())
 
         self.log("[LEGACY JSON FALLBACK] OpenCode direct repair produced no meaningful disk changes. Attempting JSON-based repair.")
 
-        prompt = CODEX_FIX_PROMPT.format(errors=error_text, policy_rules=policy_prompt_rules(self.policy_groups))
+        prompt = CODEX_FIX_PROMPT.format(errors=error_text)
         # Retry up to 2 times on transient AI errors
         for attempt in range(2):
             try:
@@ -1276,7 +1184,6 @@ asyncio.run(main())
         criteria_text = "\n".join(criteria_lines) if criteria_lines else "No acceptance criteria stored."
 
         report_json = json.dumps(repair_report or {}, ensure_ascii=False, indent=2)
-        profile_rules = policy_prompt_rules(self.policy_groups)
         issue_report = (
             "You are repairing an existing software project. Inspect the actual files before changing anything. "
             "Fix the root cause of the failures. Do not remove required functionality. Do not weaken, delete, skip, or falsify tests only to obtain a passing result. "
@@ -1298,9 +1205,9 @@ asyncio.run(main())
             "- Preserve every required feature and explicit constraint from the structured specification.\n"
             "- Keep generated/cache/build artifacts out of fixes.\n"
             "- Ensure README/dependency/run/test instructions match the actual app.\n"
+            "- For Python tests, run `python -m pytest -q` from the project root when tests exist.\n"
+            "- For JS projects with a build script, run `npm install` and `npm run build` from the project root.\n"
             "- Stop only when the product is runnable and the listed QA failures are resolved.\n"
-            "\nProfile-specific rules selected for this project:\n"
-            f"{profile_rules}"
         )
         try:
             if self.project.get("cancel_requested") or self.project.get("status") == "cancelled":

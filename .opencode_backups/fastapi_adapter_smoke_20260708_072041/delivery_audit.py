@@ -160,26 +160,12 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
         proc = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         started = True
         output = []
-        probes = []
-        base_evidence = {
-            "adapter": self.name,
-            "entrypoint": entrypoint[0],
-            "module_ref": entrypoint[1],
-            "host": "127.0.0.1",
-            "free_port": port,
-            "command": command_text,
-            "pid": proc.pid,
-            "owned_process_only": True,
-            "shutdown_method": "pending",
-            "killed": False,
-            "probes": probes,
-        }
         result = RuntimeAdapterResult(
             True,
             started,
             False,
             False,
-            dict(base_evidence),
+            {"adapter": self.name, "command": command_text},
             "Runtime verification did not complete",
         )
         try:
@@ -190,42 +176,37 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
                     break
                 for path in ("/health", "/"):
                     try:
-                        url = f"http://127.0.0.1:{port}{path}"
-                        with urllib.request.urlopen(url, timeout=1.5) as resp:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=1.5) as resp:
                             body = resp.read(500).decode("utf-8", errors="replace")
-                        probes.append({"path": path, "url": url, "status_code": resp.status, "success": True})
-                        evidence = dict(base_evidence)
-                        evidence.update({
-                            "url": url,
-                            "status_code": resp.status,
-                            "response_sample": body,
-                        })
                         result = RuntimeAdapterResult(
                             True,
                             started,
                             True,
                             False,
-                            evidence,
+                            {
+                                "adapter": self.name,
+                                "command": command_text,
+                                "url": f"http://127.0.0.1:{port}{path}",
+                                "status_code": resp.status,
+                                "response_sample": body,
+                            },
                             "",
                         )
                         return result
                     except Exception as exc:
                         last_error = str(exc)
-                        probes.append({"path": path, "url": f"http://127.0.0.1:{port}{path}", "success": False, "error": _tail_output(last_error)})
                 time.sleep(0.4)
             try:
                 if proc.poll() is not None and proc.stdout:
                     output.append(proc.stdout.read()[-2000:])
             except Exception:
                 pass
-            evidence = dict(base_evidence)
-            evidence["process_output"] = "\n".join(output)
             result = RuntimeAdapterResult(
                 True,
                 started,
                 False,
                 False,
-                evidence,
+                {"adapter": self.name, "command": command_text, "process_output": "\n".join(output)},
                 last_error,
             )
             return result
@@ -235,463 +216,23 @@ class FastAPIRuntimeAdapter(RuntimeAdapter):
                 try:
                     proc.wait(timeout=5)
                     result.stopped_cleanly = True
-                    result.evidence["shutdown_method"] = "terminate"
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     result.stopped_cleanly = False
-                    result.evidence["shutdown_method"] = "kill"
-                    result.evidence["killed"] = True
             else:
                 result.stopped_cleanly = True
-                result.evidence["shutdown_method"] = "already_exited"
 
 
-def _static_entrypoint(root: str) -> tuple[str, str] | None:
-    for rel in ("index.html", "frontend/index.html", "dist/index.html"):
-        path = os.path.join(root, rel)
-        if os.path.isfile(path):
-            return rel, os.path.dirname(path)
-    return None
-
-
-def _local_asset_refs(html: str) -> list[str]:
-    refs = []
-    for attr in ("href", "src"):
-        for match in re.finditer(rf"\b{attr}\s*=\s*['\"]([^'\"]+)['\"]", html, flags=re.IGNORECASE):
-            ref = match.group(1).strip()
-            if not ref or ref.startswith(("http://", "https://", "//", "mailto:", "tel:", "#", "data:")):
-                continue
-            refs.append(ref.split("?", 1)[0].split("#", 1)[0])
-    return _dedupe_strings(refs)
-
-
-def _dedupe_strings(items: list[str]) -> list[str]:
-    seen = set()
-    result = []
-    for item in items:
-        key = item.replace("\\", "/")
-        if key not in seen:
-            seen.add(key)
-            result.append(item)
-    return result
-
-
-def _asset_exists(site_root: str, ref: str) -> bool:
-    if not ref or os.path.isabs(ref) and not ref.startswith("/"):
-        return False
-    rel = ref.lstrip("/").replace("/", os.sep)
-    if ".." in Path(rel).parts:
-        return False
-    return os.path.exists(os.path.join(site_root, rel))
-
-
-def _project_profiles(project: dict) -> set[str]:
-    return set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-
-
-def _package_json_path(root: str) -> tuple[str, str] | None:
-    for rel in ("package.json", "frontend/package.json"):
-        path = os.path.join(root, rel)
-        if os.path.isfile(path):
-            return rel, os.path.dirname(path)
-    return None
-
-
-def _npm_command() -> str:
-    return "npm.cmd" if os.name == "nt" else "npm"
-
-
-def _stop_owned_process(proc: subprocess.Popen, result: RuntimeAdapterResult) -> None:
-    if proc.poll() is None:
-        if os.name == "nt":
-            try:
-                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T"], capture_output=True, text=True, timeout=5)
-                proc.wait(timeout=5)
-                result.stopped_cleanly = True
-                result.evidence["shutdown_method"] = "taskkill_tree"
-                result.evidence["killed"] = False
-                return
-            except Exception:
-                pass
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-            result.stopped_cleanly = True
-            result.evidence["shutdown_method"] = "terminate"
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            result.stopped_cleanly = False
-            result.evidence["shutdown_method"] = "kill"
-            result.evidence["killed"] = True
-    else:
-        result.stopped_cleanly = True
-        result.evidence["shutdown_method"] = "already_exited"
-
-
-def _runtime_script_command(script_name: str, script_value: str, port: int) -> list[str]:
-    command = [_npm_command(), "run", script_name]
-    if "vite" in script_value.lower():
-        command.extend(["--", "--host", "127.0.0.1", "--port", str(port)])
-    return command
-
-
-class ReactViteRuntimeAdapter(RuntimeAdapter):
-    name = "react_vite"
-
-    def run(self, project: dict, root: str) -> RuntimeAdapterResult:
-        profiles = _project_profiles(project)
-        if not profiles.intersection({"react_frontend", "vite_frontend"}):
-            return RuntimeAdapterResult(False, False, False, True, {"reason": "No React/Vite profile"}, "")
-
-        package_info = _package_json_path(root)
-        if not package_info:
-            return RuntimeAdapterResult(True, False, False, True, {"checked_paths": ["package.json", "frontend/package.json"]}, "Missing package.json")
-
-        package_rel, app_root = package_info
-        try:
-            package_data = json.loads(_read(os.path.join(root, package_rel)))
-        except json.JSONDecodeError as exc:
-            return RuntimeAdapterResult(True, False, False, True, {"package_json": package_rel}, f"Invalid package.json: {exc}")
-
-        scripts = package_data.get("scripts", {}) if isinstance(package_data, dict) else {}
-        if not isinstance(scripts, dict):
-            scripts = {}
-        missing_scripts = [name for name in ("build",) if not scripts.get(name)]
-        runtime_script = "preview" if scripts.get("preview") else "dev" if scripts.get("dev") else ""
-        if not runtime_script:
-            missing_scripts.append("preview_or_dev")
-        base_evidence = {
-            "adapter": self.name,
-            "package_json": package_rel,
-            "app_root": app_root,
-            "scripts": {name: scripts.get(name) for name in ("build", "preview", "dev") if scripts.get(name)},
-            "missing_scripts": missing_scripts,
-            "install_command": f"{_npm_command()} install",
-            "build_command": f"{_npm_command()} run build",
-            "runtime_script": runtime_script,
-        }
-        if missing_scripts:
-            return RuntimeAdapterResult(True, False, False, True, base_evidence, "Missing required package scripts")
-
-        build_result = _run_command([_npm_command(), "run", "build"], app_root, timeout=120)
-        base_evidence["build_result"] = build_result
-        if build_result.get("exit_code") != 0:
-            return RuntimeAdapterResult(True, False, False, True, base_evidence, "npm run build failed")
-
-        port = _free_port()
-        script_value = str(scripts.get(runtime_script, ""))
-        command = _runtime_script_command(runtime_script, script_value, port)
-        command_text = " ".join(command)
-        env = os.environ.copy()
-        env.update({"HOST": "127.0.0.1", "PORT": str(port)})
-        proc = subprocess.Popen(command, cwd=app_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env)
-        probes = []
-        evidence = dict(base_evidence)
-        evidence.update({
-            "host": "127.0.0.1",
-            "free_port": port,
-            "command": command_text,
-            "pid": proc.pid,
-            "owned_process_only": True,
-            "shutdown_method": "pending",
-            "killed": False,
-            "probes": probes,
-        })
-        result = RuntimeAdapterResult(True, True, False, False, dict(evidence), "Runtime verification did not complete")
-        try:
-            deadline = time.time() + 12
-            last_error = ""
-            while time.time() < deadline:
-                if proc.poll() is not None:
-                    break
-                url = f"http://127.0.0.1:{port}/"
-                try:
-                    with urllib.request.urlopen(url, timeout=1.5) as resp:
-                        body = resp.read(500).decode("utf-8", errors="replace")
-                    probes.append({"path": "/", "url": url, "status_code": resp.status, "success": resp.status == 200})
-                    verified_evidence = dict(evidence)
-                    verified_evidence.update({"url": url, "status_code": resp.status, "response_sample": body})
-                    result = RuntimeAdapterResult(True, True, resp.status == 200, False, verified_evidence, "" if resp.status == 200 else f"HTTP {resp.status}")
-                    return result
-                except Exception as exc:
-                    last_error = str(exc)
-                    probes.append({"path": "/", "url": url, "success": False, "error": _tail_output(last_error)})
-                time.sleep(0.4)
-            result = RuntimeAdapterResult(True, True, False, False, dict(evidence), last_error)
-            return result
-        finally:
-            _stop_owned_process(proc, result)
-
-
-def _python_modules_for_import(root: str) -> list[str]:
-    modules = []
-    for rel in ("config.py", "bot.py", "handlers/commands.py", "handlers/callbacks.py", "handlers/admin.py", "services/database.py", "services/joke_service.py"):
-        if os.path.isfile(os.path.join(root, rel)):
-            modules.append(rel[:-3].replace("/", "."))
-    return modules
-
-
-def _run_import_smoke(root: str, modules: list[str]) -> dict[str, Any]:
-    if not modules:
-        return {"exit_code": 0, "modules": [], "imported": [], "failed": []}
-    code = (
-        "import importlib, json, os, sys, traceback\n"
-        "root = sys.argv[1]\n"
-        "mods = sys.argv[2:]\n"
-        "sys.path.insert(0, root)\n"
-        "os.environ.setdefault('BOT_TOKEN', 'replace_me')\n"
-        "os.environ.setdefault('ADMIN_ID', '0')\n"
-        "os.environ.setdefault('DATABASE_PATH', 'data/test_bot.db')\n"
-        "imported = []\n"
-        "failed = []\n"
-        "for mod in mods:\n"
-        "    try:\n"
-        "        importlib.import_module(mod)\n"
-        "        imported.append(mod)\n"
-        "    except Exception as exc:\n"
-        "        failed.append({'module': mod, 'error': type(exc).__name__ + ': ' + str(exc), 'traceback_tail': traceback.format_exc()[-1200:]})\n"
-        "print(json.dumps({'modules': mods, 'imported': imported, 'failed': failed}))\n"
-        "sys.exit(1 if failed else 0)\n"
-    )
-    result = _run_command([sys.executable, "-c", code, root, *modules], root, timeout=60)
-    details: dict[str, Any] = {"modules": modules, "imported": [], "failed": []}
-    stdout = result.get("stdout_tail", "").strip()
-    if stdout:
-        try:
-            details = json.loads(stdout.splitlines()[-1])
-        except json.JSONDecodeError:
-            pass
-    details.update(result)
-    return details
-
-
-def _read_project_text(root: str, rels: list[str]) -> dict[str, str]:
-    texts = {}
-    for rel in rels:
-        path = os.path.join(root, rel)
-        if os.path.isfile(path):
-            texts[rel] = _read(path)
-    return texts
-
-
-def _telegram_env_safety(root: str) -> dict[str, Any]:
-    env_example = os.path.join(root, ".env.example")
-    gitignore = os.path.join(root, ".gitignore")
-    env_file = os.path.join(root, ".env")
-    evidence = {
-        "env_example_exists": os.path.isfile(env_example),
-        "bot_token_documented": False,
-        "env_example_secret_like": False,
-        "env_file_secret_like": False,
-        "gitignore_exists": os.path.isfile(gitignore),
-        "gitignore_ignores_env": False,
-    }
-    if os.path.isfile(env_example):
-        text = _read(env_example)
-        evidence["bot_token_documented"] = "BOT_TOKEN" in text
-        token_match = re.search(r"(?m)^BOT_TOKEN\s*=\s*(.+)$", text)
-        evidence["env_example_secret_like"] = bool(token_match and re.match(r"^\d{7,}:[A-Za-z0-9_-]{20,}$", token_match.group(1).strip()))
-    if os.path.isfile(env_file):
-        evidence["env_file_secret_like"] = bool(re.search(r"(?m)^BOT_TOKEN\s*=\s*\d{7,}:[A-Za-z0-9_-]{20,}\s*$", _read(env_file)))
-    if os.path.isfile(gitignore):
-        evidence["gitignore_ignores_env"] = any(line.strip() in (".env", "*.env") for line in _read(gitignore).splitlines())
-    evidence["safe"] = bool(
-        evidence["env_example_exists"]
-        and evidence["bot_token_documented"]
-        and evidence["gitignore_exists"]
-        and evidence["gitignore_ignores_env"]
-        and not evidence["env_example_secret_like"]
-        and not evidence["env_file_secret_like"]
-    )
-    return evidence
-
-
-def _telegram_static_smoke(root: str) -> dict[str, Any]:
-    rels = ["bot.py", "handlers/commands.py", "handlers/callbacks.py", "handlers/admin.py", "keyboards/inline.py"]
-    texts = _read_project_text(root, rels)
-    combined = "\n".join(texts.values())
-    command_hits = sorted(set(re.findall(r"Command\(\s*['\"]([^'\"]+)['\"]", combined)))
-    slash_hits = sorted(set(re.findall(r"/(start|help|joke|category|top|favorite|search|stats|users|broadcast)\b", combined)))
-    key_commands = sorted(set(command_hits + slash_hits).intersection({"start", "help"}))
-    router_modules = [rel for rel, text in texts.items() if "Router(" in text or "router =" in text]
-    include_router = "include_router" in combined or "include_routers" in combined
-    callback_values = []
-    for match in re.finditer(r"callback_data['\"]?\s*[:=]\s*f?['\"]([^'\"]+)['\"]", combined):
-        callback_values.append(match.group(1))
-    too_long = [value for value in callback_values if len(value.encode("utf-8")) > 64]
-    return {
-        "handler_files": sorted(texts),
-        "router_modules": router_modules,
-        "handler_registration_detected": bool(router_modules and include_router),
-        "key_commands": key_commands,
-        "key_command_smoke_passed": {cmd: cmd in key_commands for cmd in ("start", "help")},
-        "callback_data_values": callback_values,
-        "callback_data_too_long": too_long,
-        "callback_data_max_bytes": max((len(value.encode("utf-8")) for value in callback_values), default=0),
-    }
-
-
-def _telegram_database_service_smoke(root: str) -> dict[str, Any]:
-    applicable = any(os.path.isfile(os.path.join(root, rel)) for rel in ("services/database.py", "services/joke_service.py", "database.py"))
-    modules = [module for module in ("services.database", "services.joke_service", "database") if os.path.isfile(os.path.join(root, module.replace(".", os.sep) + ".py"))]
-    if not applicable:
-        return {"applicable": False, "status": "not_applicable", "modules": []}
-    result = _run_import_smoke(root, modules)
-    return {"applicable": True, "status": "passed" if result.get("exit_code") == 0 else "failed", "modules": modules, "import_result": result}
-
-
-class TelegramBotRuntimeAdapter(RuntimeAdapter):
-    name = "telegram_bot"
-
-    def run(self, project: dict, root: str) -> RuntimeAdapterResult:
-        profiles = _project_profiles(project)
-        if "telegram_bot" not in profiles:
-            return RuntimeAdapterResult(False, False, False, True, {"reason": "No Telegram bot profile"}, "")
-
-        modules = _python_modules_for_import(root)
-        import_result = _run_import_smoke(root, modules)
-        env_safety = _telegram_env_safety(root)
-        static_smoke = _telegram_static_smoke(root)
-        db_smoke = _telegram_database_service_smoke(root)
-        network_behavior = {
-            "status": "not_verified",
-            "reason": "Real Telegram network behavior requires BOT_TOKEN credentials and is intentionally not exercised by credential-free runtime verification.",
-        }
-        evidence = {
-            "adapter": self.name,
-            "credential_free": True,
-            "started": False,
-            "imports": import_result,
-            "env_safety": env_safety,
-            "handler_registration": static_smoke,
-            "database_service_smoke": db_smoke,
-            "network_behavior": network_behavior,
-        }
-        missing = []
-        if not modules:
-            missing.append("importable Telegram modules")
-        if import_result.get("exit_code") != 0:
-            missing.append("imports")
-        if not env_safety.get("safe"):
-            missing.append("config/.env safety")
-        if not static_smoke.get("handler_registration_detected"):
-            missing.append("handler registration")
-        if not all(static_smoke.get("key_command_smoke_passed", {}).values()):
-            missing.append("key commands")
-        if static_smoke.get("callback_data_too_long"):
-            missing.append("callback_data length")
-        if db_smoke.get("applicable") and db_smoke.get("status") != "passed":
-            missing.append("database/service smoke")
-        verified = not missing
-        evidence["missing_local_checks"] = missing
-        return RuntimeAdapterResult(True, False, verified, True, evidence, "" if verified else "; ".join(missing))
-
-
-class StaticWebRuntimeAdapter(RuntimeAdapter):
-    name = "static_web"
-
-    def run(self, project: dict, root: str) -> RuntimeAdapterResult:
-        profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
-        if "static_website" not in profiles:
-            return RuntimeAdapterResult(False, False, False, True, {"reason": "No static website profile"}, "")
-
-        entrypoint = _static_entrypoint(root)
-        if not entrypoint:
-            return RuntimeAdapterResult(True, False, False, True, {"checked_entrypoints": ["index.html", "frontend/index.html", "dist/index.html"]}, "Missing static entry HTML")
-
-        entry_rel, site_root = entrypoint
-        entry_path = os.path.join(root, entry_rel)
-        html = _read(entry_path)
-        asset_refs = _local_asset_refs(html)
-        missing_assets = [ref for ref in asset_refs if not _asset_exists(site_root, ref)]
-        if missing_assets:
-            return RuntimeAdapterResult(
-                True,
-                False,
-                False,
-                True,
-                {
-                    "adapter": self.name,
-                    "entry_html": entry_rel,
-                    "site_root": site_root,
-                    "local_assets": asset_refs,
-                    "missing_assets": missing_assets,
-                },
-                "Missing local static assets",
-            )
-
-        port = _free_port()
-        command = [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"]
-        command_text = " ".join(command)
-        proc = subprocess.Popen(command, cwd=site_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-        probes = []
-        base_evidence = {
-            "adapter": self.name,
-            "entry_html": entry_rel,
-            "site_root": site_root,
-            "host": "127.0.0.1",
-            "free_port": port,
-            "command": command_text,
-            "pid": proc.pid,
-            "owned_process_only": True,
-            "shutdown_method": "pending",
-            "killed": False,
-            "local_assets": asset_refs,
-            "missing_assets": [],
-            "probes": probes,
-        }
-        result = RuntimeAdapterResult(True, True, False, False, dict(base_evidence), "Runtime verification did not complete")
-        try:
-            deadline = time.time() + 8
-            last_error = ""
-            while time.time() < deadline:
-                if proc.poll() is not None:
-                    break
-                url = f"http://127.0.0.1:{port}/"
-                try:
-                    with urllib.request.urlopen(url, timeout=1.5) as resp:
-                        body = resp.read(500).decode("utf-8", errors="replace")
-                    probes.append({"path": "/", "url": url, "status_code": resp.status, "success": resp.status == 200})
-                    evidence = dict(base_evidence)
-                    evidence.update({"url": url, "status_code": resp.status, "response_sample": body})
-                    result = RuntimeAdapterResult(True, True, resp.status == 200, False, evidence, "" if resp.status == 200 else f"HTTP {resp.status}")
-                    return result
-                except Exception as exc:
-                    last_error = str(exc)
-                    probes.append({"path": "/", "url": url, "success": False, "error": _tail_output(last_error)})
-                time.sleep(0.3)
-            result = RuntimeAdapterResult(True, True, False, False, dict(base_evidence), last_error)
-            return result
-        finally:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                    result.stopped_cleanly = True
-                    result.evidence["shutdown_method"] = "terminate"
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    result.stopped_cleanly = False
-                    result.evidence["shutdown_method"] = "kill"
-                    result.evidence["killed"] = True
-            else:
-                result.stopped_cleanly = True
-                result.evidence["shutdown_method"] = "already_exited"
-
-
-RUNTIME_ADAPTERS = [FastAPIRuntimeAdapter(), ReactViteRuntimeAdapter(), TelegramBotRuntimeAdapter(), StaticWebRuntimeAdapter()]
-KNOWN_RUNTIME_PROFILES = {"fastapi", "react_frontend", "vite_frontend", "telegram_bot", "static_website"}
+RUNTIME_ADAPTERS = [FastAPIRuntimeAdapter()]
 
 
 def _adapter_status(result: RuntimeAdapterResult) -> str:
     if not result.applicable:
         return "not_applicable"
-    start_ok = result.started or bool(result.evidence.get("credential_free"))
-    return "passed" if start_ok and result.verified and result.stopped_cleanly else "failed"
+    return "passed" if result.started and result.verified and result.stopped_cleanly else "failed"
 
 
 def _runtime_smoke(project: dict, root: str) -> dict[str, Any]:
-    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
     for adapter in RUNTIME_ADAPTERS:
         result = adapter.run(project, root)
         if not result.applicable:
@@ -704,30 +245,8 @@ def _runtime_smoke(project: dict, root: str) -> dict[str, Any]:
         data.update(result.evidence)
         return data
 
-    runnable_profiles = sorted(profiles.intersection(KNOWN_RUNTIME_PROFILES))
-    if runnable_profiles:
-        return {
-            "status": "failed",
-            "applicable": False,
-            "started": False,
-            "verified": False,
-            "stopped_cleanly": True,
-            "profiles": sorted(profiles),
-            "known_runnable_profiles": runnable_profiles,
-            "error": "Runnable known profile has no applicable runtime adapter",
-        }
-
-    return {
-        "status": "passed",
-        "adapter": "generic",
-        "applicable": True,
-        "started": False,
-        "verified": True,
-        "stopped_cleanly": True,
-        "profiles": sorted(profiles),
-        "limitation": "No specific runtime adapter is available for this unknown project type; generic verification is limited to audit metadata, README/run instructions, files, QA, and acceptance evidence.",
-        "error": "",
-    }
+    profiles = set(project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", []))
+    return {"status": "not_applicable", "applicable": False, "started": False, "verified": False, "stopped_cleanly": True, "evidence": {"profiles": list(profiles)}, "error": ""}
 
 
 def _verify_readme(root: str) -> tuple[bool, dict[str, Any]]:
@@ -999,10 +518,8 @@ def _verify_command(criterion: dict[str, Any], project: dict, root: str, qa_resu
 
 
 def _verify_runtime_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    runtime_check = next((check for check in checks if check.get("name") == "runtime_smoke"), {})
-    evidence = runtime_check.get("evidence", {}) if isinstance(runtime_check.get("evidence"), dict) else {}
-    status = "passed" if runtime_check.get("status") == "passed" and evidence.get("status") == "passed" else "failed"
-    return _registry_evidence("runtime_smoke", status, "Runtime smoke result mapped to acceptance criterion", runtime_status=evidence.get("status", "not_verified"), adapter=evidence.get("adapter", ""), limitation=evidence.get("limitation", ""))
+    status = "passed" if _check_status(checks, "runtime_smoke") == "passed" else "failed"
+    return _registry_evidence("runtime_smoke", status, "Runtime smoke result mapped to acceptance criterion")
 
 
 def _verify_static_asset_check(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1065,18 +582,6 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
     return not failed, failed
 
 
-def _open_blocking_issues(project: dict) -> list[dict[str, Any]]:
-    blocking = []
-    for issue in project.get("issues", []):
-        if not isinstance(issue, dict):
-            continue
-        if str(issue.get("status", "open")).lower() != "open":
-            continue
-        if str(issue.get("severity", "")).lower() in ("critical", "high"):
-            blocking.append(issue)
-    return blocking
-
-
 def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     spec = project.get("project_spec", {})
@@ -1106,7 +611,7 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     _add(checks, "regression_status", "passed" if not unresolved_regressions else "failed", {"unresolved_regressions": unresolved_regressions})
 
     runtime = _runtime_smoke(project, root)
-    _add(checks, "runtime_smoke", "passed" if runtime.get("status") == "passed" else "failed", runtime)
+    _add(checks, "runtime_smoke", "passed" if runtime.get("status") in ("passed", "not_applicable") else "failed", runtime)
 
     active_ops = []
     if project.get("_qa_active"):
@@ -1114,17 +619,6 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     if project.get("_repair_active"):
         active_ops.append("repair")
     _add(checks, "active_operations", "passed" if not active_ops else "failed", {"active": active_ops})
-
-    blocking_issues = _open_blocking_issues(project)
-    _add(
-        checks,
-        "open_blocking_issues",
-        "passed" if not blocking_issues else "failed",
-        {
-            "open_issue_ids": [issue.get("id") for issue in blocking_issues],
-            "open_issue_severities": [issue.get("severity") for issue in blocking_issues],
-        },
-    )
 
     ac_ok, failed_criteria = _evaluate_acceptance(project, root, qa_result, checks)
     _add(checks, "acceptance_criteria", "passed" if ac_ok else "failed", {"failed_mandatory": [c.get("id") for c in failed_criteria]})

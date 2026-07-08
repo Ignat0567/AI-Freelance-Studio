@@ -745,31 +745,6 @@ _STATE_DISPLAY = {
     "cancelled": "Cancelled",
 }
 
-AGENT_STAGE_METADATA = {
-    "alex": {"stage": "planning", "display_role": "Project Manager"},
-    "maya": {"stage": "planning", "display_role": "Business Analyst"},
-    "elena": {"stage": "designing", "display_role": "UI/UX Designer"},
-    "bugcatcher": {"stage": "testing", "display_role": "QA Engineer"},
-    "codex": {"stage": "coding", "display_role": "Software Architect"},
-    "sentinel": {"stage": "review", "display_role": "Security Auditor"},
-    "lupa": {"stage": "review", "display_role": "Code Reviewer"},
-    "goldie": {"stage": "finance", "display_role": "Financial Advisor"},
-}
-
-PIPELINE_STAGE_METADATA = {
-    "planning": {"label": "Planning"},
-    "designing": {"label": "Design"},
-    "testing": {"label": "QA (TDD)"},
-    "coding": {"label": "Generating"},
-    "review": {"label": "Review"},
-    "qa": {"label": "QA"},
-    "verifying": {"label": "Verifying"},
-    "repairing": {"label": "Repairing"},
-    "final_audit": {"label": "Final Audit"},
-    "product_judge": {"label": "Product Judge"},
-}
-PIPELINE_UI_STAGE_ORDER = ["planning", "designing", "testing", "coding", "review", "verifying", "repairing", "final_audit", "product_judge"]
-
 _ALLOWED_STATE_TRANSITIONS = {
     "created": {"meeting", "planning", "cancelled", "needs_human_input", "needs_credentials"},
     "meeting": {"planning", "cancelled", "blocked", "failed"},
@@ -1354,7 +1329,6 @@ def get_agents():
     for agent_id, agent in DEFAULT_AGENTS.items():
         cfg = agent_configs.get(agent_id, {})
         entry = {**agent, "id": agent_id}
-        entry.update(AGENT_STAGE_METADATA.get(agent_id, {}))
         entry["enabled"] = cfg.get("enabled", agent.get("enabled", True))
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
@@ -1375,8 +1349,6 @@ def get_agents():
     for cid, cagent in agent_configs.get("_custom_agents", {}).items():
         cfg = agent_configs.get(cid, {})
         entry = {**cagent, "id": cid, "builtin": False}
-        entry.setdefault("stage", cagent.get("stage", "custom"))
-        entry.setdefault("display_role", cagent.get("role", "Custom Agent"))
         entry["enabled"] = cfg.get("enabled", cagent.get("enabled", True))
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
@@ -1395,18 +1367,6 @@ def get_agents():
             entry["active_model"] = SYSTEM_SETTINGS["global_model"]
         result[cid] = entry
     return result
-
-
-@app.get("/api/pipeline/metadata")
-def get_pipeline_metadata():
-    return {
-        "stage_order": PIPELINE_UI_STAGE_ORDER,
-        "stages": {
-            stage: {"id": stage, **PIPELINE_STAGE_METADATA.get(stage, {"label": _STATE_DISPLAY.get(stage, stage.replace("_", " ").title())})}
-            for stage in PIPELINE_UI_STAGE_ORDER
-        },
-        "agent_stages": AGENT_STAGE_METADATA,
-    }
 
 
 def _all_agent_ids() -> set:

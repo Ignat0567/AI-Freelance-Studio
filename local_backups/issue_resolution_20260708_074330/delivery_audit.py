@@ -1065,18 +1065,6 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
     return not failed, failed
 
 
-def _open_blocking_issues(project: dict) -> list[dict[str, Any]]:
-    blocking = []
-    for issue in project.get("issues", []):
-        if not isinstance(issue, dict):
-            continue
-        if str(issue.get("status", "open")).lower() != "open":
-            continue
-        if str(issue.get("severity", "")).lower() in ("critical", "high"):
-            blocking.append(issue)
-    return blocking
-
-
 def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     spec = project.get("project_spec", {})
@@ -1114,17 +1102,6 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     if project.get("_repair_active"):
         active_ops.append("repair")
     _add(checks, "active_operations", "passed" if not active_ops else "failed", {"active": active_ops})
-
-    blocking_issues = _open_blocking_issues(project)
-    _add(
-        checks,
-        "open_blocking_issues",
-        "passed" if not blocking_issues else "failed",
-        {
-            "open_issue_ids": [issue.get("id") for issue in blocking_issues],
-            "open_issue_severities": [issue.get("severity") for issue in blocking_issues],
-        },
-    )
 
     ac_ok, failed_criteria = _evaluate_acceptance(project, root, qa_result, checks)
     _add(checks, "acceptance_criteria", "passed" if ac_ok else "failed", {"failed_mandatory": [c.get("id") for c in failed_criteria]})

@@ -17,7 +17,16 @@ import ErrorBoundary from './components/ErrorBoundary.jsx';
 import QuestionAnswerModal from './components/QuestionAnswerModal.jsx';
 import { tr } from './i18n.js';
 
-const fallbackAgents = {};
+const agents = [
+    { id: 'alex', name: 'Alex', emoji: '👨‍💼', role: 'Project Manager', color: '#6366f1', stage: 'planning', enabled: true },
+    { id: 'maya', name: 'Maya', emoji: '👩‍🔬', role: 'Business Analyst', color: '#a855f7', stage: 'analysis', enabled: true },
+    { id: 'elena', name: 'Elena', emoji: '👩‍🎨', role: 'UI/UX Designer', color: '#ec4899', stage: 'designing', enabled: true },
+    { id: 'codex', name: 'Codex', emoji: '🤖', role: 'Software Architect', color: '#0ea5e9', stage: 'coding', enabled: true },
+    { id: 'bugcatcher', name: 'BugCatcher', emoji: '🐛', role: 'QA Engineer', color: '#10b981', stage: 'testing', enabled: true },
+    { id: 'sentinel', name: 'Sentinel', emoji: '🛡️', role: 'Security Auditor', color: '#ef4444', stage: 'security_audit', enabled: true },
+    { id: 'lupa', name: 'Lupa', emoji: '🐺', role: 'Code Reviewer', color: '#8b5cf6', stage: 'code_review', enabled: true },
+    { id: 'goldie', name: 'Goldie', emoji: '💰', role: 'Financial Advisor', color: '#f59e0b', stage: 'finance', enabled: true },
+];
 
 function App() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -45,8 +54,7 @@ function App() {
     const [completedProjects, setCompletedProjects] = useState([]);
     const [isProjectsListOpen, setIsProjectsListOpen] = useState(false);
     const [allProjects, setAllProjects] = useState([]);
-    const [agentList, setAgentList] = useState({});
-    const [pipelineMetadata, setPipelineMetadata] = useState({ stage_order: [], stages: {}, agent_stages: {} });
+    const [agentList, setAgentList] = useState([]);
     const [isQuestionOpen, setIsQuestionOpen] = useState(false);
     const [isLogPanelOpen, setIsLogPanelOpen] = useState(true);
     const [language, setLanguage] = useState('en');
@@ -59,13 +67,6 @@ function App() {
             .then(r => r.json())
             .then(data => setAgentList(data))
             .catch(err => console.error('[API Error Agents]:', err));
-    };
-
-    const fetchPipelineMetadata = () => {
-        fetch(`http://localhost:${activePort}/api/pipeline/metadata`)
-            .then(r => r.json())
-            .then(data => setPipelineMetadata(data))
-            .catch(err => console.error('[API Error Pipeline Metadata]:', err));
     };
 
     useEffect(() => {
@@ -105,7 +106,6 @@ function App() {
             .catch(err => console.error('[API]:', err));
 
         fetchAgents();
-        fetchPipelineMetadata();
 
         const handleClickOutside = (e) => {
             if (!e.target.closest('[data-config-trigger]')) setShowConfigMenu(false);
@@ -452,7 +452,6 @@ function App() {
 
     const getActiveStageInfo = () => {
         if (!activeProject || ['completed', 'failed', 'failed_qa', 'blocked', 'needs_credentials'].includes(activeProject.status)) return null;
-        const agents = Object.values(agentList).length ? Object.values(agentList) : Object.values(fallbackAgents);
 
         const workingEntry = Object.entries(agentStatuses).find(([, status]) => (
             status?.status === 'working' && (!status.project_id || status.project_id === activeProject.project_id)
@@ -504,7 +503,6 @@ function App() {
     };
 
     const activeStageInfo = getActiveStageInfo();
-    const displayedAgents = Object.values(agentList).length ? Object.values(agentList) : Object.values(fallbackAgents);
     const isGenerating = activeProject && !['created', 'completed', 'failed', 'failed_qa', 'blocked', 'needs_credentials', 'cancelled', 'awaiting_input', 'needs_user_input'].includes(activeProject.status);
     const t = (key) => tr(language, key);
 
@@ -559,7 +557,7 @@ function App() {
                 </button>
 
                     <div className="flex items-center gap-1 ml-2" style={{ borderLeft: '1px solid var(--border)', paddingLeft: '8px' }}>
-                        {displayedAgents.filter(a => a.enabled).map(agent => (
+                        {Object.values(agents).filter(a => a.enabled).map(agent => (
                           <button
                             key={agent.id}
                             onClick={() => setActiveAgentChat(agent.id)}
@@ -569,7 +567,7 @@ function App() {
                               border: `1px solid color-mix(in srgb, ${agent.color || '#6366f1'} 30%, transparent)`,
                               color: agent.color || '#6366f1'
                             }}
-                            title={`${agent.name} — ${agent.display_role || agent.role}`}
+                            title={`${agent.name} — ${agent.role}`}
                           >
                             {agent.emoji} {agent.name}
                           </button>
@@ -867,10 +865,7 @@ function App() {
                         <div className="p-5 space-y-4">
                             <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{activeRoom.desc}</p>
                             <div className="p-3 rounded-lg text-xs font-mono" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                                <span style={{ color: 'var(--text-muted)' }}>Active Staff:</span> {(activeRoom.agents || []).map(a => {
-                                    const meta = agentList[a];
-                                    return meta ? `${meta.name} (${meta.display_role || meta.role})` : a;
-                                }).join(', ') || '-'}
+                                <span style={{ color: 'var(--text-muted)' }}>Active Staff:</span> {(activeRoom.agents || []).map(a => ({ maya: 'Maya (PM)', alex: 'Alex (PM)', codex: 'Codex (Dev)', elena: 'Elena (Design)', bugcatcher: 'BugCatcher (QA)', goldie: 'Goldie (Finance)' }[a] || a)).join(', ') || '-'}
                                 <br />
                                 <span style={{ color: 'var(--text-muted)' }}>Status:</span> <span style={{ color: 'var(--success)' }}>Idle / Online</span>
                             </div>
@@ -910,7 +905,7 @@ function App() {
             )}
 
             {isPipelineDetailOpen && activeProject && (
-                <PipelineDetailModal project={activeProject} agentStatuses={agentStatuses} agents={agentList} pipelineMetadata={pipelineMetadata} onClose={() => setIsPipelineDetailOpen(false)} />
+                <PipelineDetailModal project={activeProject} agentStatuses={agentStatuses} onClose={() => setIsPipelineDetailOpen(false)} />
             )}
 
             {isQuestionOpen && activeProject && (

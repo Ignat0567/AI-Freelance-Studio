@@ -1,8 +1,7 @@
 from pathlib import Path
 
 import qa_engine
-import main
-from qa_engine import OPENCODE_FIX_APPLIED, POLICY_GROUP_RULES, QAEngine, policy_prompt_rules, select_policy_groups
+from qa_engine import QAEngine, OPENCODE_FIX_APPLIED
 
 
 class ScriptedQAEngine(QAEngine):
@@ -66,74 +65,6 @@ def _engine(tmp_path: Path, script, **kwargs):
         script=script,
         **kwargs,
     )
-
-
-def test_policy_groups_are_declared_for_supported_profiles():
-    assert set(POLICY_GROUP_RULES) == {"python", "fastapi", "telegram", "node", "react_vite", "static_web", "generic"}
-    assert "python_requirements" in POLICY_GROUP_RULES["python"]
-    assert "fastapi_root_entrypoint" in POLICY_GROUP_RULES["fastapi"]
-    assert "telegram_local_smoke" in POLICY_GROUP_RULES["telegram"]
-    assert "npm_build" in POLICY_GROUP_RULES["node"]
-    assert "vite_runtime_scripts" in POLICY_GROUP_RULES["react_vite"]
-    assert "static_assets" in POLICY_GROUP_RULES["static_web"]
-    assert "readme_instructions" in POLICY_GROUP_RULES["generic"]
-
-
-def test_global_rules_keep_only_universal_constraints():
-    global_text = main._CRITICAL_RULES + "\n" + qa_engine._SHARED_QA_RULES
-
-    assert "os.getenv() MUST" not in global_text
-    assert "Use ONLY ESM" not in global_text
-    assert "EVERY function" not in global_text
-    assert "Frontend projects MUST use Tailwind" not in global_text
-    assert "No hardcoded secrets" in global_text or "Do not hardcode secrets" in global_text
-    assert "fake output" in global_text
-
-
-def test_project_specific_rules_live_in_profile_policy_prompts():
-    python_rules = policy_prompt_rules(["python"])
-    react_rules = policy_prompt_rules(["react_vite"])
-    static_rules = policy_prompt_rules(["static_web"])
-    generic_rules = policy_prompt_rules(["generic"])
-
-    assert "os.getenv()" in python_rules
-    assert "try/except" in python_rules
-    assert "ESM import/export" in react_rules
-    assert "CommonJS" in react_rules
-    assert "Tailwind CSS" in react_rules
-    assert "os.getenv()" not in react_rules
-    assert "Tailwind CSS" not in static_rules
-    assert "ESM" not in generic_rules
-
-
-def test_policy_selection_maps_profiles_to_relevant_groups():
-    assert select_policy_groups({"project_profiles": ["python_application"]}) == ["python"]
-    assert select_policy_groups({"project_profiles": ["fastapi", "python_application"]}) == ["python", "fastapi"]
-    assert select_policy_groups({"project_profiles": ["telegram_bot", "python_application"]}) == ["python", "telegram"]
-    assert select_policy_groups({"project_profiles": ["node_project"]}) == ["node"]
-    assert select_policy_groups({"project_profiles": ["react_frontend", "vite_frontend"]}) == ["node", "react_vite"]
-    assert select_policy_groups({"project_profiles": ["static_website"]}) == ["static_web"]
-    assert select_policy_groups({"project_profiles": ["unusual_custom"]}) == ["generic"]
-
-
-def test_static_policy_does_not_apply_python_requirements_rule(tmp_path):
-    (tmp_path / "README.md").write_text("# Site\n\nInstall: none\n\nRun: open index.html\n", encoding="utf-8")
-    (tmp_path / "index.html").write_text("<h1>Static</h1>", encoding="utf-8")
-    (tmp_path / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
-    engine = QAEngine(
-        project={"title": "Static", "logs": [], "project_profiles": ["static_website"]},
-        target_path=str(tmp_path),
-        project_id="p1",
-        provider="test",
-        model="test",
-        temperature=0,
-    )
-
-    ok, errors, _manual = engine.stage_delivery_readiness()
-
-    assert ok is True
-    assert engine.policy_groups == ["static_web"]
-    assert not any("requirements.txt" in error for error in errors)
 
 
 def test_scenario_a_qa_passes_immediately_no_repair(tmp_path):

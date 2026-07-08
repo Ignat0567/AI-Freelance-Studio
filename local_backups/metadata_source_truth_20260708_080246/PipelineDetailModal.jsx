@@ -1,26 +1,43 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 
-const FALLBACK_STAGE_ORDER = ['planning', 'designing', 'testing', 'coding', 'review', 'verifying', 'repairing', 'final_audit', 'product_judge'];
+const AGENT_INFO = {
+  alex: { name: 'Alex', emoji: '👔', role: 'Project Manager', color: '#6366f1', stage: 'planning' },
+  maya: { name: 'Maya', emoji: '🎯', role: 'Business Analyst', color: '#a855f7', stage: 'analysis' },
+  elena: { name: 'Elena', emoji: '🎨', role: 'UI/UX Designer', color: '#ec4899', stage: 'designing' },
+  bugcatcher: { name: 'BugCatcher', emoji: '🐛', role: 'QA Engineer', color: '#10b981', stage: 'testing' },
+  codex: { name: 'Codex', emoji: '💻', role: 'Software Architect', color: '#0ea5e9', stage: 'coding' },
+  goldie: { name: 'Goldie', emoji: '💰', role: 'Financial Advisor', color: '#f59e0b', stage: 'finance' },
+  sentinel: { name: 'Sentinel', emoji: '🛡️', role: 'Security Auditor', color: '#ef4444', stage: 'security_audit' },
+  lupa: { name: 'Lupa', emoji: '🔍', role: 'Code Reviewer', color: '#8b5cf6', stage: 'code_review' },
+};
 
-export default function PipelineDetailModal({ project, agentStatuses, agents = {}, pipelineMetadata = {}, onClose }) {
+const STAGE_ORDER = ['planning', 'designing', 'testing', 'coding', 'review', 'verifying', 'repairing', 'final_audit'];
+
+export default function PipelineDetailModal({ project, agentStatuses, onClose }) {
   if (!project) return null;
 
   const logs = project.logs || [];
   const status = project.status || 'unknown';
   const normalizedStatus = status.startsWith('review_iteration_') ? 'review' : status;
-  const stageOrder = pipelineMetadata.stage_order?.length ? pipelineMetadata.stage_order : FALLBACK_STAGE_ORDER;
-  const stageNames = Object.fromEntries(
-    Object.entries(pipelineMetadata.stages || {}).map(([id, meta]) => [id, meta.label || id])
-  );
+  const stageNames = {
+    planning: 'Planning',
+    designing: 'Design',
+    testing: 'QA (TDD)',
+    coding: 'Generating',
+    review: 'Review',
+    verifying: 'Verifying',
+    repairing: 'Repairing',
+    final_audit: 'Final Audit',
+  };
 
-  const activeStageIdx = stageOrder.indexOf(normalizedStatus);
+  const activeStageIdx = STAGE_ORDER.indexOf(normalizedStatus);
 
   const agentLogs = {};
-  for (const [key, info] of Object.entries(agents || {})) {
+  for (const [key, info] of Object.entries(AGENT_INFO)) {
     const stageLogs = logs.filter(l => l.toLowerCase().startsWith(info.name.toLowerCase()));
     const agentStatus = agentStatuses?.[key] || {};
-    agentLogs[key] = { ...info, role: info.display_role || info.role, logs: stageLogs, status: agentStatus.status || 'idle', task: agentStatus.task || '' };
+    agentLogs[key] = { ...info, logs: stageLogs, status: agentStatus.status || 'idle', task: agentStatus.task || '' };
   }
 
   const modal = (
@@ -36,7 +53,7 @@ export default function PipelineDetailModal({ project, agentStatuses, agents = {
         <div className="p-6 space-y-5">
           {/* Pipeline stage progress */}
           <div className="flex items-center gap-2 flex-wrap">
-            {stageOrder.map((s, i) => {
+            {STAGE_ORDER.map((s, i) => {
               const isDone = activeStageIdx > i;
               const isCurrent = activeStageIdx === i;
               const isPending = activeStageIdx < i;
@@ -74,7 +91,7 @@ export default function PipelineDetailModal({ project, agentStatuses, agents = {
                     <div className="flex items-center gap-1">
                       <span className={`w-2 h-2 rounded-full ${isActive ? 'animate-pulse' : ''}`} style={{ backgroundColor: isActive ? a.color : 'var(--text-muted, #64748b)' }}></span>
                       <span className="text-[10px] font-mono" style={{ color: isActive ? a.color : 'var(--text-muted, #64748b)' }}>
-                        {isActive ? 'Working' : a.status === 'completed' ? 'Done' : a.status === 'idle' && activeStageIdx >= stageOrder.indexOf(a.stage) ? 'Done' : 'Waiting'}
+                        {isActive ? 'Working' : a.status === 'completed' ? 'Done' : a.status === 'idle' && activeStageIdx >= STAGE_ORDER.indexOf(a.stage) ? 'Done' : 'Waiting'}
                       </span>
                     </div>
                   </div>

@@ -14,47 +14,13 @@ MAX_REPAIR_ATTEMPTS = 3
 OPENCODE_FIX_APPLIED = "__opencode_fix_applied__"
 POLICY_GROUPS = ("python", "fastapi", "telegram", "node", "react_vite", "static_web", "generic")
 POLICY_GROUP_RULES = {
-    "python": ("python_requirements", "python_pytest", "python_source_quality", "python_getenv_defaults"),
-    "fastapi": ("fastapi_root_entrypoint", "fastapi_uvicorn_docs", "cors_safety", "fastapi_route_style"),
-    "telegram": ("telegram_env_safety", "telegram_gitignore", "telegram_local_smoke", "python_getenv_defaults"),
-    "node": ("npm_build", "js_dependency_manifest"),
-    "react_vite": ("npm_build", "vite_runtime_scripts", "esm_modules", "tailwind_postcss"),
+    "python": ("python_requirements", "python_pytest", "python_source_quality"),
+    "fastapi": ("fastapi_root_entrypoint", "fastapi_uvicorn_docs", "cors_safety"),
+    "telegram": ("telegram_env_safety", "telegram_gitignore", "telegram_local_smoke"),
+    "node": ("npm_build",),
+    "react_vite": ("npm_build", "vite_runtime_scripts"),
     "static_web": ("static_assets",),
     "generic": ("readme_instructions", "placeholder_scan"),
-}
-POLICY_GROUP_PROMPT_RULES = {
-    "python": (
-        "- Python: os.getenv() calls must provide safe defaults when used for optional/local config.\n"
-        "- Python: dependencies used by code must appear in requirements.txt. Use python-dotenv, not dotenv; use PyMuPDF, not fitz, as the package name.\n"
-        "- Python: use targeted try/except around I/O, network, parsing, subprocess, and external-service boundaries; do not wrap every pure function blindly.\n"
-        "- Python: Optional must come from typing consistently; package directories containing .py modules need __init__.py.\n"
-    ),
-    "fastapi": (
-        "- FastAPI: expose a root main.py or app.py entrypoint.\n"
-        "- FastAPI: use python -m uvicorn in docs; uvicorn.run() must not use debug=True.\n"
-        "- FastAPI: keep route handler sync/async style consistent with the database/client stack.\n"
-        "- FastAPI: if CORS is enabled, do not combine wildcard origins with credentials.\n"
-    ),
-    "telegram": (
-        "- Telegram: document BOT_TOKEN in .env.example with placeholders only, never a real-looking token.\n"
-        "- Telegram: .gitignore must exclude .env, and local smoke checks must not require real network credentials.\n"
-    ),
-    "node": (
-        "- Node: dependencies used by code must appear in package.json.\n"
-        "- Node: run npm install and npm run build when a build script exists.\n"
-    ),
-    "react_vite": (
-        "- React/Vite: use ESM import/export consistently; do not mix with CommonJS require/module.exports.\n"
-        "- React/Vite: package.json must have type=module when ESM config files exist.\n"
-        "- React/Vite: use Tailwind CSS with PostCSS for generated React frontend styling.\n"
-        "- React frontend with backend: backend API should return JSON, not HTML templates.\n"
-    ),
-    "static_web": (
-        "- Static web: keep assets local or explicitly documented, and ensure referenced local files exist.\n"
-    ),
-    "generic": (
-        "- Generic: keep README install/run/test instructions accurate for the delivered artifact.\n"
-    ),
 }
 
 IGNORED_QA_DIRS = {
@@ -194,13 +160,6 @@ def select_policy_groups(project, root_path=None):
     return [group for group in POLICY_GROUPS if group in set(groups)]
 
 
-def policy_prompt_rules(policy_groups):
-    selected = [group for group in POLICY_GROUPS if group in set(policy_groups or [])]
-    if not selected:
-        selected = ["generic"]
-    return "".join(POLICY_GROUP_PROMPT_RULES[group] for group in selected)
-
-
 _SNAPSHOT_FILE_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".md", ".txt", ".html", ".css", ".env", ".yml", ".yaml", ".cfg", ".ini", ".toml", ".xml", ".svg"}
 _SNAPSHOT_DIR_IGNORE = {".git", ".pytest_cache", "__pycache__", "node_modules", ".venv", "venv", "dist", "build", "data", ".egg-info"}
 
@@ -252,12 +211,20 @@ def _has_any_file(root_path, names):
 
 _SHARED_QA_RULES = (
     "CRITICAL RULES — VIOLATING ANY WILL CAUSE REJECTION:\n"
-    "- Do not hardcode secrets or credentials; use config, environment variables, or explicit placeholders.\n"
+    "- os.getenv() MUST always provide a default value: os.getenv('KEY', 'default').\n"
+    "- Use ONLY ESM (import/export) for JS/TS — NEVER CommonJS (require/module.exports).\n"
+    "- EVERY function must have try/except (Python) or try/catch (JS/TS) error handling.\n"
+    "- NO hardcoded values — use env vars, config constants, or parameters.\n"
     "- Import names MUST exactly match the exports of the dependency files.\n"
-    "- Dependencies used in code MUST be listed in the applicable dependency manifest.\n"
+    "- ALL dependencies used in code MUST be listed in requirements.txt (Python) or package.json (JS).\n"
+    "- In requirements.txt: use 'python-dotenv' NOT 'dotenv'. Use 'PyMuPDF' NOT 'fitz'.\n"
+    "- Do NOT add numpy, pandas, scipy, matplotlib, sklearn to requirements (rarely needed).\n"
+    "- For SQLAlchemy: sync OR async — NEVER mix. Driver: psycopg2-binary (sync PG), asyncpg (async PG), aiosqlite (async SQLite).\n"
+    "- Async consistency: pick sync OR async — NEVER mix sync engine with async queries.\n"
+    "- If ESM config files exist (vite.config.js, tailwind.config.js, postcss.config.js), package.json MUST have '\"type\": \"module\"'.\n"
     "- All tests must have correct field names matching actual model definitions.\n"
     "- Tests must only test endpoints that exist in the actual API code.\n"
-    "- Do not leave placeholder/stub implementation, fake output, or skipped/falsified tests.\n"
+    "- Optional[X] imports: use ONLY from typing import Optional, not mixed sources.\n"
 )
 
 CODEX_FIX_PROMPT = (
@@ -265,7 +232,6 @@ CODEX_FIX_PROMPT = (
     "failed the following verification checks:\n\n{errors}\n\n"
     "Please FIX the issues.\n"
     f"{_SHARED_QA_RULES}\n"
-    "PROFILE-SPECIFIC RULES:\n{policy_rules}\n"
     "Return ONLY valid JSON with the same structure as before:\n"
     '{{"files": {{"filename.py": "fixed code using \\\\n for newlines", ...}}}}\n'
     "Only include files that need fixing. Do NOT include files that are already correct. "
@@ -1228,7 +1194,7 @@ asyncio.run(main())
 
         self.log("[LEGACY JSON FALLBACK] OpenCode direct repair produced no meaningful disk changes. Attempting JSON-based repair.")
 
-        prompt = CODEX_FIX_PROMPT.format(errors=error_text, policy_rules=policy_prompt_rules(self.policy_groups))
+        prompt = CODEX_FIX_PROMPT.format(errors=error_text)
         # Retry up to 2 times on transient AI errors
         for attempt in range(2):
             try:
@@ -1276,7 +1242,6 @@ asyncio.run(main())
         criteria_text = "\n".join(criteria_lines) if criteria_lines else "No acceptance criteria stored."
 
         report_json = json.dumps(repair_report or {}, ensure_ascii=False, indent=2)
-        profile_rules = policy_prompt_rules(self.policy_groups)
         issue_report = (
             "You are repairing an existing software project. Inspect the actual files before changing anything. "
             "Fix the root cause of the failures. Do not remove required functionality. Do not weaken, delete, skip, or falsify tests only to obtain a passing result. "
@@ -1298,9 +1263,9 @@ asyncio.run(main())
             "- Preserve every required feature and explicit constraint from the structured specification.\n"
             "- Keep generated/cache/build artifacts out of fixes.\n"
             "- Ensure README/dependency/run/test instructions match the actual app.\n"
+            "- For Python tests, run `python -m pytest -q` from the project root when tests exist.\n"
+            "- For JS projects with a build script, run `npm install` and `npm run build` from the project root.\n"
             "- Stop only when the product is runnable and the listed QA failures are resolved.\n"
-            "\nProfile-specific rules selected for this project:\n"
-            f"{profile_rules}"
         )
         try:
             if self.project.get("cancel_requested") or self.project.get("status") == "cancelled":
