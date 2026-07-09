@@ -33,22 +33,6 @@ AC_CLASS_PARTIAL = "PARTIALLY_IMPLEMENTED"
 AC_CLASS_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 AC_CLASS_UNSUPPORTED = "UNSUPPORTED_VERIFIER"
 AC_CLASS_AMBIGUOUS = "AMBIGUOUS_REQUIREMENT"
-WEB_VIEWPORT_MATRIX = [
-    {"name": "laptop", "width": 1366, "height": 768, "purpose": "low-height laptop usability"},
-    {"name": "full_hd_desktop", "width": 1920, "height": 1080, "purpose": "standard desktop layout"},
-    {"name": "high_resolution_desktop", "width": 2560, "height": 1440, "purpose": "high-resolution layout balance"},
-    {"name": "ultra_wide_desktop", "width": 3440, "height": 1440, "purpose": "ultra-wide uncontrolled stretching prevention"},
-    {"name": "tablet_portrait", "width": 768, "height": 1024, "purpose": "portrait tablet layout"},
-    {"name": "tablet_landscape", "width": 1024, "height": 768, "purpose": "landscape tablet layout"},
-]
-DESKTOP_WINDOW_MATRIX = [
-    {"name": "minimum_supported_window", "width": 1024, "height": 700, "maximized": False},
-    {"name": "compact_window", "width": 1280, "height": 800, "maximized": False},
-    {"name": "default_window", "width": 1600, "height": 1000, "maximized": False},
-    {"name": "full_hd_window", "width": 1920, "height": 1080, "maximized": True},
-    {"name": "high_resolution_window", "width": 2560, "height": 1440, "maximized": True},
-    {"name": "ultra_wide_maximized_window", "width": 3440, "height": 1440, "maximized": True, "optional": True},
-]
 
 
 @dataclass
@@ -1235,279 +1219,6 @@ def _browser_automation_support() -> dict[str, Any]:
     except Exception as exc:
         return {"supported": False, "tool": "playwright", "reason": _tail_output(str(exc))}
     return {"supported": available, "tool": "playwright", "reason": "playwright package is not installed" if not available else "playwright package is importable"}
-
-
-def _dependency_names(root: str) -> set[str]:
-    names: set[str] = set()
-    for rel in ("requirements.txt", "pyproject.toml", "package.json"):
-        path = os.path.join(root, rel)
-        if not os.path.exists(path):
-            continue
-        text = _read(path).lower()
-        names.update(re.findall(r"[a-z0-9_.-]+", text))
-    return names
-
-
-def detect_product_runtime_profile(project: dict, root: str) -> dict[str, Any]:
-    profiles = _effective_profile_list(project, root)
-    files = [rel for rel, _path in _walk_files(root)]
-    lower_files = [file.lower() for file in files]
-    deps = _dependency_names(root)
-    evidence: dict[str, Any] = {"effective_project_profile": profiles, "files_considered": files[:80], "dependencies_detected": sorted(deps)[:80]}
-
-    has_backend = any(profile in profiles for profile in ("fastapi", "REST_API", "python_application")) or any(file in lower_files for file in ("main.py", "app.py"))
-    source_blob = "\n".join(_read(path)[:20000] for rel, path in _walk_files(root) if rel.endswith((".py", ".js", ".ts", ".html", ".md")))
-    lower_source_blob = source_blob.lower()
-    has_browser_ui = (
-        any(file.startswith("templates/") for file in lower_files)
-        or any(file.endswith(".html") for file in lower_files)
-        or any(profile in profiles for profile in ("react_frontend", "vite_frontend", "static_website"))
-        or "htmlresponse" in lower_source_blob
-        or "<!doctype html" in lower_source_blob
-        or "http://127.0.0.1" in lower_source_blob
-    )
-    has_electron = "electron" in deps or any("browserwindow" in (_read(os.path.join(root, file)) if os.path.exists(os.path.join(root, file)) and file.endswith((".js", ".ts")) else "").lower() for file in files[:200])
-    has_tauri = any(file.startswith("src-tauri/") or "tauri.conf" in file for file in lower_files) or "tauri" in deps
-    gui_deps = {"pyside6", "pyside2", "pyqt5", "pyqt6", "wxpython", "kivy", "flet", "tkinter"}
-    has_native_gui = bool(gui_deps.intersection(deps))
-    for rel, path in _walk_files(root):
-        if rel.endswith(".py"):
-            text = _read(path).lower()
-            if any(token in text for token in ("import tkinter", "from tkinter", "pyside6", "pyqt5", "pyqt6", "wxpython", "kivy")):
-                has_native_gui = True
-                break
-    has_telegram = "telegram_bot" in profiles or "python-telegram-bot" in deps or "aiogram" in deps
-    has_cli = any("argparse" in (_read(path).lower() if rel.endswith(".py") else "") or "click" in deps for rel, path in _walk_files(root))
-
-    shell_count = sum(bool(value) for value in (has_electron, has_tauri, has_native_gui))
-    ambiguous = shell_count > 1
-    if ambiguous:
-        product_kind, ui_runtime = "unknown", "unknown"
-    elif has_backend and has_electron:
-        product_kind, ui_runtime = "hybrid_desktop_application", "electron"
-    elif has_backend and has_tauri:
-        product_kind, ui_runtime = "hybrid_desktop_application", "tauri"
-    elif has_electron:
-        product_kind, ui_runtime = "desktop_application", "electron"
-    elif has_tauri:
-        product_kind, ui_runtime = "desktop_application", "tauri"
-    elif has_native_gui:
-        product_kind, ui_runtime = "desktop_application", "native_python_gui"
-    elif has_telegram:
-        product_kind, ui_runtime = "telegram_bot", "none"
-    elif has_browser_ui and has_backend:
-        product_kind, ui_runtime = "web_application", "browser"
-    elif has_browser_ui:
-        product_kind, ui_runtime = "static_web", "browser"
-    elif any(profile in profiles for profile in ("fastapi", "REST_API")):
-        product_kind, ui_runtime = "api_service", "none"
-    elif has_cli:
-        product_kind, ui_runtime = "cli_application", "terminal"
-    else:
-        product_kind, ui_runtime = "unknown", "unknown"
-
-    packaging_kind = "none"
-    if has_electron and any("electron-builder" in dep or "electron-forge" in dep for dep in deps):
-        packaging_kind = "installer"
-    elif has_tauri:
-        packaging_kind = "app_bundle"
-    elif "pyinstaller" in deps:
-        packaging_kind = "portable_executable"
-    elif any(file in lower_files for file in ("dockerfile", "docker-compose.yml")):
-        packaging_kind = "container"
-    elif product_kind not in ("unknown", "api_service", "telegram_bot", "cli_application"):
-        packaging_kind = "development_only"
-
-    evidence.update({
-        "signals": {
-            "has_backend": has_backend,
-            "has_browser_ui": has_browser_ui,
-            "has_electron": has_electron,
-            "has_tauri": has_tauri,
-            "has_native_python_gui": has_native_gui,
-            "has_telegram_bot": has_telegram,
-            "has_cli": has_cli,
-        },
-        "ambiguous": ambiguous,
-        "ambiguity_reason": "Multiple desktop shell signals detected" if ambiguous else "",
-    })
-    return {
-        "product_kind": product_kind,
-        "ui_runtime": ui_runtime,
-        "packaging_kind": packaging_kind,
-        "target_platforms": ["windows"] if os.name == "nt" else [],
-        "evidence": evidence,
-    }
-
-
-class ProductRuntimeEvidenceAdapter:
-    adapter_type = "base"
-    supported_product_kinds: set[str] = set()
-    supported_ui_runtimes: set[str] = set()
-
-    def supports(self, profile: dict[str, Any]) -> bool:
-        return profile.get("product_kind") in self.supported_product_kinds and profile.get("ui_runtime") in self.supported_ui_runtimes
-
-    def execute_ui_evidence(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-        return self._unsupported(criterion, project, root, plan, profile, "Adapter does not implement UI evidence")
-
-    def _base_metadata(self, root: str, profile: dict[str, Any], execution_mode: str) -> dict[str, Any]:
-        return {
-            "adapter_type": self.adapter_type,
-            "project_path": root,
-            "product_kind": profile.get("product_kind"),
-            "ui_runtime": profile.get("ui_runtime"),
-            "packaging_kind": profile.get("packaging_kind"),
-            "execution_mode": execution_mode,
-            "timestamp": _utc_now(),
-            "snapshot_fingerprint": _project_snapshot_fingerprint(root),
-        }
-
-    def _unsupported(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any], reason: str) -> dict[str, Any]:
-        return _targeted_evidence(
-            criterion,
-            project,
-            root,
-            str(plan.get("verifier_type") or self.adapter_type),
-            "not_verified",
-            "Product runtime evidence adapter is unsupported for this criterion",
-            classification=AC_CLASS_UNSUPPORTED,
-            collected_evidence={
-                "product_runtime_profile": profile,
-                "runtime_ui_adapter": self._base_metadata(root, profile, "unsupported"),
-                "unsupported_reason": reason,
-                "evidence_level_required": _required_ui_evidence_level(str(plan.get("verifier_type") or "")),
-            },
-            failure_reason=reason,
-        )
-
-
-def _required_ui_evidence_level(verifier_type: str) -> str:
-    if verifier_type in ("browser_usability", "primary_ui_actions"):
-        return "LEVEL_3_REAL_INTERACTION"
-    if verifier_type in ("responsive_ui", "product_ui_quality"):
-        return "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE"
-    if verifier_type.startswith("packaged") or verifier_type in ("installer_installation", "installed_app_launch"):
-        return "LEVEL_5_PACKAGED_DELIVERY"
-    return "LEVEL_2_REAL_UI_RUNTIME"
-
-
-class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
-    adapter_type = "BrowserWebEvidenceAdapter"
-    supported_product_kinds = {"web_application", "static_web"}
-    supported_ui_runtimes = {"browser"}
-
-    def execute_ui_evidence(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-        capability = _browser_automation_support()
-        collected = {
-            "product_runtime_profile": profile,
-            "runtime_ui_adapter": self._base_metadata(root, profile, "source_runtime"),
-            "tool_capabilities": {"playwright_browser_available": capability.get("supported"), "reason": capability.get("reason")},
-            "viewport_matrix_required": WEB_VIEWPORT_MATRIX,
-            "optional_4k_supported_by_architecture": {"name": "4k_desktop", "width": 3840, "height": 2160, "required": False},
-            "display_model": {
-                "physical_display_resolution": "unavailable",
-                "dpi_scale": "unsupported",
-                "device_scale_factor": "unsupported",
-                "reason": "Current environment/adapter does not expose display or DPI control without browser automation runtime",
-            },
-            "evidence_levels": ["LEVEL_1_STRUCTURAL", "LEVEL_2_REAL_RUNTIME", "LEVEL_3_REAL_INTERACTION", "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE"],
-        }
-        if not capability.get("supported"):
-            collected["executed_viewports"] = []
-            collected["high_resolution_checks"] = {"required": ["high_resolution_desktop", "ultra_wide_desktop"], "executed": False}
-            return _targeted_evidence(
-                criterion,
-                project,
-                root,
-                str(plan.get("verifier_type") or "browser_ui"),
-                "not_verified",
-                "Browser UI evidence requires BrowserWebEvidenceAdapter with Playwright/browser runtime",
-                classification=AC_CLASS_UNSUPPORTED,
-                collected_evidence=collected,
-                failure_reason=str(capability.get("reason") or "Browser automation unavailable"),
-            )
-        return _targeted_evidence(
-            criterion,
-            project,
-            root,
-            str(plan.get("verifier_type") or "browser_ui"),
-            "not_verified",
-            "Browser adapter is available but real viewport execution is not implemented in this phase",
-            classification=AC_CLASS_UNSUPPORTED,
-            collected_evidence=collected,
-            failure_reason="Playwright integration point exists; execution implementation pending",
-        )
-
-
-class ElectronDesktopEvidenceAdapter(ProductRuntimeEvidenceAdapter):
-    adapter_type = "ElectronDesktopEvidenceAdapter"
-    supported_product_kinds = {"desktop_application"}
-    supported_ui_runtimes = {"electron"}
-
-    def execute_ui_evidence(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-        return self._unsupported(criterion, project, root, plan, profile, "Electron desktop automation is not configured; browser evidence cannot satisfy Electron shell criteria")
-
-
-class TauriDesktopEvidenceAdapter(ProductRuntimeEvidenceAdapter):
-    adapter_type = "TauriDesktopEvidenceAdapter"
-    supported_product_kinds = {"desktop_application"}
-    supported_ui_runtimes = {"tauri"}
-
-    def execute_ui_evidence(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-        return self._unsupported(criterion, project, root, plan, profile, "Tauri desktop automation is not configured; frontend browser evidence cannot prove native shell readiness")
-
-
-class NativePythonGuiEvidenceAdapter(ProductRuntimeEvidenceAdapter):
-    adapter_type = "NativePythonGuiEvidenceAdapter"
-    supported_product_kinds = {"desktop_application"}
-    supported_ui_runtimes = {"native_python_gui", "native_desktop"}
-
-    def execute_ui_evidence(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-        return self._unsupported(criterion, project, root, plan, profile, "Native Python GUI automation/window inspection is not configured")
-
-
-class HybridDesktopEvidenceAdapter(ProductRuntimeEvidenceAdapter):
-    adapter_type = "HybridDesktopEvidenceAdapter"
-    supported_product_kinds = {"hybrid_desktop_application"}
-    supported_ui_runtimes = {"electron", "tauri", "native_python_gui"}
-
-    def execute_ui_evidence(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-        return self._unsupported(criterion, project, root, plan, profile, "Hybrid desktop verification requires backend readiness plus desktop shell automation; tooling is not configured")
-
-
-PRODUCT_RUNTIME_ADAPTERS: list[ProductRuntimeEvidenceAdapter] = [
-    HybridDesktopEvidenceAdapter(),
-    BrowserWebEvidenceAdapter(),
-    ElectronDesktopEvidenceAdapter(),
-    TauriDesktopEvidenceAdapter(),
-    NativePythonGuiEvidenceAdapter(),
-]
-
-
-def select_product_runtime_adapter(profile: dict[str, Any]) -> ProductRuntimeEvidenceAdapter | None:
-    for adapter in PRODUCT_RUNTIME_ADAPTERS:
-        if adapter.supports(profile):
-            return adapter
-    return None
-
-
-def execute_product_ui_evidence(criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any]) -> dict[str, Any]:
-    profile = detect_product_runtime_profile(project, root)
-    adapter = select_product_runtime_adapter(profile)
-    if not adapter:
-        return _targeted_evidence(
-            criterion,
-            project,
-            root,
-            str(plan.get("verifier_type") or "runtime_ui_evidence"),
-            "not_verified",
-            "No compatible product runtime UI evidence adapter was available",
-            classification=AC_CLASS_UNSUPPORTED,
-            collected_evidence={"product_runtime_profile": profile, "adapter_registry": [adapter.adapter_type for adapter in PRODUCT_RUNTIME_ADAPTERS]},
-            failure_reason=f"No adapter supports product_kind={profile.get('product_kind')} ui_runtime={profile.get('ui_runtime')}",
-        )
-    return adapter.execute_ui_evidence(criterion, project, root, plan, profile)
 
 
 def _browser_required_unsupported_evidence(criterion: dict[str, Any], project: dict, root: str, verifier_type: str, collected: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -3746,8 +3457,8 @@ def _html_text_signals(html: str) -> dict[str, Any]:
 
 
 def _verify_ac004_browser_usability(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    plan = criterion.get("semantic_verifier_plan") if isinstance(criterion.get("semantic_verifier_plan"), dict) else _semantic_verifier_plan(criterion, project, root)
-    return execute_product_ui_evidence(criterion, project, root, plan)
+    if not _browser_automation_support().get("supported"):
+        return _browser_required_unsupported_evidence(criterion, project, root, "browser_usability")
     handle, collected, _openapi, _routes = _start_ticket_runtime(criterion, project, root)
     try:
         if not handle:
@@ -3764,8 +3475,8 @@ def _verify_ac004_browser_usability(criterion: dict[str, Any], project: dict, ro
 
 
 def _verify_ac013_design(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    plan = criterion.get("semantic_verifier_plan") if isinstance(criterion.get("semantic_verifier_plan"), dict) else _semantic_verifier_plan(criterion, project, root)
-    return execute_product_ui_evidence(criterion, project, root, plan)
+    if not _browser_automation_support().get("supported"):
+        return _browser_required_unsupported_evidence(criterion, project, root, "product_ui_quality")
     handle, collected, _openapi, _routes = _start_ticket_runtime(criterion, project, root)
     try:
         if not handle:
@@ -3793,8 +3504,8 @@ def _verify_ac013_design(criterion: dict[str, Any], project: dict, root: str, qa
 
 
 def _verify_ac014_layout(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    plan = criterion.get("semantic_verifier_plan") if isinstance(criterion.get("semantic_verifier_plan"), dict) else _semantic_verifier_plan(criterion, project, root)
-    return execute_product_ui_evidence(criterion, project, root, plan)
+    if not _browser_automation_support().get("supported"):
+        return _browser_required_unsupported_evidence(criterion, project, root, "responsive_ui")
     handle, collected, _openapi, _routes = _start_ticket_runtime(criterion, project, root)
     try:
         if not handle:
@@ -3857,8 +3568,8 @@ def _verify_ac015_single_admin(criterion: dict[str, Any], project: dict, root: s
 
 
 def _verify_ac018_primary_buttons(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
-    plan = criterion.get("semantic_verifier_plan") if isinstance(criterion.get("semantic_verifier_plan"), dict) else _semantic_verifier_plan(criterion, project, root)
-    return execute_product_ui_evidence(criterion, project, root, plan)
+    if not _browser_automation_support().get("supported"):
+        return _browser_required_unsupported_evidence(criterion, project, root, "primary_ui_actions")
     handle, collected, _openapi, routes = _start_ticket_runtime(criterion, project, root)
     try:
         if not handle or not routes.get("collection") or not routes.get("item"):

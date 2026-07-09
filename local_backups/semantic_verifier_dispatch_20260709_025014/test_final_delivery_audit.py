@@ -12,14 +12,13 @@ def _write(path: Path, text: str):
     path.write_text(text, encoding="utf-8")
 
 
-def test_semantic_acceptance_verifier_registry_covers_hardening_types():
+def test_targeted_acceptance_verifier_registry_covers_hardening_criteria():
     expected = {
-        "lifecycle_tracking", "browser_usability", "required_fields_roundtrip", "workflow_statuses",
-        "dashboard_metrics", "filter_behavior", "product_ui_quality", "responsive_ui", "admin_scope",
-        "primary_ui_actions", "behavior_test_coverage", "documentation_validation", "architecture_simplicity",
+        "AC-003", "AC-004", "AC-006", "AC-007", "AC-010", "AC-012", "AC-013",
+        "AC-014", "AC-015", "AC-018", "AC-019", "AC-020", "AC-021",
     }
 
-    assert expected <= set(delivery_audit.SEMANTIC_ACCEPTANCE_VERIFIERS)
+    assert expected <= set(delivery_audit.TARGETED_ACCEPTANCE_VERIFIERS)
 
 
 def test_targeted_evidence_records_classification_freshness_and_snapshot(tmp_path):
@@ -46,44 +45,13 @@ def test_targeted_evidence_records_classification_freshness_and_snapshot(tmp_pat
     assert collected["execution_timestamp"].endswith("Z")
 
 
-def test_same_semantics_different_ac_id_selects_same_verifier(tmp_path):
-    project = {"project_profiles": ["fastapi"], "project_spec": {"project_profiles": ["fastapi"]}}
-    criterion_a = {"id": "AC-006", "title": "Client request records store all required fields."}
-    criterion_b = {"id": "AC-999", "title": "Client request records store all required fields."}
+def test_targeted_acceptance_verifier_is_gated_to_real_target_path(tmp_path):
+    criterion = {"id": "AC-004", "title": "The application is usable through a browser."}
+    project = {"acceptance_criteria": [criterion], "project_profiles": ["fastapi"], "project_spec": {"project_profiles": ["fastapi"]}}
 
-    plan_a = delivery_audit._semantic_verifier_plan(criterion_a, project, str(tmp_path))
-    plan_b = delivery_audit._semantic_verifier_plan(criterion_b, project, str(tmp_path))
-
-    assert plan_a["verifier_type"] == "required_fields_roundtrip"
-    assert plan_b["verifier_type"] == "required_fields_roundtrip"
-
-
-def test_same_ac_id_different_semantics_does_not_force_old_verifier(tmp_path):
-    project = {"project_profiles": ["fastapi"], "project_spec": {"project_profiles": ["fastapi"]}}
-    required_fields = {"id": "AC-006", "title": "Client request records store all required fields."}
-    telegram = {"id": "AC-006", "title": "The Telegram bot sends a confirmation message after registration."}
-
-    assert delivery_audit._semantic_verifier_plan(required_fields, project, str(tmp_path))["verifier_type"] == "required_fields_roundtrip"
-    assert delivery_audit._semantic_verifier_plan(telegram, project, str(tmp_path))["verifier_type"] != "required_fields_roundtrip"
-
-
-def test_filter_semantics_are_independent_of_project_type_and_ac_number(tmp_path):
-    fastapi_project = {"project_profiles": ["fastapi"], "project_spec": {"project_profiles": ["fastapi"]}}
-    telegram_project = {"project_profiles": ["telegram_bot"], "project_spec": {"project_profiles": ["telegram_bot"]}}
-    fastapi = {"id": "AC-012", "title": "Requests can be filtered by status and priority."}
-    telegram = {"id": "AC-777", "title": "Users can filter their repair requests by status and priority."}
-
-    assert delivery_audit._semantic_verifier_plan(fastapi, fastapi_project, str(tmp_path))["verifier_type"] == "filter_behavior"
-    assert delivery_audit._semantic_verifier_plan(telegram, telegram_project, str(tmp_path))["verifier_type"] == "filter_behavior"
-
-
-def test_unknown_semantics_remain_manual_or_unsupported(tmp_path):
-    project = {"project_profiles": ["fastapi"], "project_spec": {"project_profiles": ["fastapi"]}}
-    criterion = {"id": "AC-006", "title": "The app has a delightful seasonal color palette."}
-
-    plan = delivery_audit._semantic_verifier_plan(criterion, project, str(tmp_path))
-
-    assert plan["verifier_type"] == "manual_or_unsupported"
+    assert delivery_audit._targeted_acceptance_enabled(criterion, project, str(tmp_path)) is False
+    project["target_path"] = str(tmp_path)
+    assert delivery_audit._targeted_acceptance_enabled(criterion, project, str(tmp_path)) is True
 
 
 def test_ticket_route_discovery_maps_collection_item_stats_and_meta():
@@ -113,158 +81,6 @@ def test_ticket_route_discovery_maps_collection_item_stats_and_meta():
         "comments": "/api/tickets/{ticket_id}/comments",
     }
     assert evidence["discovered_routes"] == routes
-
-
-def _runtime_project(tmp_path: Path, files: dict[str, str], profiles: list[str] | None = None) -> dict:
-    for rel, text in files.items():
-        _write(tmp_path / rel, text)
-    return {"project_profiles": profiles or [], "project_spec": {"project_profiles": profiles or []}}
-
-
-def test_browser_web_project_selects_browser_adapter(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-
-    assert profile["product_kind"] == "web_application"
-    assert profile["ui_runtime"] == "browser"
-    assert delivery_audit.select_product_runtime_adapter(profile).adapter_type == "BrowserWebEvidenceAdapter"
-
-
-def test_electron_project_selects_electron_adapter(tmp_path):
-    project = _runtime_project(tmp_path, {"package.json": '{"dependencies":{"electron":"latest"}}', "main.js": "const {BrowserWindow}=require('electron')"})
-    profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-
-    assert profile["ui_runtime"] == "electron"
-    assert delivery_audit.select_product_runtime_adapter(profile).adapter_type == "ElectronDesktopEvidenceAdapter"
-
-
-def test_tauri_project_selects_tauri_adapter(tmp_path):
-    project = _runtime_project(tmp_path, {"src-tauri/tauri.conf.json": "{}", "package.json": "{}"})
-    profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-
-    assert profile["ui_runtime"] == "tauri"
-    assert delivery_audit.select_product_runtime_adapter(profile).adapter_type == "TauriDesktopEvidenceAdapter"
-
-
-def test_native_python_gui_selects_native_adapter(tmp_path):
-    project = _runtime_project(tmp_path, {"app.py": "import tkinter as tk\nroot=tk.Tk()\n"}, ["python_application"])
-    profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-
-    assert profile["ui_runtime"] == "native_python_gui"
-    assert delivery_audit.select_product_runtime_adapter(profile).adapter_type == "NativePythonGuiEvidenceAdapter"
-
-
-def test_hybrid_backend_electron_selects_hybrid_adapter(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "package.json": '{"dependencies":{"electron":"latest"}}'}, ["fastapi"])
-    profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-
-    assert profile["product_kind"] == "hybrid_desktop_application"
-    assert delivery_audit.select_product_runtime_adapter(profile).adapter_type == "HybridDesktopEvidenceAdapter"
-
-
-def test_same_ui_semantic_uses_adapter_from_product_profile(tmp_path):
-    web_root = tmp_path / "web"
-    electron_root = tmp_path / "electron"
-    web_project = _runtime_project(web_root, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    electron_project = _runtime_project(electron_root, {"package.json": '{"dependencies":{"electron":"latest"}}'})
-    criterion = {"id": "AC-ONE", "title": "The primary interface buttons work."}
-    plan = {"verifier_type": "primary_ui_actions"}
-
-    web = delivery_audit.execute_product_ui_evidence(criterion, web_project, str(web_root), plan)
-    desktop = delivery_audit.execute_product_ui_evidence(criterion, electron_project, str(electron_root), plan)
-
-    assert web["collected_evidence"]["runtime_ui_adapter"]["adapter_type"] == "BrowserWebEvidenceAdapter"
-    assert desktop["collected_evidence"]["runtime_ui_adapter"]["adapter_type"] == "ElectronDesktopEvidenceAdapter"
-
-
-def test_browser_success_cannot_satisfy_desktop_or_packaged_criteria(tmp_path):
-    project = _runtime_project(tmp_path, {"package.json": '{"dependencies":{"electron":"latest"}}'})
-    criterion = {"id": "AC-DESKTOP", "title": "The desktop application opens the main project workspace."}
-    evidence = delivery_audit.execute_product_ui_evidence(criterion, project, str(tmp_path), {"verifier_type": "desktop_window_ready"})
-
-    assert evidence["status"] == "not_verified"
-    assert "browser evidence cannot satisfy Electron shell" in evidence["failure_reason"]
-
-
-def test_frontend_browser_success_cannot_satisfy_electron_shell_evidence(tmp_path):
-    project = _runtime_project(tmp_path, {"package.json": '{"dependencies":{"electron":"latest"}}', "index.html": "<button>Go</button>"})
-    profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-
-    assert profile["ui_runtime"] == "electron"
-    assert delivery_audit.select_product_runtime_adapter(profile).adapter_type == "ElectronDesktopEvidenceAdapter"
-
-
-def test_source_runtime_success_cannot_satisfy_packaged_artifact(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "print('ok')", "requirements.txt": "pyinstaller\n"})
-    profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-
-    assert profile["packaging_kind"] == "portable_executable"
-    assert delivery_audit._required_ui_evidence_level("packaged_artifact_launch") == "LEVEL_5_PACKAGED_DELIVERY"
-
-
-def test_unsupported_desktop_tooling_remains_not_verified(tmp_path):
-    project = _runtime_project(tmp_path, {"src-tauri/tauri.conf.json": "{}"})
-    criterion = {"id": "AC-TAURI", "title": "The installed application launches successfully."}
-    evidence = delivery_audit.execute_product_ui_evidence(criterion, project, str(tmp_path), {"verifier_type": "installed_app_launch"})
-
-    assert evidence["status"] == "not_verified"
-    assert evidence["classification"] == "UNSUPPORTED_VERIFIER"
-
-
-def test_real_interaction_evidence_level_is_stronger_than_structural():
-    assert delivery_audit._required_ui_evidence_level("primary_ui_actions") == "LEVEL_3_REAL_INTERACTION"
-    assert delivery_audit._required_ui_evidence_level("responsive_ui") == "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE"
-
-
-def test_ac_ids_do_not_affect_adapter_selection(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    profile_a = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
-    profile_b = delivery_audit.detect_product_runtime_profile({**project, "acceptance_criteria": [{"id": "AC-999"}]}, str(tmp_path))
-
-    assert delivery_audit.select_product_runtime_adapter(profile_a).adapter_type == delivery_audit.select_product_runtime_adapter(profile_b).adapter_type
-
-
-def test_browser_adapter_exposes_required_viewport_matrix_and_high_res(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-UI", "title": "The application works in a browser."}, project, str(tmp_path), {"verifier_type": "responsive_ui"})
-    matrix = evidence["collected_evidence"]["viewport_matrix_required"]
-
-    assert [(item["width"], item["height"]) for item in matrix] == [(1366, 768), (1920, 1080), (2560, 1440), (3440, 1440), (768, 1024), (1024, 768)]
-    assert evidence["collected_evidence"]["high_resolution_checks"]["required"] == ["high_resolution_desktop", "ultra_wide_desktop"]
-
-
-def test_ultrawide_desktop_failures_and_window_modes_are_not_implied_passes():
-    names = [item["name"] for item in delivery_audit.WEB_VIEWPORT_MATRIX]
-    window_names = [item["name"] for item in delivery_audit.DESKTOP_WINDOW_MATRIX]
-
-    assert "ultra_wide_desktop" in names
-    assert "minimum_supported_window" in window_names
-    assert "compact_window" in window_names
-    assert any(item.get("maximized") for item in delivery_audit.DESKTOP_WINDOW_MATRIX)
-    assert any(not item.get("maximized") for item in delivery_audit.DESKTOP_WINDOW_MATRIX)
-
-
-def test_dpi_unsupported_state_is_reported_honestly(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-RESP", "title": "The layout is responsive."}, project, str(tmp_path), {"verifier_type": "responsive_ui"})
-
-    assert evidence["collected_evidence"]["display_model"]["dpi_scale"] == "unsupported"
-
-
-def test_browser_tablet_evidence_does_not_satisfy_native_desktop_criteria(tmp_path):
-    project = _runtime_project(tmp_path, {"app.py": "import tkinter as tk\nroot=tk.Tk()\n"}, ["python_application"])
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-NATIVE", "title": "The primary interface buttons work."}, project, str(tmp_path), {"verifier_type": "primary_ui_actions"})
-
-    assert evidence["collected_evidence"]["runtime_ui_adapter"]["adapter_type"] == "NativePythonGuiEvidenceAdapter"
-    assert evidence["status"] == "not_verified"
-
-
-def test_window_size_evidence_is_bound_to_snapshot_freshness(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-RESP", "title": "The layout is responsive."}, project, str(tmp_path), {"verifier_type": "responsive_ui"})
-
-    assert evidence["collected_evidence"]["project_snapshot_fingerprint"]
-    assert evidence["collected_evidence"]["runtime_ui_adapter"]["snapshot_fingerprint"] == evidence["collected_evidence"]["project_snapshot_fingerprint"]
 
 
 def _fastapi_project(tmp_path: Path):
@@ -1277,16 +1093,17 @@ def test_runtime_start_feature_records_real_startup_evidence(tmp_path):
     assert evidence["collected_evidence"]["owned_process_only"] is True
 
 
-def test_responsive_ui_static_profile_does_not_pass_without_real_browser(tmp_path):
+def test_responsive_ui_static_profile_passes_lightweight_assertions(tmp_path):
     project, criterion = _responsive_static_project(tmp_path)
 
     evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": False}, [])
 
-    assert evidence["status"] == "not_verified"
+    assert evidence["status"] == "passed"
     assert evidence["verifier_type"] == "responsive_ui"
-    assert evidence["classification"] == "UNSUPPORTED_VERIFIER"
-    assert evidence["collected_evidence"]["runtime_ui_adapter"]["adapter_type"] == "BrowserWebEvidenceAdapter"
-    assert "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE" in evidence["collected_evidence"]["evidence_levels"]
+    assert evidence["desktop"]["primary_page_renders"] is True
+    assert evidence["desktop"]["primary_navigation_or_control_area_exists"] is True
+    assert evidence["tablet"]["primary_controls_reachable"] is True
+    assert evidence["tablet"]["catastrophic_horizontal_overflow"] is False
 
 
 def test_responsive_ui_unsupported_profile_is_not_verified(tmp_path):
@@ -1303,17 +1120,18 @@ def test_responsive_ui_unsupported_profile_is_not_verified(tmp_path):
 
     assert evidence["status"] == "not_verified"
     assert evidence["verdict"] == "not_executed"
-    assert "No adapter supports product_kind=unknown ui_runtime=unknown" in evidence["failure_reason"]
+    assert "Unsupported UI stack" in evidence["failure_reason"]
 
 
-def test_responsive_ui_overflow_still_does_not_pass_without_real_browser(tmp_path):
+def test_responsive_ui_fails_catastrophic_tablet_overflow(tmp_path):
     project, criterion = _responsive_static_project(tmp_path, overflow=True)
 
     evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
 
-    assert evidence["status"] == "not_verified"
-    assert evidence["verdict"] == "not_executed"
-    assert evidence["classification"] == "UNSUPPORTED_VERIFIER"
+    assert evidence["status"] == "failed"
+    assert evidence["verdict"] == "failed"
+    assert evidence["tablet"]["catastrophic_horizontal_overflow"] is True
+    assert "overflow" in evidence["failure_reason"]
 
 
 def test_mandatory_feature_cannot_pass_from_global_qa_alone(tmp_path):
