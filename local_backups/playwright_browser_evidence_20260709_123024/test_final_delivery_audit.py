@@ -248,99 +248,7 @@ def test_dpi_unsupported_state_is_reported_honestly(tmp_path):
     project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
     evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-RESP", "title": "The layout is responsive."}, project, str(tmp_path), {"verifier_type": "responsive_ui"})
 
-    assert evidence["collected_evidence"]["display_model"]["physical_display_resolution"] in {"browser viewport controlled", "unavailable"}
-
-
-def test_playwright_is_studio_owned_not_generated_project(tmp_path):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>", "requirements.txt": "fastapi\nuvicorn\n"}, ["fastapi"])
-    before = (tmp_path / "requirements.txt").read_text(encoding="utf-8")
-
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-BROWSER", "title": "The application is usable through a browser."}, project, str(tmp_path), {"verifier_type": "browser_usability"})
-
-    assert "playwright" not in (tmp_path / "requirements.txt").read_text(encoding="utf-8").lower()
-    assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == before
-    assert evidence["collected_evidence"]["tool_capabilities"]["setup_policy"]["ownership"].startswith("FreelancerStudio")
-
-
-def test_missing_playwright_package_is_tooling_not_verified(tmp_path, monkeypatch):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    monkeypatch.setattr(delivery_audit, "_detect_playwright_capability", lambda: {"state": "package_missing", "playwright_package_available": False, "chromium_runtime_available": False, "real_browser_verification_available": False, "reason": "missing", "setup_policy": delivery_audit.PLAYWRIGHT_SETUP_COMMANDS})
-
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-BROWSER", "title": "The application is usable through a browser."}, project, str(tmp_path), {"verifier_type": "browser_usability"})
-
-    assert evidence["status"] == "not_verified"
-    assert evidence["failure_kind"] == "tooling_failure"
-    assert evidence["collected_evidence"]["tool_capabilities"]["state"] == "package_missing"
-
-
-def test_missing_chromium_runtime_is_tooling_not_verified(tmp_path, monkeypatch):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    monkeypatch.setattr(delivery_audit, "_detect_playwright_capability", lambda: {"state": "browser_missing", "playwright_package_available": True, "chromium_runtime_available": False, "real_browser_verification_available": False, "reason": "run playwright install chromium", "setup_policy": delivery_audit.PLAYWRIGHT_SETUP_COMMANDS})
-
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-BROWSER", "title": "The application is usable through a browser."}, project, str(tmp_path), {"verifier_type": "browser_usability"})
-
-    assert evidence["status"] == "not_verified"
-    assert evidence["failure_kind"] == "tooling_failure"
-    assert evidence["collected_evidence"]["tool_capabilities"]["state"] == "browser_missing"
-
-
-def test_tiny_rounding_overflow_is_tolerated():
-    assert delivery_audit.HORIZONTAL_OVERFLOW_TOLERANCE_PX == 2
-    adapter = delivery_audit.BrowserWebEvidenceAdapter()
-    findings = adapter._layout_findings([{"category": "laptop", "horizontal_overflow_px": 2, "overflow_measurements": {}}])
-    assert findings == []
-
-
-def test_ultrawide_overflow_failure_is_not_passed():
-    adapter = delivery_audit.BrowserWebEvidenceAdapter()
-    findings = adapter._layout_findings([{"category": "ultra_wide_desktop", "horizontal_overflow_px": 50, "overflow_measurements": {"main_content_bounds": {"width": 3400}}}])
-    assert any("overflow" in finding for finding in findings)
-
-
-def test_product_judge_alone_cannot_pass_design():
-    judge = delivery_audit._product_judge_review({"id": "AC-013", "title": "modern tidy design"}, {"passed": False}, [], {"title": "Demo"})
-    assert judge["verdict"] == "unavailable"
-    assert judge["can_pass_from_judge_alone"] is False
-
-
-def test_browser_project_failure_creates_unified_issue(tmp_path):
-    criterion = {"id": "AC-014", "title": "The application layout remains usable on desktop and tablet viewport sizes.", "priority": "high"}
-    project = {"issues": []}
-    evidence = {"status": "failed", "verifier_type": "responsive_ui", "criterion_id": "AC-014", "failure_kind": "project_failure", "failure_reason": "overflow", "collected_evidence": {"project_snapshot_fingerprint": "abc123", "screenshots": ["shot.png"], "OBJECTIVE_REAL_BROWSER_EVIDENCE": {"passed": False}}}
-
-    delivery_audit._record_browser_project_issue(project, criterion, evidence)
-
-    assert len(project["issues"]) == 1
-    assert project["issues"][0]["source"] == "browser_evidence"
-    assert project["issues"][0]["criterion_id"] == "AC-014"
-
-
-def test_browser_tooling_failure_does_not_create_project_issue():
-    project = {"issues": []}
-    evidence = {"status": "not_verified", "verifier_type": "browser_usability", "criterion_id": "AC-004", "failure_kind": "tooling_failure"}
-
-    delivery_audit._record_browser_project_issue(project, {"id": "AC-004"}, evidence)
-
-    assert project["issues"] == []
-
-
-def test_http_200_or_screenshot_alone_cannot_pass_browser_usability(tmp_path, monkeypatch):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button>Go</button>"}, ["fastapi"])
-    monkeypatch.setattr(delivery_audit, "_detect_playwright_capability", lambda: {"state": "package_missing", "playwright_package_available": False, "chromium_runtime_available": False, "real_browser_verification_available": False, "reason": "missing", "setup_policy": delivery_audit.PLAYWRIGHT_SETUP_COMMANDS})
-
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-004", "title": "The application is usable through a browser."}, project, str(tmp_path), {"verifier_type": "browser_usability"})
-
-    assert evidence["status"] == "not_verified"
-    assert evidence["collected_evidence"]["executed_viewports"] == []
-
-
-def test_primary_action_existence_alone_cannot_pass_when_tooling_unavailable(tmp_path, monkeypatch):
-    project = _runtime_project(tmp_path, {"main.py": "from fastapi import FastAPI\napp=FastAPI()\n", "templates/index.html": "<button id='newTicketButton'>Новая заявка</button>"}, ["fastapi"])
-    monkeypatch.setattr(delivery_audit, "_detect_playwright_capability", lambda: {"state": "browser_missing", "playwright_package_available": True, "chromium_runtime_available": False, "real_browser_verification_available": False, "reason": "missing", "setup_policy": delivery_audit.PLAYWRIGHT_SETUP_COMMANDS})
-
-    evidence = delivery_audit.execute_product_ui_evidence({"id": "AC-018", "title": "Primary interface buttons perform their intended actions."}, project, str(tmp_path), {"verifier_type": "primary_ui_actions"})
-
-    assert evidence["status"] == "not_verified"
+    assert evidence["collected_evidence"]["display_model"]["dpi_scale"] == "unsupported"
 
 
 def test_browser_tablet_evidence_does_not_satisfy_native_desktop_criteria(tmp_path):
@@ -1369,17 +1277,14 @@ def test_runtime_start_feature_records_real_startup_evidence(tmp_path):
     assert evidence["collected_evidence"]["owned_process_only"] is True
 
 
-def test_responsive_ui_static_profile_uses_real_browser_when_available(tmp_path):
+def test_responsive_ui_static_profile_does_not_pass_without_real_browser(tmp_path):
     project, criterion = _responsive_static_project(tmp_path)
 
     evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": False}, [])
 
-    if delivery_audit._detect_playwright_capability().get("real_browser_verification_available"):
-        assert evidence["status"] in {"passed", "failed"}
-        assert evidence["failure_kind"] in {"", "project_failure"}
-    else:
-        assert evidence["status"] == "not_verified"
+    assert evidence["status"] == "not_verified"
     assert evidence["verifier_type"] == "responsive_ui"
+    assert evidence["classification"] == "UNSUPPORTED_VERIFIER"
     assert evidence["collected_evidence"]["runtime_ui_adapter"]["adapter_type"] == "BrowserWebEvidenceAdapter"
     assert "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE" in evidence["collected_evidence"]["evidence_levels"]
 
@@ -1401,17 +1306,14 @@ def test_responsive_ui_unsupported_profile_is_not_verified(tmp_path):
     assert "No adapter supports product_kind=unknown ui_runtime=unknown" in evidence["failure_reason"]
 
 
-def test_responsive_ui_overflow_still_does_not_pass(tmp_path):
+def test_responsive_ui_overflow_still_does_not_pass_without_real_browser(tmp_path):
     project, criterion = _responsive_static_project(tmp_path, overflow=True)
 
     evidence = verify_acceptance_criterion(criterion, project, str(tmp_path), {"success": True}, [])
 
-    assert evidence["status"] != "passed"
-    if delivery_audit._detect_playwright_capability().get("real_browser_verification_available"):
-        assert evidence["failure_kind"] == "project_failure"
-    else:
-        assert evidence["verdict"] == "not_executed"
-        assert evidence["classification"] == "UNSUPPORTED_VERIFIER"
+    assert evidence["status"] == "not_verified"
+    assert evidence["verdict"] == "not_executed"
+    assert evidence["classification"] == "UNSUPPORTED_VERIFIER"
 
 
 def test_mandatory_feature_cannot_pass_from_global_qa_alone(tmp_path):

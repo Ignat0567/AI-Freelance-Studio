@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from project_spec import Issue, acceptance_evidence_is_direct, detect_project_profiles, ensure_acceptance_evidence_history, normalize_acceptance_evidence, plan_acceptance_verifier, record_acceptance_evidence
+from project_spec import acceptance_evidence_is_direct, detect_project_profiles, ensure_acceptance_evidence_history, normalize_acceptance_evidence, plan_acceptance_verifier, record_acceptance_evidence
 
 
 IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", "__pycache__"}
@@ -28,19 +28,11 @@ SECRET_PATTERNS = [
 ]
 TODO_PATTERNS = ("todo: implement", "pass  # todo", "raise notimplementederror", "not implemented", "fake output")
 OUTPUT_TAIL_LIMIT = 4000
-HORIZONTAL_OVERFLOW_TOLERANCE_PX = 2
 AC_CLASS_IMPLEMENTED = "IMPLEMENTED_BUT_NOT_VERIFIED"
 AC_CLASS_PARTIAL = "PARTIALLY_IMPLEMENTED"
 AC_CLASS_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 AC_CLASS_UNSUPPORTED = "UNSUPPORTED_VERIFIER"
 AC_CLASS_AMBIGUOUS = "AMBIGUOUS_REQUIREMENT"
-PLAYWRIGHT_SETUP_COMMANDS = {
-    "python_package": f"{sys.executable} -m pip install playwright",
-    "chromium_runtime": f"{sys.executable} -m playwright install chromium",
-    "browser_family": "chromium",
-    "ownership": "FreelancerStudio verification subsystem only; generated project requirements are not modified",
-    "expected_storage": "Playwright package in the active Studio Python environment; Chromium runtime in the Playwright-managed browser cache for the current OS user",
-}
 WEB_VIEWPORT_MATRIX = [
     {"name": "laptop", "width": 1366, "height": 768, "purpose": "low-height laptop usability"},
     {"name": "full_hd_desktop", "width": 1920, "height": 1080, "purpose": "standard desktop layout"},
@@ -1237,120 +1229,12 @@ def _semantic_verifier_plan(criterion: dict[str, Any], project: dict, root: str)
 
 
 def _browser_automation_support() -> dict[str, Any]:
-    capability = _detect_playwright_capability()
-    return {
-        "supported": capability.get("real_browser_verification_available"),
-        "tool": "playwright",
-        "reason": capability.get("reason", ""),
-        **capability,
-    }
-
-
-def _detect_playwright_capability() -> dict[str, Any]:
     try:
         import importlib.util
-        if importlib.util.find_spec("playwright") is None:
-            return {
-                "state": "package_missing",
-                "playwright_package_available": False,
-                "chromium_runtime_available": False,
-                "real_browser_verification_available": False,
-                "setup_policy": PLAYWRIGHT_SETUP_COMMANDS,
-                "reason": "Playwright Python package is not installed in the Studio environment",
-            }
+        available = importlib.util.find_spec("playwright") is not None
     except Exception as exc:
-        return {
-            "state": "initialization_failed",
-            "playwright_package_available": False,
-            "chromium_runtime_available": False,
-            "real_browser_verification_available": False,
-            "setup_policy": PLAYWRIGHT_SETUP_COMMANDS,
-            "reason": _tail_output(str(exc)),
-        }
-
-    try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as pw:
-            executable = pw.chromium.executable_path
-            runtime_available = bool(executable and os.path.exists(executable))
-            state = "available" if runtime_available else "browser_missing"
-            return {
-                "state": state,
-                "playwright_package_available": True,
-                "chromium_runtime_available": runtime_available,
-                "real_browser_verification_available": runtime_available,
-                "chromium_executable": executable,
-                "setup_policy": PLAYWRIGHT_SETUP_COMMANDS,
-                "reason": "Playwright and Chromium are available" if runtime_available else "Playwright package is installed but Chromium runtime is missing; run the controlled Studio setup command",
-            }
-    except Exception as exc:
-        message = _tail_output(str(exc))
-        state = "browser_missing" if "Executable doesn't exist" in message or "playwright install" in message else "initialization_failed"
-        return {
-            "state": state,
-            "playwright_package_available": True,
-            "chromium_runtime_available": False,
-            "real_browser_verification_available": False,
-            "setup_policy": PLAYWRIGHT_SETUP_COMMANDS,
-            "reason": message,
-        }
-
-
-def _safe_artifact_part(value: Any) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "artifact")).strip("_") or "artifact"
-
-
-def _browser_artifact_dir(root: str, criterion_id: str, fingerprint: str) -> str:
-    path = os.path.join(root, "evidence_artifacts", fingerprint[:12], _safe_artifact_part(criterion_id))
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def _browser_message_severity(message_type: str, text: str = "") -> str:
-    lowered = f"{message_type} {text}".lower()
-    if any(token in lowered for token in ("uncaught", "referenceerror", "typeerror", "syntaxerror", "renderer crash")):
-        return "fatal"
-    if message_type.lower() == "error":
-        return "error"
-    if message_type.lower() == "warning":
-        return "warning"
-    return "info"
-
-
-def _page_event_record(source: str, severity: str, message: Any, url: str = "") -> dict[str, Any]:
-    return {"source": source, "severity": severity, "message": _tail_output(message), "url": _redact_secrets(url)}
-
-
-def _viewport_file_name(criterion_id: str, viewport: dict[str, Any]) -> str:
-    return f"{_safe_artifact_part(criterion_id)}_{viewport['name']}_{viewport['width']}x{viewport['height']}.png"
-
-
-def _primary_action_terms(plan: dict[str, Any], criterion: dict[str, Any]) -> list[str]:
-    text = " ".join(str(part) for part in [criterion.get("title", ""), criterion.get("description", ""), criterion.get("expected_result", ""), plan.get("semantic_intent", ""), " ".join(plan.get("ui_hints", []) or [])]).lower()
-    terms = ["create", "new", "add", "open", "edit", "update", "save", "search", "filter", "submit", "delete"]
-    if any(token in text for token in ("request", "ticket", "заяв")):
-        terms.extend(["заявка", "новая", "сохранить", "поиск", "фильтр", "удалить"])
-    return list(dict.fromkeys(terms))
-
-
-def _product_judge_review(criterion: dict[str, Any], objective: dict[str, Any], screenshots: list[str], project: dict) -> dict[str, Any]:
-    # No independent reviewer is wired in-process; keeping AC-013 not_verified is safer than self-approval.
-    return {
-        "review_type": "INDEPENDENT_PRODUCT_JUDGE_REVIEW",
-        "verdict": "unavailable",
-        "blocking_objection": None,
-        "can_pass_from_judge_alone": False,
-        "input_bundle": {
-            "criterion_text": _semantic_acceptance_text(criterion),
-            "project_purpose": " ".join(str(project.get(key, "")) for key in ("title", "description")).strip(),
-            "representative_screenshots": screenshots[:3],
-            "objective_browser_evidence_passed": objective.get("passed"),
-            "viewport_results": objective.get("viewport_results", []),
-            "layout_findings": objective.get("layout_findings", []),
-            "primary_actions": objective.get("primary_actions", []),
-        },
-        "reason": "No independent Product Judge integration is configured for this run",
-    }
+        return {"supported": False, "tool": "playwright", "reason": _tail_output(str(exc))}
+    return {"supported": available, "tool": "playwright", "reason": "playwright package is not installed" if not available else "playwright package is importable"}
 
 
 def _dependency_names(root: str) -> set[str]:
@@ -1514,22 +1398,22 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
     supported_ui_runtimes = {"browser"}
 
     def execute_ui_evidence(self, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-        capability = _detect_playwright_capability()
+        capability = _browser_automation_support()
         collected = {
             "product_runtime_profile": profile,
-            "runtime_ui_adapter": self._base_metadata(root, profile, "real_browser"),
-            "tool_capabilities": capability,
+            "runtime_ui_adapter": self._base_metadata(root, profile, "source_runtime"),
+            "tool_capabilities": {"playwright_browser_available": capability.get("supported"), "reason": capability.get("reason")},
             "viewport_matrix_required": WEB_VIEWPORT_MATRIX,
             "optional_4k_supported_by_architecture": {"name": "4k_desktop", "width": 3840, "height": 2160, "required": False},
             "display_model": {
-                "physical_display_resolution": "browser viewport controlled",
-                "dpi_scale": "not_required_for_css_viewport_evidence",
-                "device_scale_factor": 1,
-                "reason": "Playwright controls isolated Chromium viewport sizes, not the user's physical display",
+                "physical_display_resolution": "unavailable",
+                "dpi_scale": "unsupported",
+                "device_scale_factor": "unsupported",
+                "reason": "Current environment/adapter does not expose display or DPI control without browser automation runtime",
             },
             "evidence_levels": ["LEVEL_1_STRUCTURAL", "LEVEL_2_REAL_RUNTIME", "LEVEL_3_REAL_INTERACTION", "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE"],
         }
-        if not capability.get("real_browser_verification_available"):
+        if not capability.get("supported"):
             collected["executed_viewports"] = []
             collected["high_resolution_checks"] = {"required": ["high_resolution_desktop", "ultra_wide_desktop"], "executed": False}
             return _targeted_evidence(
@@ -1538,307 +1422,22 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
                 root,
                 str(plan.get("verifier_type") or "browser_ui"),
                 "not_verified",
-                "Browser UI evidence requires Studio-level Playwright and Chromium runtime",
+                "Browser UI evidence requires BrowserWebEvidenceAdapter with Playwright/browser runtime",
                 classification=AC_CLASS_UNSUPPORTED,
                 collected_evidence=collected,
                 failure_reason=str(capability.get("reason") or "Browser automation unavailable"),
-                failure_kind="tooling_failure",
             )
-
-        handle: RuntimeServerHandle | None = None
-        browser = None
-        browser_evidence: dict[str, Any] | None = None
-        runtime_stop: dict[str, Any] = {"stopped_cleanly": False, "not_started": True}
-        env_extra, storage_evidence = _persistence_storage_config(root, str(criterion.get("id", "browser")))
-        collected["isolated_test_storage"] = storage_evidence
-        try:
-            handle, runtime_start = _start_http_sequence_runtime(project, root, env_extra)
-            collected["application_startup"] = _runtime_start_evidence(runtime_start)
-            if not handle:
-                status = "failed" if runtime_start.get("status") == "failed" else "not_verified"
-                return _targeted_evidence(
-                    criterion, project, root, str(plan.get("verifier_type") or "browser_ui"), status,
-                    "Generated application did not start for browser evidence",
-                    classification=AC_CLASS_PARTIAL if status == "failed" else AC_CLASS_UNSUPPORTED,
-                    collected_evidence=collected,
-                    failure_reason=str(runtime_start.get("error") or "Runtime unavailable"),
-                    failure_kind="project_failure" if status == "failed" else "tooling_failure",
-                )
-
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
-                collected["chromium_startup"] = {"launched": True, "browser_name": browser.browser_type.name, "isolated_user_profile": True}
-                browser_evidence = self._execute_browser_plan(browser, handle.base_url, criterion, project, root, plan, profile, collected)
-        except Exception as exc:
-            collected["browser_execution_exception"] = _tail_output(str(exc))
-            return _targeted_evidence(
-                criterion, project, root, str(plan.get("verifier_type") or "browser_ui"), "not_verified",
-                "Playwright browser execution could not be initialized",
-                classification=AC_CLASS_UNSUPPORTED,
-                collected_evidence=collected,
-                failure_reason=_tail_output(str(exc)),
-                failure_kind="tooling_failure",
-            )
-        finally:
-            if browser is not None:
-                try:
-                    browser.close()
-                    collected["browser_closed"] = True
-                except Exception as exc:
-                    collected["browser_close_error"] = _tail_output(str(exc))
-            if handle:
-                runtime_stop = _stop_http_sequence_runtime(handle)
-            collected["runtime_stop"] = runtime_stop
-            if browser_evidence is not None:
-                browser_evidence.setdefault("collected_evidence", {})["runtime_stop"] = runtime_stop
-                browser_evidence["collected_evidence"]["browser_closed"] = collected.get("browser_closed", False)
-        if browser_evidence is not None:
-            return browser_evidence
         return _targeted_evidence(
-            criterion, project, root, str(plan.get("verifier_type") or "browser_ui"), "not_verified",
-            "Browser evidence did not complete",
+            criterion,
+            project,
+            root,
+            str(plan.get("verifier_type") or "browser_ui"),
+            "not_verified",
+            "Browser adapter is available but real viewport execution is not implemented in this phase",
             classification=AC_CLASS_UNSUPPORTED,
             collected_evidence=collected,
-            failure_reason="Browser execution ended without evidence",
-            failure_kind="tooling_failure",
+            failure_reason="Playwright integration point exists; execution implementation pending",
         )
-
-    def _execute_browser_plan(self, browser: Any, base_url: str, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any], collected: dict[str, Any]) -> dict[str, Any]:
-        verifier_type = str(plan.get("verifier_type") or "browser_ui")
-        fingerprint = _project_snapshot_fingerprint(root)
-        artifact_dir = _browser_artifact_dir(root, str(criterion.get("id", "AC-UI")), fingerprint)
-        terms = _primary_action_terms(plan, criterion)
-        viewports_to_run = WEB_VIEWPORT_MATRIX if verifier_type in ("responsive_ui", "product_ui_quality") else [WEB_VIEWPORT_MATRIX[0]]
-        viewport_results = []
-        screenshots = []
-        primary_actions: list[dict[str, Any]] = []
-
-        for viewport in viewports_to_run:
-            context = None
-            page = None
-            page_errors: list[dict[str, Any]] = []
-            console_messages: list[dict[str, Any]] = []
-            network_failures: list[dict[str, Any]] = []
-            screenshot_path = os.path.join(artifact_dir, _viewport_file_name(str(criterion.get("id", "AC-UI")), viewport))
-            try:
-                context = browser.new_context(viewport={"width": int(viewport["width"]), "height": int(viewport["height"])}, device_scale_factor=1)
-                page = context.new_page()
-                page.on("pageerror", lambda exc: page_errors.append(_page_event_record("pageerror", "fatal", str(exc), page.url if page else "")))
-                page.on("console", lambda msg: console_messages.append(_page_event_record("console", _browser_message_severity(msg.type, msg.text), msg.text, getattr(msg, "location", {}).get("url", "") if isinstance(getattr(msg, "location", {}), dict) else "")))
-                page.on("requestfailed", lambda req: network_failures.append(_page_event_record("network", "error", req.failure.get("errorText", "request failed") if req.failure else "request failed", req.url)))
-                response = page.goto(f"{base_url}/", wait_until="domcontentloaded", timeout=15000)
-                page.wait_for_load_state("networkidle", timeout=8000)
-                body_text_len = page.locator("body").inner_text(timeout=3000).__len__()
-                visible_primary = self._visible_primary_elements(page, terms)
-                metrics = self._layout_metrics(page)
-                primary_action_reachable = bool(visible_primary)
-                fatal_errors = [item for item in page_errors + console_messages if item.get("severity") == "fatal"]
-                large_overflow = int(metrics.get("horizontal_overflow_px", 0)) > HORIZONTAL_OVERFLOW_TOLERANCE_PX
-                screenshot = page.screenshot(path=screenshot_path, full_page=True, timeout=8000)
-                screenshot_written = bool(screenshot and os.path.exists(screenshot_path))
-                if screenshot_written:
-                    screenshots.append(screenshot_path)
-
-                result = {
-                    "category": viewport["name"],
-                    "width": viewport["width"],
-                    "height": viewport["height"],
-                    "final_url": page.url,
-                    "document_title": page.title(),
-                    "load_result": {"status_code": response.status if response else None, "ok": bool(response and response.ok)},
-                    "body_text_length": body_text_len,
-                    "page_errors": page_errors,
-                    "console_messages": console_messages,
-                    "console_errors": [m for m in console_messages if m.get("severity") in ("error", "fatal")],
-                    "network_failures": network_failures,
-                    "visible_primary_elements": visible_primary,
-                    "primary_control_visibility": bool(visible_primary),
-                    "primary_navigation_reachable": bool(metrics.get("main_or_nav_visible")),
-                    "primary_action_reachable": primary_action_reachable,
-                    "overflow_measurements": metrics,
-                    "horizontal_overflow_px": metrics.get("horizontal_overflow_px"),
-                    "failed_assertions": [],
-                    "screenshot_path": screenshot_path if screenshot_written else "",
-                }
-                if not result["load_result"]["ok"]:
-                    result["failed_assertions"].append("navigation did not return a successful response")
-                if body_text_len <= 20:
-                    result["failed_assertions"].append("page body is blank or nearly blank")
-                if fatal_errors:
-                    result["failed_assertions"].append("fatal browser/page errors occurred")
-                if not metrics.get("main_or_nav_visible"):
-                    result["failed_assertions"].append("core interface section is not visible")
-                if not primary_action_reachable:
-                    result["failed_assertions"].append("primary action is not visible or reachable")
-                if large_overflow:
-                    result["failed_assertions"].append("catastrophic horizontal overflow exceeds tolerance")
-                result["verdict"] = "passed" if not result["failed_assertions"] else "failed"
-                viewport_results.append(result)
-            except Exception as exc:
-                viewport_results.append({
-                    "category": viewport["name"], "width": viewport["width"], "height": viewport["height"],
-                    "load_result": {"ok": False}, "page_errors": page_errors, "console_errors": console_messages,
-                    "primary_control_visibility": False, "primary_action_reachable": False,
-                    "horizontal_overflow_px": None, "failed_assertions": [f"browser execution failed: {_tail_output(str(exc))}"],
-                    "screenshot_path": screenshot_path if os.path.exists(screenshot_path) else "", "verdict": "failed",
-                })
-            finally:
-                if page is not None:
-                    try:
-                        page.close()
-                    except Exception:
-                        pass
-                if context is not None:
-                    try:
-                        context.close()
-                    except Exception:
-                        pass
-
-        if verifier_type == "primary_ui_actions":
-            primary_actions = self._execute_primary_action_flow(browser, base_url, artifact_dir, criterion, terms)
-
-        objective = {
-            "passed": all(item.get("verdict") == "passed" for item in viewport_results),
-            "viewport_results": viewport_results,
-            "layout_findings": self._layout_findings(viewport_results),
-            "primary_actions": primary_actions,
-            "screenshots": screenshots,
-        }
-        collected.update({
-            "base_url": base_url,
-            "artifact_directory": artifact_dir,
-            "executed_viewports": viewport_results,
-            "screenshots": screenshots,
-            "browser_context_isolation": "fresh isolated context per viewport/action flow",
-            "snapshot_binding": {"project_path": root, "criterion_id": criterion.get("id", ""), "verifier_type": verifier_type, "adapter_type": self.adapter_type, "product_runtime_profile": profile, "code_snapshot_fingerprint": fingerprint, "timestamp": _utc_now()},
-            "high_resolution_checks": {"required": ["high_resolution_desktop", "ultra_wide_desktop"], "executed": any(v.get("category") == "high_resolution_desktop" for v in viewport_results) and any(v.get("category") == "ultra_wide_desktop" for v in viewport_results)},
-        })
-
-        if verifier_type == "primary_ui_actions":
-            passed = bool(primary_actions) and all(action.get("verdict") == "passed" for action in primary_actions)
-            collected["primary_actions_tested"] = primary_actions
-            summary = "Primary interface actions were clicked and produced observable results" if passed else "Primary interface action interaction evidence failed"
-            return _targeted_evidence(criterion, project, root, verifier_type, "passed" if passed else "failed", summary, classification=AC_CLASS_IMPLEMENTED if passed else AC_CLASS_PARTIAL, collected_evidence=collected, failure_reason="One or more primary actions were not usable" if not passed else "", failure_kind="project_failure" if not passed else "")
-
-        if verifier_type == "product_ui_quality":
-            judge = _product_judge_review(criterion, objective, [path for path in screenshots if any(token in path for token in ("full_hd", "high_resolution", "tablet_portrait"))], project)
-            collected["OBJECTIVE_REAL_BROWSER_EVIDENCE"] = objective
-            collected["INDEPENDENT_PRODUCT_JUDGE_REVIEW"] = judge
-            passed = bool(objective.get("passed") and judge.get("verdict") in ("approved", "approved_with_nonblocking_notes") and not judge.get("blocking_objection"))
-            status = "passed" if passed else "failed" if not objective.get("passed") or judge.get("blocking_objection") else "not_verified"
-            return _targeted_evidence(criterion, project, root, verifier_type, status, "Objective browser evidence and Product Judge review were evaluated", classification=AC_CLASS_IMPLEMENTED if passed else AC_CLASS_PARTIAL if status == "failed" else AC_CLASS_UNSUPPORTED, collected_evidence=collected, failure_reason="Product Judge unavailable" if status == "not_verified" else "Objective UI evidence failed or judge raised a blocking objection" if status == "failed" else "", failure_kind="project_failure" if status == "failed" else "tooling_failure" if status == "not_verified" else "")
-
-        passed = bool(objective.get("passed"))
-        collected["OBJECTIVE_REAL_BROWSER_EVIDENCE"] = objective
-        return _targeted_evidence(criterion, project, root, verifier_type, "passed" if passed else "failed", "Real Chromium browser UI evidence passed" if passed else "Real Chromium browser UI evidence failed", classification=AC_CLASS_IMPLEMENTED if passed else AC_CLASS_PARTIAL, collected_evidence=collected, failure_reason="One or more required browser viewport assertions failed" if not passed else "", failure_kind="project_failure" if not passed else "")
-
-    def _visible_primary_elements(self, page: Any, terms: list[str]) -> list[dict[str, Any]]:
-        script = """
-        (terms) => Array.from(document.querySelectorAll('button,a,input,select,textarea,[role="button"],[role="link"],[role="search"]')).map((el) => {
-            const r = el.getBoundingClientRect();
-            const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.placeholder || el.name || el.id || '').trim();
-            const visible = r.width > 0 && r.height > 0 && r.bottom >= 0 && r.right >= 0 && r.left <= window.innerWidth && r.top <= window.innerHeight;
-            return {tag: el.tagName.toLowerCase(), text, id: el.id || '', role: el.getAttribute('role') || '', visible, enabled: !el.disabled, bounds: {x: r.x, y: r.y, width: r.width, height: r.height}};
-        }).filter((item) => item.visible && item.enabled && terms.some((term) => item.text.toLowerCase().includes(term) || item.id.toLowerCase().includes(term))).slice(0, 20)
-        """
-        return page.evaluate(script, terms)
-
-    def _layout_metrics(self, page: Any) -> dict[str, Any]:
-        script = """
-        () => {
-          const de = document.documentElement;
-          const body = document.body;
-          const main = document.querySelector('main') || body;
-          const nav = document.querySelector('nav,header,[role="navigation"]');
-          const mr = main.getBoundingClientRect();
-          const nr = nav ? nav.getBoundingClientRect() : null;
-          const scrollWidth = Math.max(de.scrollWidth, body ? body.scrollWidth : 0);
-          const clientWidth = de.clientWidth;
-          const controls = Array.from(document.querySelectorAll('button,a,input,select,textarea')).filter((el) => {
-            const r = el.getBoundingClientRect();
-            return r.width > 0 && r.height > 0 && (r.right < 0 || r.left > window.innerWidth || r.bottom < 0 || r.top > window.innerHeight);
-          });
-          return {document_scroll_width: de.scrollWidth, document_client_width: de.clientWidth, body_scroll_width: body ? body.scrollWidth : 0, viewport_width: window.innerWidth, horizontal_overflow_px: Math.max(0, scrollWidth - clientWidth), main_or_nav_visible: (mr.width > 0 && mr.height > 0) || (nr && nr.width > 0 && nr.height > 0), main_content_bounds: {x: mr.x, y: mr.y, width: mr.width, height: mr.height}, navigation_bounds: nr ? {x: nr.x, y: nr.y, width: nr.width, height: nr.height} : null, offscreen_control_count: controls.length};
-        }
-        """
-        return page.evaluate(script)
-
-    def _layout_findings(self, viewport_results: list[dict[str, Any]]) -> list[str]:
-        findings = []
-        for result in viewport_results:
-            overflow = result.get("horizontal_overflow_px")
-            if isinstance(overflow, int) and overflow > HORIZONTAL_OVERFLOW_TOLERANCE_PX:
-                findings.append(f"{result.get('category')} horizontal overflow {overflow}px exceeds tolerance")
-            bounds = (result.get("overflow_measurements") or {}).get("main_content_bounds") or {}
-            if result.get("category") == "ultra_wide_desktop" and bounds.get("width", 0) > 3300:
-                findings.append("ultra-wide main content spans nearly the full viewport; review readability")
-        return findings
-
-    def _execute_primary_action_flow(self, browser: Any, base_url: str, artifact_dir: str, criterion: dict[str, Any], terms: list[str]) -> list[dict[str, Any]]:
-        context = browser.new_context(viewport={"width": 1366, "height": 768}, device_scale_factor=1)
-        page = context.new_page()
-        failed_requests: list[dict[str, Any]] = []
-        page.on("requestfailed", lambda req: failed_requests.append(_page_event_record("network", "error", req.failure.get("errorText", "request failed") if req.failure else "request failed", req.url)))
-        actions: list[dict[str, Any]] = []
-        marker = f"E2E-{int(time.time() * 1000)}"
-        try:
-            page.goto(f"{base_url}/", wait_until="networkidle", timeout=15000)
-            button = page.get_by_role("button", name=re.compile(r"new|create|add|новая|заявка", re.IGNORECASE)).first
-            visible = button.is_visible(timeout=3000)
-            enabled = button.is_enabled(timeout=3000)
-            before_len = len(page.locator("body").inner_text(timeout=3000))
-            if visible and enabled:
-                button.click(timeout=5000)
-            dialog_visible = page.locator("dialog,[role='dialog'],form").first.is_visible(timeout=5000)
-            actions.append({"action_semantic_name": "create_request", "selector_strategy": "role=button accessible name from semantic action terms", "visible": visible, "enabled": enabled, "interaction_performed": visible and enabled, "expected_result": "create form/dialog becomes visible", "actual_result": "form/dialog visible" if dialog_visible else "form/dialog not visible", "related_network_failure": failed_requests[-3:], "verdict": "passed" if visible and enabled and dialog_visible else "failed"})
-
-            if dialog_visible:
-                self._fill_first(page, "input[name='client_name'], input[placeholder*='Клиент']", marker)
-                self._fill_first(page, "input[name='contact']", f"{marker.lower()}@example.com")
-                self._fill_first(page, "input[name='company']", "FreelancerStudio verifier")
-                self._fill_first(page, "textarea[name='description']", f"Browser verification {marker}")
-                save = page.get_by_role("button", name=re.compile(r"save|submit|сохранить", re.IGNORECASE)).first
-                save_visible = save.is_visible(timeout=3000)
-                save_enabled = save.is_enabled(timeout=3000)
-                if save_visible and save_enabled:
-                    save.click(timeout=5000)
-                    page.wait_for_timeout(1000)
-                text_after = page.locator("body").inner_text(timeout=5000)
-                created_visible = marker in text_after
-                actions.append({"action_semantic_name": "save_created_request", "selector_strategy": "role=button accessible name save/submit", "visible": save_visible, "enabled": save_enabled, "interaction_performed": save_visible and save_enabled, "expected_result": "created request marker appears in UI", "actual_result": "marker visible" if created_visible else "marker not visible", "related_network_failure": failed_requests[-3:], "verdict": "passed" if save_visible and save_enabled and created_visible else "failed"})
-                ticket = page.locator("button.ticket").filter(has_text=marker).first
-                open_visible = ticket.is_visible(timeout=3000) if created_visible else False
-                if open_visible:
-                    ticket.click(timeout=5000)
-                opened = False
-                if open_visible:
-                    page.wait_for_timeout(500)
-                    opened = bool(page.locator("dialog").first.evaluate("el => !!el.open", timeout=3000))
-                actions.append({"action_semantic_name": "open_request", "selector_strategy": "created fixture marker scoped to containing ticket button", "visible": open_visible, "enabled": open_visible, "interaction_performed": open_visible, "expected_result": "request details become visible", "actual_result": "details visible" if opened else "details not visible", "related_network_failure": failed_requests[-3:], "verdict": "passed" if open_visible and opened else "failed"})
-
-            search = page.locator("input[type='search'], input[placeholder*='Поиск'], input[id*='search' i]").first
-            search_visible = search.is_visible(timeout=2000)
-            if search_visible:
-                search.fill(marker, timeout=3000)
-                page.wait_for_timeout(800)
-            changed = len(page.locator("body").inner_text(timeout=3000)) != before_len or marker in page.locator("body").inner_text(timeout=3000)
-            actions.append({"action_semantic_name": "search_filter", "selector_strategy": "search input by type/placeholder/id", "visible": search_visible, "enabled": search.is_enabled(timeout=2000) if search_visible else False, "interaction_performed": search_visible, "expected_result": "visible results update or target marker remains isolated", "actual_result": "results changed or marker visible" if changed else "no observable result change", "related_network_failure": failed_requests[-3:], "verdict": "passed" if search_visible and changed else "failed"})
-            page.screenshot(path=os.path.join(artifact_dir, f"{_safe_artifact_part(criterion.get('id'))}_primary_actions_1366x768.png"), full_page=True, timeout=8000)
-            return actions
-        except Exception as exc:
-            actions.append({"action_semantic_name": "primary_action_flow", "selector_strategy": "semantic role/text selectors", "visible": False, "enabled": False, "interaction_performed": False, "expected_result": "primary UI flow completes", "actual_result": _tail_output(str(exc)), "related_network_failure": failed_requests[-3:], "verdict": "failed"})
-            return actions
-        finally:
-            try:
-                page.close()
-            finally:
-                context.close()
-
-    def _fill_first(self, page: Any, selector: str, value: str) -> None:
-        locator = page.locator(selector).first
-        if locator.is_visible(timeout=2000):
-            locator.fill(value, timeout=3000)
 
 
 class ElectronDesktopEvidenceAdapter(ProductRuntimeEvidenceAdapter):
@@ -4526,40 +4125,6 @@ def _semantic_acceptance_enabled(criterion: dict[str, Any], project: dict, root:
     return str(plan.get("verifier_type") or "") in SEMANTIC_ACCEPTANCE_VERIFIERS
 
 
-def _record_browser_project_issue(project: dict, criterion: dict[str, Any], evidence: dict[str, Any]) -> None:
-    if evidence.get("failure_kind") != "project_failure" or str(evidence.get("status", "")).lower() != "failed":
-        return
-    verifier_type = str(evidence.get("verifier_type") or "")
-    if verifier_type not in {"browser_usability", "responsive_ui", "primary_ui_actions", "product_ui_quality"}:
-        return
-    criterion_id = str(criterion.get("id") or evidence.get("criterion_id") or "")
-    fingerprint = str((evidence.get("collected_evidence") or {}).get("project_snapshot_fingerprint") or "")[:12]
-    issue_id = f"ISSUE-BROWSER-{_safe_artifact_part(criterion_id)}-{fingerprint or 'CURRENT'}"
-    for issue in project.setdefault("issues", []):
-        if isinstance(issue, dict) and issue.get("id") == issue_id and issue.get("status", "open") == "open":
-            return
-    issue = Issue(
-        id=issue_id,
-        source="browser_evidence",
-        severity="high",
-        requirement_id=str(criterion.get("requirement_id") or criterion.get("trace") or ""),
-        criterion_id=criterion_id,
-        title=f"Browser UI evidence failed for {criterion_id or verifier_type}",
-        evidence={
-            "criterion_id": criterion_id,
-            "verifier_type": verifier_type,
-            "failure_reason": evidence.get("failure_reason", ""),
-            "supporting_screenshots": (evidence.get("collected_evidence") or {}).get("screenshots", []),
-            "objective_browser_evidence": (evidence.get("collected_evidence") or {}).get("OBJECTIVE_REAL_BROWSER_EVIDENCE", {}),
-            "code_snapshot_fingerprint": (evidence.get("collected_evidence") or {}).get("project_snapshot_fingerprint", ""),
-        },
-        reproduction=["Run final delivery audit", f"Execute {verifier_type} browser evidence for {criterion_id}"],
-        owner="opencode",
-        verification_method=verifier_type,
-    )
-    project.setdefault("issues", []).append(issue.to_dict())
-
-
 def verify_acceptance_criterion(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     method = str(criterion.get("verification_method", "") or "").strip()
     semantic_plan = _semantic_verifier_plan(criterion, project, root)
@@ -4577,9 +4142,7 @@ def verify_acceptance_criterion(criterion: dict[str, Any], project: dict, root: 
         criterion = dict(criterion)
         criterion["semantic_verifier_plan"] = semantic_plan
         evidence = semantic_verifier(criterion, project, root, qa_result, checks)
-        normalized = normalize_acceptance_evidence(str(criterion.get("id", "")), str(evidence.get("status", "not_verified")), evidence)
-        _record_browser_project_issue(project, criterion, normalized)
-        return normalized
+        return normalize_acceptance_evidence(str(criterion.get("id", "")), str(evidence.get("status", "not_verified")), evidence)
     verifier = ACCEPTANCE_VERIFIERS.get(method)
     if not verifier:
         evidence = _registry_evidence(
@@ -4593,9 +4156,7 @@ def verify_acceptance_criterion(criterion: dict[str, Any], project: dict, root: 
         )
     else:
         evidence = verifier(criterion, project, root, qa_result, checks)
-    normalized = normalize_acceptance_evidence(str(criterion.get("id", "")), str(evidence.get("status", "not_verified")), evidence)
-    _record_browser_project_issue(project, criterion, normalized)
-    return normalized
+    return normalize_acceptance_evidence(str(criterion.get("id", "")), str(evidence.get("status", "not_verified")), evidence)
 
 
 def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> tuple[bool, list[dict[str, Any]]]:
