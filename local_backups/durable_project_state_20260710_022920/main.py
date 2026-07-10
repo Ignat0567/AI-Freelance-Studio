@@ -22,7 +22,6 @@ from fastapi.responses import PlainTextResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import threading as _threading
-import project_state
 
 # OpenCode bridge (optional — for real AI-assisted code generation)
 try:
@@ -175,10 +174,14 @@ def save_studio_keys(data):
 
 def _load_projects_state():
     """Load persisted projects and tasks from disk on server start."""
-    state, error = project_state.read_json(PROJECTS_STATE_FILE)
-    if not state:
+    if not os.path.exists(PROJECTS_STATE_FILE):
         return {}, {}
-    return state.get("projects", {}), state.get("tasks", {})
+    try:
+        with open(PROJECTS_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        return state.get("projects", {}), state.get("tasks", {})
+    except Exception:
+        return {}, {}
 
 
 def _save_projects_state(preserve_missing: bool = True):
@@ -188,22 +191,12 @@ def _save_projects_state(preserve_missing: bool = True):
         tasks = PROJECT_TASKS
         if preserve_missing and os.path.exists(PROJECTS_STATE_FILE):
             persisted_projects, persisted_tasks = _load_projects_state()
-            authoritative_paths = {
-                os.path.normcase(os.path.abspath(str(project.get("target_path") or "")))
-                for project in active_projects.values() if project.get("target_path")
-            }
-            persisted_projects = {
-                project_id: project for project_id, project in persisted_projects.items()
-                if not project.get("target_path") or os.path.normcase(os.path.abspath(str(project.get("target_path")))) not in authoritative_paths
-            }
             projects = {**persisted_projects, **active_projects}
             tasks = {**persisted_tasks, **PROJECT_TASKS}
-        project_state.atomic_write_json(PROJECTS_STATE_FILE, {"projects": projects, "tasks": tasks})
-        for project in active_projects.values():
-            project_state.persist_project_state(project)
-    except Exception as exc:
-        for project in active_projects.values():
-            project.setdefault("persistence_errors", []).append(f"projects_state:{exc}")
+        with open(PROJECTS_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"projects": projects, "tasks": tasks}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 class KeysUpdatePayload(BaseModel):
@@ -281,57 +274,6 @@ PROJECT_TASKS: Dict[str, list] = {}  # project_id -> list of tasks
 _persisted_projects, _persisted_tasks = _load_projects_state()
 active_projects.update(_persisted_projects)
 PROJECT_TASKS.update(_persisted_tasks)
-
-
-def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
-    project = {
-        "project_id": state["project_id"],
-        "id": state["project_id"],
-        "title": state.get("project_name", "Untitled"),
-        "jobTitle": state.get("project_name", "Untitled"),
-        "target_path": state["project_path"],
-        "status": state.get("current_state", "created"),
-        "_phase": state.get("pipeline_stage", ""),
-        "project_spec": state.get("project_spec", {}),
-        "project_profiles": state.get("effective_project_profile", []),
-        "product_runtime_profile": state.get("product_runtime_profile", {}),
-        "acceptance_criteria": state.get("acceptance_criteria", []),
-        "acceptance_criteria_source": state.get("acceptance_criteria_source", "project_contract"),
-        "issues": state.get("issues", []),
-        "logs": ["[RECOVERY] Loaded authoritative per-project durable state."],
-        "recovery_status": state.get("recovery_status", "fully_recovered"),
-        **state.get("gates", {}),
-    }
-    ledger, _ = project_state.load_evidence_ledger(project["target_path"])
-    if ledger:
-        project["acceptance_evidence"] = {}
-        for criterion in project["acceptance_criteria"]:
-            history = ledger.get("history", {}).get(str(criterion.get("id") or ""), [])
-            evidence = [item.get("evidence", {}) for item in history]
-            criterion["evidence"] = evidence
-            project["acceptance_evidence"][criterion.get("id", "")] = evidence
-    return project
-
-
-def _discover_durable_projects() -> None:
-    generated_root = os.path.join(BASE_DIR, "generated_projects")
-    for discovered in project_state.discover_projects(generated_root):
-        if discovered.get("classification") != "fully_recovered":
-            continue
-        state = discovered.get("project") or {}
-        project_id = state.get("project_id")
-        durable_path = os.path.normcase(os.path.abspath(state.get("project_path", "")))
-        conflicting_ids = [
-            existing_id for existing_id, existing in active_projects.items()
-            if durable_path and os.path.normcase(os.path.abspath(str(existing.get("target_path") or ""))) == durable_path
-        ]
-        for existing_id in conflicting_ids:
-            active_projects.pop(existing_id, None)
-        if project_id:
-            active_projects[project_id] = _project_from_durable_state(state)
-
-
-_discover_durable_projects()
 
 
 class TaskModel(BaseModel):
@@ -914,8 +856,6 @@ def _set_project_status(project: dict, new_state: str, *, reason: str = "", forc
 
     if save:
         _save_projects_state()
-    else:
-        project_state.persist_project_state(project)
     return True
 
 
@@ -924,7 +864,6 @@ def _reset_delivery_gates(project: dict):
     project["_qa_passed"] = False
     project["_final_audit_passed"] = False
     project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_generation_finished(project: dict, finished: bool):
@@ -933,7 +872,6 @@ def _mark_generation_finished(project: dict, finished: bool):
         project["_qa_passed"] = False
         project["_final_audit_passed"] = False
         project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_qa_passed(project: dict, passed: bool):
@@ -941,19 +879,16 @@ def _mark_qa_passed(project: dict, passed: bool):
     if not passed:
         project["_final_audit_passed"] = False
         project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_final_audit_passed(project: dict, passed: bool):
     project["_final_audit_passed"] = bool(passed)
     if not passed:
         project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_product_judge_passed(project: dict, passed: bool):
     project["_product_judge_passed"] = bool(passed)
-    project_state.persist_project_state(project)
 
 
 def _record_requirement_gap_assumptions(project: dict) -> list[dict]:
@@ -3735,7 +3670,6 @@ def _repair_product_judge_objections(project: dict, target_path: str, project_id
 def _run_final_delivery_audit(project: dict, target_path: str, project_id: str, qa_result: dict | None = None) -> tuple[bool, list[str]]:
     """Independent final completion gate and delivery report generation."""
     contract_ok, contract_errors = _project_contract_ready(project)
-    project["latest_qa_result"] = qa_result or {}
     report = run_final_delivery_audit(project, target_path, qa_result=qa_result or {})
     try:
         report_path = write_delivery_report(project, target_path)
@@ -3875,7 +3809,6 @@ def async_studio_production_pipeline(project_id: str):
                 _set_project_status(project, "cancelled", force=True, reason="before generation")
                 return
             os.makedirs(target_path, exist_ok=True)
-            project_state.persist_project_state(project, target_path)
 
             detected_type, _detected_tree = _detect_project_type((project.get("title", "") + "\n" + project.get("description", "")).lower())
             if detected_type in ("history_story", "landing_page", "telegram_bot"):
@@ -4025,7 +3958,6 @@ def async_studio_production_pipeline(project_id: str):
                                 f.write(content)
 
             project["target_path"] = target_path
-            project_state.persist_project_state(project, target_path)
 
             # Auto-fix syntax errors and requirements before review
             _post_process_code(target_path, lambda msg: project["logs"].append(msg), project.get("_project_type", "simple"))
@@ -4045,7 +3977,6 @@ def async_studio_production_pipeline(project_id: str):
                         except:
                             pass
             project["target_path"] = target_path
-            project_state.persist_project_state(project, target_path)
             _mark_generation_finished(project, bool(generated_data.get("files")))
 
         clear_agent_status("codex")

@@ -18,7 +18,6 @@ from typing import Any
 
 from project_spec import Issue, acceptance_evidence_is_direct, detect_project_profiles, ensure_acceptance_evidence_history, normalize_acceptance_evidence, plan_acceptance_verifier, record_acceptance_evidence
 from product_judge import combined_subjective_verdict, is_subjective_product_quality, run_product_judge
-from project_state import append_evidence_record, atomic_write_json, latest_valid_evidence, persist_audit_run, persist_project_state, project_snapshot_fingerprint, replay_final_audit
 
 
 IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", "__pycache__"}
@@ -1119,7 +1118,14 @@ def _utc_now() -> str:
 
 
 def _project_snapshot_fingerprint(root: str) -> str:
-    return project_snapshot_fingerprint(root)
+    digest = hashlib.sha256()
+    for rel, path in sorted(_walk_files(root)):
+        digest.update(rel.encode("utf-8", errors="replace"))
+        try:
+            digest.update(Path(path).read_bytes())
+        except Exception as exc:
+            digest.update(str(exc).encode("utf-8", errors="replace"))
+    return digest.hexdigest()
 
 
 def _effective_profile_list(project: dict, root: str) -> list[str]:
@@ -1211,14 +1217,6 @@ def _semantic_verifier_plan(criterion: dict[str, Any], project: dict, root: str)
         return updated
 
     is_request = any(token in text for token in ("request", "requests", "ticket", "tickets", "заяв"))
-    if "delivery documentation" in text:
-        return matched("documentation_validation", "delivery_documentation_validation", target_entity="documentation", required_actions=["inspect README", "validate documented commands"], expected_outcomes=["delivery documentation is complete"])
-    if "placeholder implementation" in text:
-        return matched("static_scan", "placeholder_implementation_scan", target_entity="source", required_actions=["scan source files"], expected_outcomes=["no blocking placeholder markers"])
-    if "fastapi application imports" in text:
-        return matched("python_import", "fastapi_application_import", target_entity="runtime", required_actions=["import FastAPI application module"], expected_outcomes=["module imports without exception"])
-    if "fastapi runtime starts" in text:
-        return matched("runtime_start", "fastapi_runtime_start", target_entity="runtime", required_actions=["start runtime", "probe endpoint", "stop process"], expected_outcomes=["runtime is ready and stops cleanly"])
     if is_request and any(token in text for token in ("lifecycle", "tracking", "track", "current status", "state visibility")):
         return matched("lifecycle_tracking", "track_record_lifecycle", required_actions=["create", "read", "change_status", "read"], expected_outcomes=["stable identity", "status persisted"])
     if any(token in text for token in ("browser", "usable through a browser", "браузер")):
@@ -1416,7 +1414,6 @@ def _record_product_judge_issue(project: dict, criterion: dict[str, Any], object
         verification_method="product_judge_review",
     )
     project.setdefault("issues", []).append(issue.to_dict())
-    persist_project_state(project)
 
 
 def _dependency_names(root: str) -> set[str]:
@@ -4404,7 +4401,7 @@ def _verify_ac020_windows_docs(criterion: dict[str, Any], project: dict, root: s
         "troubleshooting_missing_config": "Set-ExecutionPolicy" in readme,
         "commands_match_files": requirements_exists and main_exists,
     }
-    safe_install = _run_command([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], root, timeout=120) if requirements_exists else {"exit_code": "not_run", "reason": "requirements.txt missing"}
+    safe_install = _run_command([sys.executable, "-m", "pip", "install", "-r", os.path.join(root, "requirements.txt")], root, timeout=120) if requirements_exists else {"exit_code": "not_run", "reason": "requirements.txt missing"}
     passed = all(sections.values()) and safe_install.get("exit_code") == 0
     collected = {"documentation_sections": sections, "readme_path": readme_path, "requirements_exists": requirements_exists, "main_exists": main_exists, "documented_install_command_outcome": safe_install}
     return _targeted_evidence(
@@ -4538,16 +4535,6 @@ def _verify_telegram_smoke(criterion: dict[str, Any], project: dict, root: str, 
 
 def _verify_feature_trace_static_or_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     plan = _criterion_verifier_plan(criterion)
-    semantic_plan = criterion.get("semantic_verifier_plan") if isinstance(criterion.get("semantic_verifier_plan"), dict) else _semantic_verifier_plan(criterion, project, root)
-    semantic_type = semantic_plan.get("verifier_type")
-    if semantic_type == "documentation_validation":
-        return _verify_ac020_windows_docs(criterion, project, root, qa_result, checks)
-    if semantic_type == "static_scan":
-        return _verify_static_scan(criterion, project, root, qa_result, checks)
-    if semantic_type == "python_import":
-        return _verify_python_import(criterion, project, root, qa_result, checks)
-    if semantic_type == "runtime_start":
-        return _verify_runtime_start(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "runtime_start":
         return _verify_runtime_start(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "responsive_ui":
@@ -4639,7 +4626,6 @@ def _record_browser_project_issue(project: dict, criterion: dict[str, Any], evid
         verification_method=verifier_type,
     )
     project.setdefault("issues", []).append(issue.to_dict())
-    persist_project_state(project)
 
 
 def verify_acceptance_criterion(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -4684,11 +4670,8 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
     failed = []
     ensure_acceptance_evidence_history(project)
     for criterion in project.get("acceptance_criteria", []):
-        # Persist the semantic plan with the recovered criterion before execution.
-        criterion["semantic_verifier_plan"] = _semantic_verifier_plan(criterion, project, root)
-        criterion["verifier_plan"] = _criterion_verifier_plan(criterion)
         method = str(criterion.get("verification_method", "") or "").strip()
-        semantic_plan = criterion["semantic_verifier_plan"]
+        semantic_plan = _semantic_verifier_plan(criterion, project, root)
         semantic_text = _semantic_acceptance_text(criterion)
         has_semantic_verifier = bool(
             semantic_plan.get("verifier_type") in SEMANTIC_ACCEPTANCE_VERIFIERS
@@ -4699,50 +4682,27 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
             )
         )
         unsupported_verifier = method not in ACCEPTANCE_VERIFIERS and not has_semantic_verifier
-        # Evidence created earlier in this live verification workflow may arrive in
-        # the in-memory history. Commit it before deciding whether another verifier
-        # execution is necessary; audits below still use only the reloaded ledger.
-        prior_evidence = _latest_direct_acceptance_evidence(criterion)
-        persisted, _persisted_reason = latest_valid_evidence(root, criterion)
-        if not unsupported_verifier and not persisted and prior_evidence:
-            append_evidence_record(project, criterion, prior_evidence, root)
-            persisted, _persisted_reason = latest_valid_evidence(root, criterion)
-
-        if persisted:
-            evidence = persisted.get("evidence", {})
-        elif not unsupported_verifier:
+        if not unsupported_verifier:
             evidence = verify_acceptance_criterion(criterion, project, root, qa_result, checks)
+            status = evidence.get("status", "not_verified")
+            criterion["status"] = status
+            record_acceptance_evidence(project, criterion.get("id", ""), criterion["status"], evidence)
         else:
             evidence = verify_acceptance_criterion(criterion, project, root, qa_result, checks)
-            evidence["status"] = "not_verified"
-
-        # A verifier result is never audit truth until it has been atomically committed
-        # and reloaded from the per-project ledger.
-        if not persisted:
-            record_acceptance_evidence(project, criterion.get("id", ""), evidence.get("status", "not_verified"), evidence)
-            append_evidence_record(project, criterion, evidence, root)
-            persisted, persisted_reason = latest_valid_evidence(root, criterion)
-        else:
-            # Keep the ephemeral per-audit history useful to callers while the
-            # persisted record remains the only acceptance source of truth.
-            record_acceptance_evidence(project, criterion.get("id", ""), persisted.get("status", "not_verified"), evidence)
-            persisted_reason = ""
-        if persisted:
-            criterion["status"] = str(persisted.get("status") or "not_verified")
-        else:
-            criterion["status"] = "not_verified"
-            evidence = dict(evidence)
-            evidence["failure_reason"] = f"Durable evidence reload failed: {persisted_reason}"
+            status = "not_verified"
+            record_acceptance_evidence(project, criterion.get("id", ""), status, evidence)
+            criterion["status"] = status
 
         if _is_mandatory_criterion(criterion):
             if unsupported_verifier:
                 criterion["status"] = "not_verified"
                 failed.append(criterion)
                 continue
-            if not persisted:
+            latest_evidence = _latest_direct_acceptance_evidence(criterion)
+            if not latest_evidence:
                 criterion["status"] = "not_verified"
             else:
-                latest_status = _evidence_status(persisted)
+                latest_status = _evidence_status(latest_evidence)
                 if latest_status in ("pass", "passed"):
                     criterion["status"] = "passed"
                 elif latest_status in ("fail", "failed"):
@@ -4869,21 +4829,13 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
         "checks": checks,
         "status": status,
         "legend": {"verified": "passed", "not_verified": "failed", "blocked_by_credentials": "blocked", "optional_limitation": "optional failed/non-critical"},
-        "audit_engine_version": 2,
     }
     project["final_delivery_report"] = report
-    persist_audit_run(project, root, report)
     return report
 
 
 def write_delivery_report(project: dict, root: str) -> str:
     report = project.get("final_delivery_report", {})
     path = os.path.join(root, "DELIVERY_REPORT.json")
-    atomic_write_json(path, report)
+    Path(path).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
-
-
-def run_final_delivery_audit_from_persisted_state(project_or_root: dict[str, Any] | str) -> dict[str, Any]:
-    """Replay persisted acceptance truth only; do not execute commands, browsers, or AI."""
-    root = project_or_root if isinstance(project_or_root, str) else str(project_or_root.get("target_path") or "")
-    return replay_final_audit(root)

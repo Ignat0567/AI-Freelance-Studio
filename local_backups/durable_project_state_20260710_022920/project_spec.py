@@ -4,7 +4,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
-from project_state import append_evidence_record, persist_project_state
 
 
 ACCEPTANCE_EVIDENCE_FIELDS = (
@@ -182,7 +181,6 @@ def append_agent_review_issues(project: dict, agent_id: str, report_text: str, i
     issues = normalize_agent_review_issues(agent_id, report_text, iteration)
     if issues:
         project.setdefault("issues", []).extend(issues)
-        persist_project_state(project)
     return issues
 
 
@@ -1593,8 +1591,4 @@ def record_acceptance_evidence(project: dict, criterion_id: str, status: str, ev
             entry = normalize_acceptance_evidence(criterion_id, status, evidence)
             history.setdefault(criterion_id, []).append(entry)
             criterion["evidence"] = history[criterion_id]
-            try:
-                append_evidence_record(project, criterion, entry)
-            except Exception as exc:
-                project.setdefault("persistence_errors", []).append(f"acceptance_evidence:{criterion_id}:{exc}")
             return

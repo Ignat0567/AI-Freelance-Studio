@@ -17,8 +17,6 @@ from pathlib import Path
 from typing import Any
 
 from project_spec import Issue, acceptance_evidence_is_direct, detect_project_profiles, ensure_acceptance_evidence_history, normalize_acceptance_evidence, plan_acceptance_verifier, record_acceptance_evidence
-from product_judge import combined_subjective_verdict, is_subjective_product_quality, run_product_judge
-from project_state import append_evidence_record, atomic_write_json, latest_valid_evidence, persist_audit_run, persist_project_state, project_snapshot_fingerprint, replay_final_audit
 
 
 IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", "__pycache__"}
@@ -59,15 +57,6 @@ DESKTOP_WINDOW_MATRIX = [
     {"name": "high_resolution_window", "width": 2560, "height": 1440, "maximized": True},
     {"name": "ultra_wide_maximized_window", "width": 3440, "height": 1440, "maximized": True, "optional": True},
 ]
-
-
-_PRODUCT_JUDGE_CONFIG_RESOLVER = None
-
-
-def configure_product_judge(config_resolver) -> None:
-    """Install Studio's agent-config resolver without coupling audit to the web server."""
-    global _PRODUCT_JUDGE_CONFIG_RESOLVER
-    _PRODUCT_JUDGE_CONFIG_RESOLVER = config_resolver
 
 
 @dataclass
@@ -1119,7 +1108,14 @@ def _utc_now() -> str:
 
 
 def _project_snapshot_fingerprint(root: str) -> str:
-    return project_snapshot_fingerprint(root)
+    digest = hashlib.sha256()
+    for rel, path in sorted(_walk_files(root)):
+        digest.update(rel.encode("utf-8", errors="replace"))
+        try:
+            digest.update(Path(path).read_bytes())
+        except Exception as exc:
+            digest.update(str(exc).encode("utf-8", errors="replace"))
+    return digest.hexdigest()
 
 
 def _effective_profile_list(project: dict, root: str) -> list[str]:
@@ -1211,14 +1207,6 @@ def _semantic_verifier_plan(criterion: dict[str, Any], project: dict, root: str)
         return updated
 
     is_request = any(token in text for token in ("request", "requests", "ticket", "tickets", "заяв"))
-    if "delivery documentation" in text:
-        return matched("documentation_validation", "delivery_documentation_validation", target_entity="documentation", required_actions=["inspect README", "validate documented commands"], expected_outcomes=["delivery documentation is complete"])
-    if "placeholder implementation" in text:
-        return matched("static_scan", "placeholder_implementation_scan", target_entity="source", required_actions=["scan source files"], expected_outcomes=["no blocking placeholder markers"])
-    if "fastapi application imports" in text:
-        return matched("python_import", "fastapi_application_import", target_entity="runtime", required_actions=["import FastAPI application module"], expected_outcomes=["module imports without exception"])
-    if "fastapi runtime starts" in text:
-        return matched("runtime_start", "fastapi_runtime_start", target_entity="runtime", required_actions=["start runtime", "probe endpoint", "stop process"], expected_outcomes=["runtime is ready and stops cleanly"])
     if is_request and any(token in text for token in ("lifecycle", "tracking", "track", "current status", "state visibility")):
         return matched("lifecycle_tracking", "track_record_lifecycle", required_actions=["create", "read", "change_status", "read"], expected_outcomes=["stable identity", "status persisted"])
     if any(token in text for token in ("browser", "usable through a browser", "браузер")):
@@ -1345,78 +1333,24 @@ def _primary_action_terms(plan: dict[str, Any], criterion: dict[str, Any]) -> li
     return list(dict.fromkeys(terms))
 
 
-def _product_judge_review(
-    criterion: dict[str, Any],
-    objective: dict[str, Any],
-    screenshots: list[str],
-    project: dict,
-    root: str = "",
-    runtime_profile: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Run the configured judge for subjective semantics only, never objective UI checks."""
-    snapshot = _project_snapshot_fingerprint(root) if root else ""
-    if not is_subjective_product_quality(criterion):
-        return {
-            "review_type": "INDEPENDENT_PRODUCT_JUDGE_REVIEW",
-            "criterion_id": str(criterion.get("id") or ""),
-            "project_snapshot_fingerprint": snapshot,
-            "verdict": "insufficient_evidence",
-            "availability": "unavailable",
-            "findings": [],
-            "blocking_findings": [],
-            "blocking_objection": False,
-            "can_pass_from_judge_alone": False,
-            "reason": "Criterion is not a subjective product-quality criterion",
-        }
-    config = _PRODUCT_JUDGE_CONFIG_RESOLVER(project) if _PRODUCT_JUDGE_CONFIG_RESOLVER else project.get("product_judge_runtime_config", {})
-    config = config if isinstance(config, dict) else {}
-    judge_project = dict(project)
-    judge_project["target_path"] = root or judge_project.get("target_path", "")
-    result = run_product_judge(
-        criterion=criterion,
-        objective=objective,
-        screenshots=screenshots,
-        project=judge_project,
-        runtime_profile=runtime_profile or {},
-        snapshot_fingerprint=snapshot,
-        config=config,
-        implementation_identity=config.get("implementation_identity") if isinstance(config.get("implementation_identity"), dict) else {},
-    )
-    result["blocking_objection"] = bool(result.get("blocking_findings"))
-    project.setdefault("product_judge_results", {})[str(criterion.get("id") or "")] = result
-    return result
-
-
-def _record_product_judge_issue(project: dict, criterion: dict[str, Any], objective: dict[str, Any], judge: dict[str, Any]) -> None:
-    findings = judge.get("blocking_findings") if isinstance(judge.get("blocking_findings"), list) else []
-    if judge.get("verdict") != "blocking_objection" or not findings:
-        return
-    criterion_id = str(criterion.get("id") or "")
-    title = f"Product Judge blocking objection: {criterion.get('title') or criterion_id}"
-    for existing in project.get("issues", []):
-        if isinstance(existing, dict) and existing.get("source") == "product_judge" and existing.get("criterion_id") == criterion_id and existing.get("status", "open") == "open":
-            return
-    severity = "critical" if any(item.get("severity") == "critical" for item in findings if isinstance(item, dict)) else "high"
-    issue = Issue(
-        id=f"ISSUE-JUDGE-{criterion_id}-{str(judge.get('project_snapshot_fingerprint') or '')[:12]}",
-        source="product_judge",
-        severity=severity,
-        requirement_id=criterion_id,
-        criterion_id=criterion_id,
-        title=title,
-        evidence={
-            "product_judge_verdict": judge.get("verdict"),
-            "blocking_findings": findings,
-            "screenshot_references": judge.get("evidence_references", []),
-            "objective_browser_evidence": objective,
-            "project_snapshot_fingerprint": judge.get("project_snapshot_fingerprint"),
+def _product_judge_review(criterion: dict[str, Any], objective: dict[str, Any], screenshots: list[str], project: dict) -> dict[str, Any]:
+    # No independent reviewer is wired in-process; keeping AC-013 not_verified is safer than self-approval.
+    return {
+        "review_type": "INDEPENDENT_PRODUCT_JUDGE_REVIEW",
+        "verdict": "unavailable",
+        "blocking_objection": None,
+        "can_pass_from_judge_alone": False,
+        "input_bundle": {
+            "criterion_text": _semantic_acceptance_text(criterion),
+            "project_purpose": " ".join(str(project.get(key, "")) for key in ("title", "description")).strip(),
+            "representative_screenshots": screenshots[:3],
+            "objective_browser_evidence_passed": objective.get("passed"),
+            "viewport_results": objective.get("viewport_results", []),
+            "layout_findings": objective.get("layout_findings", []),
+            "primary_actions": objective.get("primary_actions", []),
         },
-        reproduction=["Review the Product Judge screenshot references", "Compare the blocking finding with the live UI"],
-        owner="opencode",
-        verification_method="product_judge_review",
-    )
-    project.setdefault("issues", []).append(issue.to_dict())
-    persist_project_state(project)
+        "reason": "No independent Product Judge integration is configured for this run",
+    }
 
 
 def _dependency_names(root: str) -> set[str]:
@@ -1788,17 +1722,12 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
             return _targeted_evidence(criterion, project, root, verifier_type, "passed" if passed else "failed", summary, classification=AC_CLASS_IMPLEMENTED if passed else AC_CLASS_PARTIAL, collected_evidence=collected, failure_reason="One or more primary actions were not usable" if not passed else "", failure_kind="project_failure" if not passed else "")
 
         if verifier_type == "product_ui_quality":
-            representative_tokens = ("laptop", "full_hd", "high_resolution", "tablet_portrait")
-            representative_screenshots = [
-                path for token in representative_tokens
-                for path in screenshots if token in os.path.basename(path)
-            ]
-            judge = _product_judge_review(criterion, objective, representative_screenshots, project, root, profile)
+            judge = _product_judge_review(criterion, objective, [path for path in screenshots if any(token in path for token in ("full_hd", "high_resolution", "tablet_portrait"))], project)
             collected["OBJECTIVE_REAL_BROWSER_EVIDENCE"] = objective
             collected["INDEPENDENT_PRODUCT_JUDGE_REVIEW"] = judge
-            status = combined_subjective_verdict(bool(objective.get("passed")), str(judge.get("verdict") or "insufficient_evidence"))
-            _record_product_judge_issue(project, criterion, objective, judge)
-            return _targeted_evidence(criterion, project, root, verifier_type, status, "Objective browser evidence and Product Judge review were evaluated", classification=AC_CLASS_IMPLEMENTED if status == "passed" else AC_CLASS_PARTIAL if status == "failed" else AC_CLASS_UNSUPPORTED, collected_evidence=collected, failure_reason=judge.get("reason", "") if status == "not_verified" else "Objective UI evidence failed or judge raised a blocking objection" if status == "failed" else "", failure_kind="project_failure" if status == "failed" else "tooling_failure" if status == "not_verified" else "")
+            passed = bool(objective.get("passed") and judge.get("verdict") in ("approved", "approved_with_nonblocking_notes") and not judge.get("blocking_objection"))
+            status = "passed" if passed else "failed" if not objective.get("passed") or judge.get("blocking_objection") else "not_verified"
+            return _targeted_evidence(criterion, project, root, verifier_type, status, "Objective browser evidence and Product Judge review were evaluated", classification=AC_CLASS_IMPLEMENTED if passed else AC_CLASS_PARTIAL if status == "failed" else AC_CLASS_UNSUPPORTED, collected_evidence=collected, failure_reason="Product Judge unavailable" if status == "not_verified" else "Objective UI evidence failed or judge raised a blocking objection" if status == "failed" else "", failure_kind="project_failure" if status == "failed" else "tooling_failure" if status == "not_verified" else "")
 
         passed = bool(objective.get("passed"))
         collected["OBJECTIVE_REAL_BROWSER_EVIDENCE"] = objective
@@ -4404,7 +4333,7 @@ def _verify_ac020_windows_docs(criterion: dict[str, Any], project: dict, root: s
         "troubleshooting_missing_config": "Set-ExecutionPolicy" in readme,
         "commands_match_files": requirements_exists and main_exists,
     }
-    safe_install = _run_command([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], root, timeout=120) if requirements_exists else {"exit_code": "not_run", "reason": "requirements.txt missing"}
+    safe_install = _run_command([sys.executable, "-m", "pip", "install", "-r", os.path.join(root, "requirements.txt")], root, timeout=120) if requirements_exists else {"exit_code": "not_run", "reason": "requirements.txt missing"}
     passed = all(sections.values()) and safe_install.get("exit_code") == 0
     collected = {"documentation_sections": sections, "readme_path": readme_path, "requirements_exists": requirements_exists, "main_exists": main_exists, "documented_install_command_outcome": safe_install}
     return _targeted_evidence(
@@ -4538,16 +4467,6 @@ def _verify_telegram_smoke(criterion: dict[str, Any], project: dict, root: str, 
 
 def _verify_feature_trace_static_or_smoke(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     plan = _criterion_verifier_plan(criterion)
-    semantic_plan = criterion.get("semantic_verifier_plan") if isinstance(criterion.get("semantic_verifier_plan"), dict) else _semantic_verifier_plan(criterion, project, root)
-    semantic_type = semantic_plan.get("verifier_type")
-    if semantic_type == "documentation_validation":
-        return _verify_ac020_windows_docs(criterion, project, root, qa_result, checks)
-    if semantic_type == "static_scan":
-        return _verify_static_scan(criterion, project, root, qa_result, checks)
-    if semantic_type == "python_import":
-        return _verify_python_import(criterion, project, root, qa_result, checks)
-    if semantic_type == "runtime_start":
-        return _verify_runtime_start(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "runtime_start":
         return _verify_runtime_start(criterion, project, root, qa_result, checks)
     if plan.get("verifier_type") == "responsive_ui":
@@ -4639,7 +4558,6 @@ def _record_browser_project_issue(project: dict, criterion: dict[str, Any], evid
         verification_method=verifier_type,
     )
     project.setdefault("issues", []).append(issue.to_dict())
-    persist_project_state(project)
 
 
 def verify_acceptance_criterion(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -4684,11 +4602,8 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
     failed = []
     ensure_acceptance_evidence_history(project)
     for criterion in project.get("acceptance_criteria", []):
-        # Persist the semantic plan with the recovered criterion before execution.
-        criterion["semantic_verifier_plan"] = _semantic_verifier_plan(criterion, project, root)
-        criterion["verifier_plan"] = _criterion_verifier_plan(criterion)
         method = str(criterion.get("verification_method", "") or "").strip()
-        semantic_plan = criterion["semantic_verifier_plan"]
+        semantic_plan = _semantic_verifier_plan(criterion, project, root)
         semantic_text = _semantic_acceptance_text(criterion)
         has_semantic_verifier = bool(
             semantic_plan.get("verifier_type") in SEMANTIC_ACCEPTANCE_VERIFIERS
@@ -4699,50 +4614,27 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
             )
         )
         unsupported_verifier = method not in ACCEPTANCE_VERIFIERS and not has_semantic_verifier
-        # Evidence created earlier in this live verification workflow may arrive in
-        # the in-memory history. Commit it before deciding whether another verifier
-        # execution is necessary; audits below still use only the reloaded ledger.
-        prior_evidence = _latest_direct_acceptance_evidence(criterion)
-        persisted, _persisted_reason = latest_valid_evidence(root, criterion)
-        if not unsupported_verifier and not persisted and prior_evidence:
-            append_evidence_record(project, criterion, prior_evidence, root)
-            persisted, _persisted_reason = latest_valid_evidence(root, criterion)
-
-        if persisted:
-            evidence = persisted.get("evidence", {})
-        elif not unsupported_verifier:
+        if not unsupported_verifier:
             evidence = verify_acceptance_criterion(criterion, project, root, qa_result, checks)
+            status = evidence.get("status", "not_verified")
+            criterion["status"] = status
+            record_acceptance_evidence(project, criterion.get("id", ""), criterion["status"], evidence)
         else:
             evidence = verify_acceptance_criterion(criterion, project, root, qa_result, checks)
-            evidence["status"] = "not_verified"
-
-        # A verifier result is never audit truth until it has been atomically committed
-        # and reloaded from the per-project ledger.
-        if not persisted:
-            record_acceptance_evidence(project, criterion.get("id", ""), evidence.get("status", "not_verified"), evidence)
-            append_evidence_record(project, criterion, evidence, root)
-            persisted, persisted_reason = latest_valid_evidence(root, criterion)
-        else:
-            # Keep the ephemeral per-audit history useful to callers while the
-            # persisted record remains the only acceptance source of truth.
-            record_acceptance_evidence(project, criterion.get("id", ""), persisted.get("status", "not_verified"), evidence)
-            persisted_reason = ""
-        if persisted:
-            criterion["status"] = str(persisted.get("status") or "not_verified")
-        else:
-            criterion["status"] = "not_verified"
-            evidence = dict(evidence)
-            evidence["failure_reason"] = f"Durable evidence reload failed: {persisted_reason}"
+            status = "not_verified"
+            record_acceptance_evidence(project, criterion.get("id", ""), status, evidence)
+            criterion["status"] = status
 
         if _is_mandatory_criterion(criterion):
             if unsupported_verifier:
                 criterion["status"] = "not_verified"
                 failed.append(criterion)
                 continue
-            if not persisted:
+            latest_evidence = _latest_direct_acceptance_evidence(criterion)
+            if not latest_evidence:
                 criterion["status"] = "not_verified"
             else:
-                latest_status = _evidence_status(persisted)
+                latest_status = _evidence_status(latest_evidence)
                 if latest_status in ("pass", "passed"):
                     criterion["status"] = "passed"
                 elif latest_status in ("fail", "failed"):
@@ -4869,21 +4761,13 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
         "checks": checks,
         "status": status,
         "legend": {"verified": "passed", "not_verified": "failed", "blocked_by_credentials": "blocked", "optional_limitation": "optional failed/non-critical"},
-        "audit_engine_version": 2,
     }
     project["final_delivery_report"] = report
-    persist_audit_run(project, root, report)
     return report
 
 
 def write_delivery_report(project: dict, root: str) -> str:
     report = project.get("final_delivery_report", {})
     path = os.path.join(root, "DELIVERY_REPORT.json")
-    atomic_write_json(path, report)
+    Path(path).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
-
-
-def run_final_delivery_audit_from_persisted_state(project_or_root: dict[str, Any] | str) -> dict[str, Any]:
-    """Replay persisted acceptance truth only; do not execute commands, browsers, or AI."""
-    root = project_or_root if isinstance(project_or_root, str) else str(project_or_root.get("target_path") or "")
-    return replay_final_audit(root)

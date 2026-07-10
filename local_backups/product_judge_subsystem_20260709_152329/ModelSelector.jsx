@@ -39,8 +39,6 @@ export default function ModelSelector({ activePort, onClose, addLog }) {
             provider: updatedFields.provider || currentAgent.provider,
             model: updatedFields.model || currentAgent.model,
             temperature: updatedFields.temperature !== undefined ? parseFloat(updatedFields.temperature) : currentAgent.temperature,
-            top_p: updatedFields.top_p !== undefined ? (updatedFields.top_p === '' ? null : parseFloat(updatedFields.top_p)) : currentAgent.top_p,
-            top_k: updatedFields.top_k !== undefined ? (updatedFields.top_k === '' ? null : parseInt(updatedFields.top_k, 10)) : currentAgent.top_k,
             enabled: updatedFields.enabled !== undefined ? updatedFields.enabled : currentAgent.enabled,
             custom_prompt: updatedFields.custom_prompt !== undefined ? updatedFields.custom_prompt : (currentAgent.custom_prompt || ''),
         };
@@ -144,11 +142,6 @@ export default function ModelSelector({ activePort, onClose, addLog }) {
                                         <option value="ollama">Ollama (Free Local)</option>
                                         <option value="openai">OpenAI (Paid)</option>
                                         <option value="anthropic">Claude by Anthropic (Paid)</option>
-                                        <option value="google">Google Gemini (Paid)</option>
-                                        <option value="groq">Groq</option>
-                                        <option value="mistral">Mistral</option>
-                                        <option value="deepseek">DeepSeek</option>
-                                        <option value="together">Together</option>
                                     </select>
                                 </div>
                                 <div>
@@ -238,19 +231,13 @@ function AgentCard({ id, agent, providerModels, onUpdate, onDelete }) {
                     <select
                         disabled={agent.use_global}
                         value={agent.use_global ? agent.active_provider : agent.provider}
-                        onChange={(e) => onUpdate(id, { provider: e.target.value, model: e.target.value ? providerModels[e.target.value][0] : '' })}
+                        onChange={(e) => onUpdate(id, { provider: e.target.value, model: providerModels[e.target.value][0] })}
                         className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-300 disabled:opacity-40"
                     >
-                        {id === 'product_judge' && <option value="">Auto-select independent provider</option>}
                         <option value="nvidia">NVIDIA (Free)</option>
                         <option value="ollama">Ollama (Free Local)</option>
                         <option value="openai">OpenAI (Paid)</option>
                         <option value="anthropic">Claude by Anthropic (Paid)</option>
-                        <option value="google">Google Gemini (Paid)</option>
-                        <option value="groq">Groq</option>
-                        <option value="mistral">Mistral</option>
-                        <option value="deepseek">DeepSeek</option>
-                        <option value="together">Together</option>
                     </select>
                 </div>
                 <div className="col-span-2">
@@ -265,31 +252,6 @@ function AgentCard({ id, agent, providerModels, onUpdate, onDelete }) {
                     />
                 </div>
             </div>
-
-            <div className="grid grid-cols-3 gap-3">
-                <div>
-                    <label className="block text-[10px] text-slate-500 uppercase font-semibold mb-1">Temperature</label>
-                    <input type="number" min="0" max="2" step="0.1" value={agent.temperature ?? 0.2}
-                        onChange={(e) => onUpdate(id, { temperature: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-300" />
-                </div>
-                <div>
-                    <label className="block text-[10px] text-slate-500 uppercase font-semibold mb-1">Top P</label>
-                    <input type="number" min="0" max="1" step="0.05" value={agent.top_p ?? ''}
-                        onChange={(e) => onUpdate(id, { top_p: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-300" />
-                </div>
-                <div>
-                    <label className="block text-[10px] text-slate-500 uppercase font-semibold mb-1">Top K</label>
-                    <input type="number" min="1" step="1" value={agent.top_k ?? ''}
-                        onChange={(e) => onUpdate(id, { top_k: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-300" />
-                </div>
-            </div>
-
-            {id === 'product_judge' && (
-                <p className="text-[10px] text-amber-300/80">Configure the provider connection in AI Settings or API Keys. Product Judge is read-only and prefers a different configured provider or model from Elena.</p>
-            )}
 
             <div>
                 <div className="flex justify-between items-center mb-1">

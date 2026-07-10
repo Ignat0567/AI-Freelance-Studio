@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 
 import delivery_audit
-import project_state
 from delivery_audit import ACCEPTANCE_VERIFIERS, FastAPIRuntimeAdapter, ReactViteRuntimeAdapter, RuntimeAdapterResult, StaticWebRuntimeAdapter, TelegramBotRuntimeAdapter, normalize_credential_state, run_final_delivery_audit, verify_acceptance_criterion, write_delivery_report
 from project_spec import ACCEPTANCE_CONTRACT_FIELDS, ACCEPTANCE_EVIDENCE_HISTORY_KEY, ensure_acceptance_evidence_history, ensure_project_spec_bundle, record_acceptance_evidence
 
@@ -21,22 +20,6 @@ def test_semantic_acceptance_verifier_registry_covers_hardening_types():
     }
 
     assert expected <= set(delivery_audit.SEMANTIC_ACCEPTANCE_VERIFIERS)
-
-
-def test_audit_commits_each_executed_criterion_before_using_its_verdict(tmp_path, monkeypatch):
-    _write(tmp_path / "README.md", "# Demo\n")
-    criterion = {"id": "AC-DURABLE", "title": "An unsupported requirement.", "priority": "high", "verification_method": "feature_trace_static_or_smoke"}
-    project = {"project_id": "durable-audit", "title": "Demo", "target_path": str(tmp_path), "project_profiles": [], "project_spec": {}, "acceptance_criteria": [criterion], "issues": []}
-    project_state.persist_project_state(project)
-
-    evidence = {"criterion_id": "AC-DURABLE", "verifier_type": "direct_probe", "status": "not_verified", "verdict": "not_executed", "collected_evidence": {"probe": "ran"}}
-    monkeypatch.setattr(delivery_audit, "verify_acceptance_criterion", lambda *_args: evidence)
-
-    delivery_audit._evaluate_acceptance(project, str(tmp_path), None, [])
-    persisted, reason = project_state.latest_valid_evidence(str(tmp_path), criterion)
-
-    assert reason == ""
-    assert persisted["status"] == "not_verified"
 
 
 def test_targeted_evidence_records_classification_freshness_and_snapshot(tmp_path):

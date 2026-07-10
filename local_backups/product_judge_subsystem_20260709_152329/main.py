@@ -22,7 +22,6 @@ from fastapi.responses import PlainTextResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import threading as _threading
-import project_state
 
 # OpenCode bridge (optional — for real AI-assisted code generation)
 try:
@@ -175,10 +174,14 @@ def save_studio_keys(data):
 
 def _load_projects_state():
     """Load persisted projects and tasks from disk on server start."""
-    state, error = project_state.read_json(PROJECTS_STATE_FILE)
-    if not state:
+    if not os.path.exists(PROJECTS_STATE_FILE):
         return {}, {}
-    return state.get("projects", {}), state.get("tasks", {})
+    try:
+        with open(PROJECTS_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        return state.get("projects", {}), state.get("tasks", {})
+    except Exception:
+        return {}, {}
 
 
 def _save_projects_state(preserve_missing: bool = True):
@@ -188,22 +191,12 @@ def _save_projects_state(preserve_missing: bool = True):
         tasks = PROJECT_TASKS
         if preserve_missing and os.path.exists(PROJECTS_STATE_FILE):
             persisted_projects, persisted_tasks = _load_projects_state()
-            authoritative_paths = {
-                os.path.normcase(os.path.abspath(str(project.get("target_path") or "")))
-                for project in active_projects.values() if project.get("target_path")
-            }
-            persisted_projects = {
-                project_id: project for project_id, project in persisted_projects.items()
-                if not project.get("target_path") or os.path.normcase(os.path.abspath(str(project.get("target_path")))) not in authoritative_paths
-            }
             projects = {**persisted_projects, **active_projects}
             tasks = {**persisted_tasks, **PROJECT_TASKS}
-        project_state.atomic_write_json(PROJECTS_STATE_FILE, {"projects": projects, "tasks": tasks})
-        for project in active_projects.values():
-            project_state.persist_project_state(project)
-    except Exception as exc:
-        for project in active_projects.values():
-            project.setdefault("persistence_errors", []).append(f"projects_state:{exc}")
+        with open(PROJECTS_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"projects": projects, "tasks": tasks}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 class KeysUpdatePayload(BaseModel):
@@ -281,57 +274,6 @@ PROJECT_TASKS: Dict[str, list] = {}  # project_id -> list of tasks
 _persisted_projects, _persisted_tasks = _load_projects_state()
 active_projects.update(_persisted_projects)
 PROJECT_TASKS.update(_persisted_tasks)
-
-
-def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
-    project = {
-        "project_id": state["project_id"],
-        "id": state["project_id"],
-        "title": state.get("project_name", "Untitled"),
-        "jobTitle": state.get("project_name", "Untitled"),
-        "target_path": state["project_path"],
-        "status": state.get("current_state", "created"),
-        "_phase": state.get("pipeline_stage", ""),
-        "project_spec": state.get("project_spec", {}),
-        "project_profiles": state.get("effective_project_profile", []),
-        "product_runtime_profile": state.get("product_runtime_profile", {}),
-        "acceptance_criteria": state.get("acceptance_criteria", []),
-        "acceptance_criteria_source": state.get("acceptance_criteria_source", "project_contract"),
-        "issues": state.get("issues", []),
-        "logs": ["[RECOVERY] Loaded authoritative per-project durable state."],
-        "recovery_status": state.get("recovery_status", "fully_recovered"),
-        **state.get("gates", {}),
-    }
-    ledger, _ = project_state.load_evidence_ledger(project["target_path"])
-    if ledger:
-        project["acceptance_evidence"] = {}
-        for criterion in project["acceptance_criteria"]:
-            history = ledger.get("history", {}).get(str(criterion.get("id") or ""), [])
-            evidence = [item.get("evidence", {}) for item in history]
-            criterion["evidence"] = evidence
-            project["acceptance_evidence"][criterion.get("id", "")] = evidence
-    return project
-
-
-def _discover_durable_projects() -> None:
-    generated_root = os.path.join(BASE_DIR, "generated_projects")
-    for discovered in project_state.discover_projects(generated_root):
-        if discovered.get("classification") != "fully_recovered":
-            continue
-        state = discovered.get("project") or {}
-        project_id = state.get("project_id")
-        durable_path = os.path.normcase(os.path.abspath(state.get("project_path", "")))
-        conflicting_ids = [
-            existing_id for existing_id, existing in active_projects.items()
-            if durable_path and os.path.normcase(os.path.abspath(str(existing.get("target_path") or ""))) == durable_path
-        ]
-        for existing_id in conflicting_ids:
-            active_projects.pop(existing_id, None)
-        if project_id:
-            active_projects[project_id] = _project_from_durable_state(state)
-
-
-_discover_durable_projects()
 
 
 class TaskModel(BaseModel):
@@ -812,7 +754,6 @@ AGENT_STAGE_METADATA = {
     "sentinel": {"stage": "review", "display_role": "Security Auditor"},
     "lupa": {"stage": "review", "display_role": "Code Reviewer"},
     "goldie": {"stage": "finance", "display_role": "Financial Advisor"},
-    "product_judge": {"stage": "product_judge", "display_role": "Independent Product Judge"},
 }
 
 PIPELINE_STAGE_METADATA = {
@@ -914,8 +855,6 @@ def _set_project_status(project: dict, new_state: str, *, reason: str = "", forc
 
     if save:
         _save_projects_state()
-    else:
-        project_state.persist_project_state(project)
     return True
 
 
@@ -924,7 +863,6 @@ def _reset_delivery_gates(project: dict):
     project["_qa_passed"] = False
     project["_final_audit_passed"] = False
     project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_generation_finished(project: dict, finished: bool):
@@ -933,7 +871,6 @@ def _mark_generation_finished(project: dict, finished: bool):
         project["_qa_passed"] = False
         project["_final_audit_passed"] = False
         project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_qa_passed(project: dict, passed: bool):
@@ -941,19 +878,16 @@ def _mark_qa_passed(project: dict, passed: bool):
     if not passed:
         project["_final_audit_passed"] = False
         project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_final_audit_passed(project: dict, passed: bool):
     project["_final_audit_passed"] = bool(passed)
     if not passed:
         project["_product_judge_passed"] = False
-    project_state.persist_project_state(project)
 
 
 def _mark_product_judge_passed(project: dict, passed: bool):
     project["_product_judge_passed"] = bool(passed)
-    project_state.persist_project_state(project)
 
 
 def _record_requirement_gap_assumptions(project: dict) -> list[dict]:
@@ -1159,27 +1093,30 @@ def _call_product_judge(bundle: dict, provider: str | None = None, model: str | 
 
 
 def _run_product_judge_stage(project: dict, qa_result: dict | None = None) -> tuple[bool, list[str]]:
-    results = project.get("product_judge_results", {})
-    results = results if isinstance(results, dict) else {}
-    subjective = [
-        criterion for criterion in project.get("acceptance_criteria", [])
-        if delivery_audit_module._semantic_verifier_plan(criterion, project, project.get("target_path", "")).get("verifier_type") == "product_ui_quality"
-    ]
-    verdicts = {criterion.get("id", ""): (results.get(criterion.get("id", ""), {}) or {}).get("verdict", "insufficient_evidence") for criterion in subjective}
+    bundle = build_product_judge_input(project, qa_result)
+    project["product_judge_input"] = bundle
+    try:
+        result = _call_product_judge(bundle)
+    except Exception as exc:
+        result = {"status": "invalid", "objections": [], "parse_error": str(exc)}
+    valid_objections = _valid_product_judge_objections(project, result.get("objections", []))
+    created_issues = _product_judge_objections_to_issues(project, valid_objections)
     report = {
-        "status": "passed" if all(verdict in ("approved", "approved_with_nonblocking_notes") for verdict in verdicts.values()) else "not_verified",
-        "criteria": verdicts,
-        "read_only": True,
+        "status": result.get("status", "invalid"),
+        "valid_objection_count": len(valid_objections),
+        "created_issue_ids": [issue.get("id") for issue in created_issues],
+        "parse_error": result.get("parse_error", ""),
     }
     project["product_judge_report"] = report
-    project.setdefault("logs", []).append(f"Product Judge evidence checked for {len(subjective)} subjective criterion/criteria.")
+    project.setdefault("logs", []).append(f"Product Judge completed: {len(valid_objections)} valid objection(s).")
+    if valid_objections:
+        return False, [f"{obj.get('criterion_id') or obj.get('requirement_id')}: {obj.get('title')}" for obj in valid_objections]
+    if result.get("status") != "pass":
+        return False, [result.get("parse_error") or "Product Judge did not return structured pass with zero valid objections"]
     qa_ok = bool((qa_result or {}).get("success"))
     audit_ok = project.get("final_delivery_report", {}).get("status") == "passed"
     if not qa_ok or not audit_ok:
         return False, ["Product Judge pass requires existing QA and final audit evidence"]
-    failed = [f"{criterion_id}: {verdict}" for criterion_id, verdict in verdicts.items() if verdict not in ("approved", "approved_with_nonblocking_notes")]
-    if failed:
-        return False, failed
     return True, []
 
 
@@ -1209,7 +1146,6 @@ DEFAULT_AGENTS = {
     "sentinel": {"name": "Sentinel", "role": "security", "emoji": "🛡️", "color": "#ef4444", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.1},
     "lupa": {"name": "Lupa", "role": "code_reviewer", "emoji": "🔍", "color": "#8b5cf6", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.1},
     "goldie": {"name": "Goldie", "role": "sales", "emoji": "💰", "color": "#f59e0b", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.2},
-    "product_judge": {"name": "Product Judge", "role": "product_judge", "emoji": "⚖", "color": "#f97316", "enabled": True, "builtin": True, "status": "idle", "provider": "", "model": "", "use_global": False, "temperature": 0.3, "top_p": 0.9, "top_k": None, "auto_select_independent": True},
 }
 
 _AI_SPEED_HINT = (
@@ -1388,46 +1324,6 @@ def save_agent_configs(configs: Dict[str, Dict[str, Any]]):
 
 agent_configs = load_agent_configs()
 
-
-def _configured_product_judge_runtime() -> dict[str, Any]:
-    """Resolve a read-only judge identity, preferring an independently configured vision model."""
-    cfg = {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
-    implementation_provider, implementation_model = get_agent_provider_model("elena")
-    provider = ""
-    model = ""
-    if cfg.get("use_global"):
-        provider = SYSTEM_SETTINGS["global_provider"]
-        model = SYSTEM_SETTINGS["global_model"]
-    elif cfg.get("provider") and cfg.get("model"):
-        provider = str(cfg["provider"])
-        model = str(cfg["model"])
-    elif cfg.get("auto_select_independent", True):
-        keys = load_studio_keys()
-        candidates = [
-            name for name in AI_PROVIDER_MODELS
-            if (name == "ollama" or bool(keys.get(_provider_key_name(name)) or keys.get(f"{name}_api_key")))
-            and ai_utils.provider_capabilities(name).get("image_input")
-        ]
-        provider = next((name for name in candidates if name != implementation_provider), "")
-        if not provider and implementation_provider in candidates:
-            provider = implementation_provider
-        if provider:
-            models = AI_PROVIDER_MODELS.get(provider, [])
-            model = next((item for item in models if provider != implementation_provider or item != implementation_model), models[0] if models else "")
-    return {
-        "enabled": bool(cfg.get("enabled", True)),
-        "provider": provider,
-        "model": model,
-        "temperature": cfg.get("temperature", 0.3),
-        "top_p": cfg.get("top_p", 0.9),
-        "top_k": cfg.get("top_k"),
-        "use_global": bool(cfg.get("use_global")),
-        "implementation_identity": {"agent_id": "elena", "provider": implementation_provider, "model": implementation_model},
-    }
-
-
-delivery_audit_module.configure_product_judge(lambda _project: _configured_product_judge_runtime())
-
 agent_statuses: Dict[str, Dict[str, str]] = {}
 
 
@@ -1460,8 +1356,6 @@ def get_agents():
         entry = {**agent, "id": agent_id}
         entry.update(AGENT_STAGE_METADATA.get(agent_id, {}))
         entry["enabled"] = cfg.get("enabled", agent.get("enabled", True))
-        entry["top_p"] = cfg.get("top_p", agent.get("top_p"))
-        entry["top_k"] = cfg.get("top_k", agent.get("top_k"))
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
         if cfg.get("save_path"):
@@ -1484,8 +1378,6 @@ def get_agents():
         entry.setdefault("stage", cagent.get("stage", "custom"))
         entry.setdefault("display_role", cagent.get("role", "Custom Agent"))
         entry["enabled"] = cfg.get("enabled", cagent.get("enabled", True))
-        entry["top_p"] = cfg.get("top_p", cagent.get("top_p"))
-        entry["top_k"] = cfg.get("top_k", cagent.get("top_k"))
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
         if cfg.get("save_path"):
@@ -1533,7 +1425,7 @@ def update_agent_config(agent_id: str, payload: Dict[str, Any]):
     if agent_id not in _all_agent_ids():
         raise HTTPException(status_code=404, detail="Agent not found")
     current = agent_configs.get(agent_id, {})
-    allowed_keys = ("provider", "model", "temperature", "top_p", "top_k", "use_global", "enabled", "custom_prompt", "save_path")
+    allowed_keys = ("provider", "model", "temperature", "use_global", "enabled", "custom_prompt", "save_path")
     for key in allowed_keys:
         if key in payload:
             current[key] = payload[key]
@@ -3689,53 +3581,9 @@ def _pipeline_codex_fix(project, generated_data, target_path, feedback):
     return generated_data
 
 
-def _repair_product_judge_objections(project: dict, target_path: str, project_id: str) -> bool:
-    """Route Product Judge issues through the existing snapshot-aware OpenCode repair path."""
-    issues = [issue for issue in project.get("issues", []) if isinstance(issue, dict) and issue.get("source") == "product_judge" and issue.get("status", "open") == "open"]
-    if not issues:
-        return False
-    attempts = int(project.get("_product_judge_repair_attempts", 0))
-    if attempts >= 2:
-        project.setdefault("logs", []).append("[PRODUCT JUDGE] Repair limit reached; blocking objection remains open.")
-        return False
-    project["_product_judge_repair_attempts"] = attempts + 1
-    project["_repair_active"] = True
-    _set_project_status(project, "repairing")
-    provider, model = get_agent_provider_model("codex")
-    engine = QAEngine(
-        project=project,
-        target_path=target_path,
-        project_id=project_id,
-        provider=provider,
-        model=model,
-        temperature=agent_configs.get("codex", {}).get("temperature", 0.2),
-        state_callback=lambda state, reason="": _set_project_status(project, state, reason=reason),
-    )
-    try:
-        repair = engine._request_opencode_fix(
-            issues,
-            json.dumps(issues, ensure_ascii=False),
-            {"source": "product_judge", "issues": issues, "required_followup": "Run full QA, fresh browser evidence, Product Judge, and final audit after a changed snapshot."},
-        )
-    finally:
-        project["_repair_active"] = False
-        for entry in engine.logs:
-            if entry not in project.setdefault("logs", []):
-                project["logs"].append(entry)
-    if not repair or not repair.get(qa_engine_module.OPENCODE_FIX_APPLIED):
-        project.setdefault("logs", []).append("[PRODUCT JUDGE] OpenCode did not produce a verified file change.")
-        return False
-    for issue in issues:
-        issue["status"] = "verification_pending"
-    project.setdefault("logs", []).append("[PRODUCT JUDGE] Repair changed files; restarting full QA before browser and judge re-verification.")
-    _run_qa_only(project_id, target_path)
-    return True
-
-
 def _run_final_delivery_audit(project: dict, target_path: str, project_id: str, qa_result: dict | None = None) -> tuple[bool, list[str]]:
     """Independent final completion gate and delivery report generation."""
     contract_ok, contract_errors = _project_contract_ready(project)
-    project["latest_qa_result"] = qa_result or {}
     report = run_final_delivery_audit(project, target_path, qa_result=qa_result or {})
     try:
         report_path = write_delivery_report(project, target_path)
@@ -3875,7 +3723,6 @@ def async_studio_production_pipeline(project_id: str):
                 _set_project_status(project, "cancelled", force=True, reason="before generation")
                 return
             os.makedirs(target_path, exist_ok=True)
-            project_state.persist_project_state(project, target_path)
 
             detected_type, _detected_tree = _detect_project_type((project.get("title", "") + "\n" + project.get("description", "")).lower())
             if detected_type in ("history_story", "landing_page", "telegram_bot"):
@@ -4025,7 +3872,6 @@ def async_studio_production_pipeline(project_id: str):
                                 f.write(content)
 
             project["target_path"] = target_path
-            project_state.persist_project_state(project, target_path)
 
             # Auto-fix syntax errors and requirements before review
             _post_process_code(target_path, lambda msg: project["logs"].append(msg), project.get("_project_type", "simple"))
@@ -4045,7 +3891,6 @@ def async_studio_production_pipeline(project_id: str):
                         except:
                             pass
             project["target_path"] = target_path
-            project_state.persist_project_state(project, target_path)
             _mark_generation_finished(project, bool(generated_data.get("files")))
 
         clear_agent_status("codex")
@@ -4225,8 +4070,6 @@ def async_studio_production_pipeline(project_id: str):
                 else:
                     _mark_final_audit_passed(project, False)
                     project["final_audit_errors"] = final_errors
-                    if _repair_product_judge_objections(project, target_path, project_id):
-                        return
                     _set_project_status(project, "failed_qa", reason="final audit failed")
                     project["logs"].append("Final delivery audit failed. Project is not completed.")
             elif qa_result.get("needs_credentials"):
@@ -4251,7 +4094,7 @@ def async_studio_production_pipeline(project_id: str):
         else:
             project["logs"].append("[Resume] Phase 6 (QA) skipped — already completed")
     finally:
-        for aid in ["alex", "maya", "elena", "bugcatcher", "codex", "goldie", "sentinel", "lupa", "product_judge"]:
+        for aid in ["alex", "maya", "elena", "bugcatcher", "codex", "goldie", "sentinel", "lupa"]:
             clear_agent_status(aid)
         if _HAS_OPENCODE:
             try:
@@ -4351,8 +4194,6 @@ def _run_qa_only(project_id: str, target_path: str):
         else:
             _mark_final_audit_passed(project, False)
             project["final_audit_errors"] = final_errors
-            if _repair_product_judge_objections(project, target_path, project_id):
-                return
             _set_project_status(project, "failed_qa", reason="final audit failed")
             project["logs"].append("❌ Retry passed QA but failed final audit.")
     elif qa_result.get("needs_credentials"):

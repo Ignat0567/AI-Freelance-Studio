@@ -14,19 +14,6 @@ PROVIDERS_URLS = {
     "mistral": "https://api.mistral.ai/v1",
 }
 
-# Sampling support is explicitly filtered per transport instead of sending
-# provider-specific fields to every model request.
-PROVIDER_CAPABILITIES = {
-    "openai": {"top_p": True, "top_k": False, "image_input": True},
-    "anthropic": {"top_p": True, "top_k": False, "image_input": True},
-    "nvidia": {"top_p": True, "top_k": True, "image_input": False},
-    "groq": {"top_p": True, "top_k": False, "image_input": False},
-    "mistral": {"top_p": True, "top_k": False, "image_input": False},
-    "deepseek": {"top_p": True, "top_k": False, "image_input": False},
-    "together": {"top_p": True, "top_k": True, "image_input": False},
-    "ollama": {"top_p": True, "top_k": True, "image_input": False},
-}
-
 _AI_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_ai_worker.py")
 _ANTHROPIC_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_anthropic_worker.py")
 
@@ -49,10 +36,6 @@ def get_api_key(provider: str) -> str:
     return key or ""
 
 
-def provider_capabilities(provider: str) -> dict:
-    return dict(PROVIDER_CAPABILITIES.get(provider.lower(), {"top_p": False, "top_k": False, "image_input": False}))
-
-
 def ask_studio_ai_with_history(
     provider: str,
     model_name: str,
@@ -60,8 +43,6 @@ def ask_studio_ai_with_history(
     chat_history: list,
     temperature: float = 0.2,
     max_tokens: int = 2048,
-    top_p: float | None = None,
-    top_k: int | None = None,
 ) -> str:
     try:
         provider_lower = provider.lower()
@@ -72,20 +53,15 @@ def ask_studio_ai_with_history(
         last_user_msg = ""
         for m in reversed(chat_history):
             if m.get("role") == "user":
-                content = m.get("content", "")
-                if isinstance(content, str):
-                    last_user_msg = content
-                elif isinstance(content, list):
-                    last_user_msg = " ".join(str(item.get("text", "")) for item in content if isinstance(item, dict))
+                last_user_msg = m.get("content", "")
                 break
         if last_user_msg:
             cyrillic_chars = sum(1 for c in last_user_msg if '\u0400' <= c <= '\u04ff')
             if cyrillic_chars > len(last_user_msg) * 0.1:
                 lang_hint = "\nIMPORTANT: The user writes in Russian. You MUST respond entirely in Russian language."
 
-        capabilities = provider_capabilities(provider_lower)
         if provider_lower == "anthropic":
-            return _ask_anthropic(base_url, api_key, model_name, system_prompt + lang_hint, chat_history, temperature, max_tokens, top_p if capabilities["top_p"] else None)
+            return _ask_anthropic(base_url, api_key, model_name, system_prompt + lang_hint, chat_history, temperature, max_tokens)
 
         url = f"{base_url}/chat/completions"
         messages = [{"role": "system", "content": system_prompt + lang_hint}]
@@ -97,10 +73,6 @@ def ask_studio_ai_with_history(
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if top_p is not None and capabilities["top_p"]:
-            payload["top_p"] = top_p
-        if top_k is not None and capabilities["top_k"]:
-            payload["top_k"] = top_k
 
         payload_json = json.dumps(payload)
 
@@ -142,7 +114,7 @@ def ask_studio_ai_with_history(
         return f"AI response error: {str(e)[:100]}. Please try again later."
 
 
-def _ask_anthropic(base_url, api_key, model_name, system_text, chat_history, temperature, max_tokens, top_p=None):
+def _ask_anthropic(base_url, api_key, model_name, system_text, chat_history, temperature, max_tokens):
     """Convert OpenAI-format request to Anthropic Messages API and call via _anthropic_worker."""
     url = f"{base_url}/messages"
 
@@ -169,8 +141,6 @@ def _ask_anthropic(base_url, api_key, model_name, system_text, chat_history, tem
         "messages": anthropic_messages,
         "temperature": temperature,
     }
-    if top_p is not None:
-        payload["top_p"] = top_p
 
     payload_json = json.dumps(payload)
 

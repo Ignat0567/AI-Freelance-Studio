@@ -8,7 +8,6 @@ import traceback
 import hashlib
 from ai_utils import ask_studio_ai_with_history
 from project_spec import Issue, detect_project_profiles
-from project_state import persist_project_state
 
 MAX_ROUNDS = 4
 MAX_REPAIR_ATTEMPTS = 3
@@ -894,8 +893,6 @@ asyncio.run(main())
             issues.append(issue)
             by_fingerprint[fingerprint] = issue
             updated.append(issue)
-        if updated:
-            persist_project_state(self.project, self.target_path)
         return updated
 
     def _close_fixed_qa_issues(self, comparison):
@@ -922,8 +919,6 @@ asyncio.run(main())
             issue["status"] = "closed"
             issue["attempts"] = len(evidence.get("repair_history", []))
             closed.append(issue)
-        if closed:
-            persist_project_state(self.project, self.target_path)
         return closed
 
     def _compare_rounds(self, round_num, current_failures, check_status):
