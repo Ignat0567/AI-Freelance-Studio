@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ai_utils import ask_studio_ai_with_history, provider_capabilities
-from opencode_provider import OpenCodeBridgeConnection, bridge_effective_capabilities
-from project_state import project_snapshot_fingerprint
 
 
 PRODUCT_JUDGE_VERDICTS = {
@@ -269,40 +267,21 @@ def run_product_judge(
         return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "Product Judge is disabled"}
     if not bundle:
         return {**result, "verdict": "insufficient_evidence", "availability": "insufficient_evidence", "findings": [], "blocking_findings": [], "reason": reason}
-    if provider == "opencode_bridge":
-        connection_data = config.get("connection") if isinstance(config.get("connection"), dict) else {}
-        connection = OpenCodeBridgeConnection.from_dict(connection_data)
-        if not model or not bridge_effective_capabilities(connection).get("image_input"):
-            return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "This OpenCode connection works for text but cannot currently transport images required by Product Judge"}
-        project_path = str(project.get("target_path") or project.get("project_path") or "")
-        before = project_snapshot_fingerprint(project_path) if project_path and os.path.isdir(project_path) else snapshot_fingerprint
-        response = connection.execute({
-            "agent_role": "product_judge", "system_instruction": "",
-            "user_content": _prompt(bundle), "image_attachments": [item["artifact_path"] for item in bundle["screenshot_artifacts"]],
-            "requested_model": model, "timeout": int(config.get("timeout", 180)), "session_id": "fresh-product-judge-session",
-        })
-        after = project_snapshot_fingerprint(project_path) if project_path and os.path.isdir(project_path) else snapshot_fingerprint
-        if before != after:
-            return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "Product Judge source-integrity check failed"}
-        if response.get("status") != "success":
-            return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": f"Product Judge request failed: {response.get('error_category', 'unknown')}"}
-        raw = response.get("text", "")
-    elif not provider_capabilities(provider).get("image_input") or not model:
+    if not provider_capabilities(provider).get("image_input") or not model:
         return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "Configured provider/model does not have a supported image-input transport"}
-    else:
-        try:
-            raw = invoke(
-                provider=provider,
-                model_name=model,
-                system_prompt="Independent Product Judge. Read-only. Return only the validated JSON structure.",
-                chat_history=_image_message(provider, _prompt(bundle), bundle["screenshot_artifacts"]),
-                temperature=float(config.get("temperature", 0.3)),
-                top_p=config.get("top_p"),
-                top_k=config.get("top_k"),
-                max_tokens=3000,
-            )
-        except Exception as exc:
-            return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": f"Product Judge request failed: {str(exc)[:300]}"}
+    try:
+        raw = invoke(
+            provider=provider,
+            model_name=model,
+            system_prompt="Independent Product Judge. Read-only. Return only the validated JSON structure.",
+            chat_history=_image_message(provider, _prompt(bundle), bundle["screenshot_artifacts"]),
+            temperature=float(config.get("temperature", 0.3)),
+            top_p=config.get("top_p"),
+            top_k=config.get("top_k"),
+            max_tokens=3000,
+        )
+    except Exception as exc:
+        return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": f"Product Judge request failed: {str(exc)[:300]}"}
     validated, error = validate_judge_response(raw)
     if not validated:
         return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": error}

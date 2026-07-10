@@ -65,23 +65,6 @@ def ask_studio_ai_with_history(
 ) -> str:
     try:
         provider_lower = provider.lower()
-        if provider_lower == "opencode_bridge":
-            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio_config.json")
-            connections = []
-            try:
-                with open(config_path, "r", encoding="utf-8") as source:
-                    connections = json.load(source).get("_provider_connections", [])
-            except (OSError, ValueError, AttributeError):
-                pass
-            connection_data = next((item for item in connections if isinstance(item, dict) and item.get("connection_type") == "opencode_bridge" and item.get("enabled", True) and (not model_name or item.get("configured_model") == model_name)), None)
-            if not connection_data:
-                return "OpenCode bridge is not configured for this model. Add and test a local OpenCode connection in AI Providers."
-            from opencode_provider import OpenCodeBridgeConnection
-            text = "\n".join(str(message.get("content", "")) for message in chat_history if message.get("role") == "user")
-            response = OpenCodeBridgeConnection.from_dict(connection_data).execute({"system_instruction": system_prompt, "user_content": text, "requested_model": model_name, "timeout": 300})
-            if response.get("status") == "success":
-                return response.get("text", "")
-            return f"OpenCode bridge error: {response.get('error_category', 'request_failed')}"
         base_url = PROVIDERS_URLS.get(provider_lower, PROVIDERS_URLS["nvidia"])
         api_key = get_api_key(provider)
 

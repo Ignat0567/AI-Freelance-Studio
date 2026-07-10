@@ -23,7 +23,6 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import threading as _threading
 import project_state
-from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
 
 # OpenCode bridge (optional — for real AI-assisted code generation)
 try:
@@ -221,15 +220,6 @@ class AISettingsPayload(BaseModel):
 class ProviderTestPayload(BaseModel):
     provider: str = ""
     api_key: str = ""
-
-
-class OpenCodeConnectionPayload(BaseModel):
-    name: str = "My OpenCode"
-    configured_model: str = ""
-    transport_type: str = "cli"
-    local_endpoint: str = ""
-    executable_path: str = ""
-    enabled: bool = True
 
 
 class OpenCodeLoginPayload(BaseModel):
@@ -514,58 +504,12 @@ def _ai_settings_response(data: dict | None = None) -> dict:
         "providers": AI_PROVIDER_MODELS,
         "saved_keys": saved,
         "opencode_available": _HAS_OPENCODE,
-        "connection_providers": PROVIDER_REGISTRY,
     }
 
 
 @app.get("/api/config/ai")
 def get_ai_settings():
     return _ai_settings_response()
-
-
-def _load_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
-    source = data if data is not None else load_studio_keys()
-    connections = source.get("_provider_connections", [])
-    return [item for item in connections if isinstance(item, dict)] if isinstance(connections, list) else []
-
-
-@app.get("/api/provider-connections")
-def list_provider_connections():
-    """Connection settings intentionally exclude OpenCode credentials and browser state."""
-    return {"providers": PROVIDER_REGISTRY, "connections": _load_provider_connections()}
-
-
-@app.post("/api/provider-connections/opencode")
-def save_opencode_connection(payload: OpenCodeConnectionPayload):
-    if payload.transport_type not in {"auto", "cli", "local_service"}:
-        raise HTTPException(400, "Unsupported OpenCode transport")
-    connection = OpenCodeBridgeConnection(
-        connection_id=f"opencode-{uuid.uuid4().hex[:12]}", name=payload.name.strip() or "My OpenCode",
-        configured_model=payload.configured_model.strip(), enabled=payload.enabled,
-        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
-        local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
-    )
-    data = load_studio_keys()
-    connections = _load_provider_connections(data)
-    connections.append(connection.to_dict())
-    data["_provider_connections"] = connections
-    save_studio_keys(data)
-    return {"status": "saved", "connection": connection.to_dict(), "message": "OpenCode authentication remains owned by OpenCode; no token was requested or stored."}
-
-
-@app.post("/api/provider-connections/{connection_id}/test")
-def test_provider_connection(connection_id: str):
-    data = load_studio_keys()
-    connections = _load_provider_connections(data)
-    index = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection_id), None)
-    if index is None:
-        raise HTTPException(404, "Provider connection not found")
-    connection = OpenCodeBridgeConnection.from_dict(connections[index])
-    result = connection.test_connection()
-    connections[index] = connection.to_dict()
-    data["_provider_connections"] = connections
-    save_studio_keys(data)
-    return {"status": "ok" if result["health_status"] == "available_authenticated" else "error", "connection": connections[index], **result}
 
 
 @app.post("/api/config/ai")
@@ -1451,13 +1395,7 @@ def _configured_product_judge_runtime() -> dict[str, Any]:
     implementation_provider, implementation_model = get_agent_provider_model("elena")
     provider = ""
     model = ""
-    connection = {}
-    if str(cfg.get("provider") or "") == "opencode_bridge":
-        connection_id = str(cfg.get("connection_id") or "")
-        connection = next((item for item in _load_provider_connections() if item.get("connection_id") == connection_id and item.get("connection_type") == "opencode_bridge"), {})
-        provider = "opencode_bridge" if connection else ""
-        model = str(cfg.get("model") or connection.get("configured_model") or "")
-    elif cfg.get("use_global"):
+    if cfg.get("use_global"):
         provider = SYSTEM_SETTINGS["global_provider"]
         model = SYSTEM_SETTINGS["global_model"]
     elif cfg.get("provider") and cfg.get("model"):
@@ -1483,9 +1421,6 @@ def _configured_product_judge_runtime() -> dict[str, Any]:
         "temperature": cfg.get("temperature", 0.3),
         "top_p": cfg.get("top_p", 0.9),
         "top_k": cfg.get("top_k"),
-        "connection": connection,
-        "connection_id": connection.get("connection_id", ""),
-        "effective_image_input": bridge_effective_capabilities(OpenCodeBridgeConnection.from_dict(connection)).get("image_input", False) if connection else False,
         "use_global": bool(cfg.get("use_global")),
         "implementation_identity": {"agent_id": "elena", "provider": implementation_provider, "model": implementation_model},
     }
