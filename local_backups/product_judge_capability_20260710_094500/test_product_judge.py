@@ -90,15 +90,6 @@ def test_unavailable_malformed_or_missing_screenshots_do_not_pass(tmp_path):
     assert product_judge.combined_subjective_verdict(True, malformed["verdict"]) == "not_verified"
 
 
-def test_image_input_capability_is_required(tmp_path, monkeypatch):
-    monkeypatch.setattr(product_judge, "provider_capabilities", lambda _provider: {"image_input": False})
-
-    result, *_ = _run(tmp_path)
-
-    assert result["verdict"] == "insufficient_evidence"
-    assert result["availability"] == "unavailable"
-
-
 def test_judge_result_is_bound_to_exact_artifacts_criterion_and_snapshot(tmp_path):
     result, _project, criterion, objective, screenshots = _run(tmp_path)
     fingerprint = product_judge.evidence_fingerprint(objective)

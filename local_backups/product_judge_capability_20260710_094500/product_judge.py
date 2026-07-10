@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from ai_utils import ask_studio_ai_with_history, provider_capabilities
+from ai_utils import ask_studio_ai_with_history
 
 
 PRODUCT_JUDGE_VERDICTS = {
@@ -22,6 +22,7 @@ PRODUCT_JUDGE_VERDICTS = {
     "insufficient_evidence",
 }
 FINDING_SEVERITIES = {"info", "minor", "major", "critical"}
+IMAGE_CAPABLE_PROVIDERS = {"openai", "anthropic"}
 SECRET_VALUE_RE = re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*[^\s'\"]+|\bsk-[A-Za-z0-9_-]{16,}\b|\b\d{7,}:[A-Za-z0-9_-]{20,}\b")
 
 
@@ -267,7 +268,7 @@ def run_product_judge(
         return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "Product Judge is disabled"}
     if not bundle:
         return {**result, "verdict": "insufficient_evidence", "availability": "insufficient_evidence", "findings": [], "blocking_findings": [], "reason": reason}
-    if not provider_capabilities(provider).get("image_input") or not model:
+    if provider not in IMAGE_CAPABLE_PROVIDERS or not model:
         return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "Configured provider/model does not have a supported image-input transport"}
     try:
         raw = invoke(

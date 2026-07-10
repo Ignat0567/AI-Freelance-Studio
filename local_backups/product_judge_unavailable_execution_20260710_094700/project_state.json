@@ -1,0 +1,1110 @@
+{
+  "acceptance_criteria": [
+    {
+      "id": "AC-001",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-001",
+        "expected_outcomes": [
+          "delivery documentation is complete"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "inspect README",
+          "validate documented commands"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "delivery_documentation_validation",
+        "target_entity": "documentation",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "documentation_validation"
+      },
+      "status": "passed",
+      "title": "Project has delivery documentation",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-001",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-002",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-002",
+        "expected_outcomes": [
+          "no blocking placeholder markers"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "scan source files"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "placeholder_implementation_scan",
+        "target_entity": "source",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "static_scan"
+      },
+      "status": "passed",
+      "title": "Project has no placeholder implementation",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-002",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-003",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-003",
+        "expected_outcomes": [
+          "stable identity",
+          "status persisted"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "create",
+          "read",
+          "change_status",
+          "read"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "track_record_lifecycle",
+        "target_entity": "request",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "lifecycle_tracking"
+      },
+      "status": "passed",
+      "title": "The web application supports client request tracking.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-003",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-004",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-004",
+        "expected_outcomes": [
+          "real browser page loads",
+          "interaction reachable"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "browser_runtime_usability",
+        "target_entity": "primary_ui",
+        "ui_hints": [
+          "primary page",
+          "primary action"
+        ],
+        "unsupported_reason": "",
+        "verifier_type": "browser_usability"
+      },
+      "status": "passed",
+      "title": "The application is usable through a browser.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-004",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-005",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.0,
+        "criterion_id": "AC-005",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "unknown",
+        "target_entity": "",
+        "ui_hints": [],
+        "unsupported_reason": "No semantic verifier matched the criterion text and project profile",
+        "verifier_type": "manual_or_unsupported"
+      },
+      "status": "passed",
+      "title": "User can create a new client request.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create request",
+          "read or list request"
+        ],
+        "assertions": [
+          "create succeeds",
+          "created identifier or marker is observable after create"
+        ],
+        "criterion_id": "AC-005",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "created record can be retrieved or appears in the collection response"
+        ],
+        "required_fixtures": [
+          "request payload with a unique client or request identifier"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "id": "AC-006",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-006",
+        "expected_outcomes": [
+          "field values match"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "create",
+          "read"
+        ],
+        "required_fields": [
+          "client_name",
+          "contact",
+          "company",
+          "description",
+          "priority",
+          "status"
+        ],
+        "route_hints": [],
+        "semantic_intent": "required_fields_survive_create_read",
+        "target_entity": "request",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "required_fields_roundtrip"
+      },
+      "status": "passed",
+      "title": "Client request records store all required fields.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-006",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-007",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-007",
+        "expected_outcomes": [],
+        "expected_values": [
+          "новая",
+          "в работе",
+          "ожидает клиента",
+          "выполнена",
+          "закрыта"
+        ],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "read metadata",
+          "create",
+          "transition",
+          "read"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "workflow_status_set_and_transitions",
+        "target_entity": "request",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "workflow_statuses"
+      },
+      "status": "passed",
+      "title": "Request statuses include the requested workflow states.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-007",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-008",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.0,
+        "criterion_id": "AC-008",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "unknown",
+        "target_entity": "",
+        "ui_hints": [],
+        "unsupported_reason": "No semantic verifier matched the criterion text and project profile",
+        "verifier_type": "manual_or_unsupported"
+      },
+      "status": "passed",
+      "title": "After creation, the new request appears in the common request list.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create request",
+          "list requests"
+        ],
+        "assertions": [
+          "create succeeds",
+          "created identifier appears in list"
+        ],
+        "criterion_id": "AC-008",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "create response reports success and returns or preserves the created identifier",
+          "list response contains the created request"
+        ],
+        "required_fixtures": [
+          "request payload with a unique client or request identifier"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "id": "AC-009",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.0,
+        "criterion_id": "AC-009",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "unknown",
+        "target_entity": "",
+        "ui_hints": [],
+        "unsupported_reason": "No semantic verifier matched the criterion text and project profile",
+        "verifier_type": "manual_or_unsupported"
+      },
+      "status": "passed",
+      "title": "User can open an existing request and update its data.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create or seed request",
+          "update request",
+          "fetch or list request"
+        ],
+        "assertions": [
+          "update succeeds",
+          "updated fields or status are observable after update"
+        ],
+        "criterion_id": "AC-009",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "read response contains the changed values for the same request identifier"
+        ],
+        "required_fixtures": [
+          "existing request record",
+          "updated request values"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "id": "AC-010",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-010",
+        "expected_outcomes": [
+          "exact counts"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "create fixtures",
+          "read metrics"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "dashboard_counts_match_fixtures",
+        "target_entity": "dashboard",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "dashboard_metrics"
+      },
+      "status": "passed",
+      "title": "The home page displays current request summary counts.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "request target URL once"
+        ],
+        "assertions": [
+          "response status is successful",
+          "response exposes the expected content"
+        ],
+        "criterion_id": "AC-010",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "single HTTP response contains the expected status and content"
+        ],
+        "required_fixtures": [
+          "target URL or route",
+          "expected response status and response content"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_single"
+      }
+    },
+    {
+      "id": "AC-011",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.0,
+        "criterion_id": "AC-011",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "unknown",
+        "target_entity": "",
+        "ui_hints": [],
+        "unsupported_reason": "No semantic verifier matched the criterion text and project profile",
+        "verifier_type": "manual_or_unsupported"
+      },
+      "status": "passed",
+      "title": "User can search requests by client, contact, or request text.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create target request",
+          "create control request",
+          "search requests"
+        ],
+        "assertions": [
+          "search succeeds",
+          "target record appears",
+          "control record is excluded"
+        ],
+        "criterion_id": "AC-011",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "search response contains only records matching the search term"
+        ],
+        "required_fixtures": [
+          "two request records with distinct searchable values"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "id": "AC-012",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-012",
+        "expected_outcomes": [
+          "target inclusion",
+          "control exclusion"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "create distinguishable records",
+          "apply filters"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "status_priority_filtering",
+        "target_entity": "request",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "filter_behavior"
+      },
+      "status": "passed",
+      "title": "User can filter requests by status and priority.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create target request",
+          "create control request",
+          "filter requests"
+        ],
+        "assertions": [
+          "filter succeeds",
+          "target record appears",
+          "control record is excluded"
+        ],
+        "criterion_id": "AC-012",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "filtered response contains only records matching the requested field value"
+        ],
+        "required_fixtures": [
+          "two request records with distinct filter values"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "id": "AC-013",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-013",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "objective_ui_quality_and_judge",
+        "target_entity": "primary_ui",
+        "ui_hints": [
+          "visual hierarchy",
+          "spacing",
+          "readability"
+        ],
+        "unsupported_reason": "",
+        "verifier_type": "product_ui_quality"
+      },
+      "status": "not_verified",
+      "title": "The interface uses a modern, tidy visual design.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-013",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-014",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-014",
+        "expected_outcomes": [
+          "no catastrophic overflow",
+          "controls reachable"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "desktop_tablet_usability",
+        "target_entity": "primary_ui",
+        "ui_hints": [
+          "1440x900",
+          "768x1024"
+        ],
+        "unsupported_reason": "",
+        "verifier_type": "responsive_ui"
+      },
+      "status": "passed",
+      "title": "The application layout remains usable on desktop and tablet viewport sizes.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "render core screen at desktop width",
+          "render core screen at tablet width"
+        ],
+        "assertions": [
+          "required controls remain visible",
+          "primary workflow remains usable without hidden required actions"
+        ],
+        "criterion_id": "AC-014",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "desktop and tablet captures expose the required controls and content"
+        ],
+        "required_fixtures": [
+          "desktop viewport size",
+          "tablet viewport size",
+          "core screen route or page"
+        ],
+        "setup": [
+          "start application",
+          "open the primary user interface"
+        ],
+        "verifier_type": "responsive_ui"
+      }
+    },
+    {
+      "id": "AC-015",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-015",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "inspect routes",
+          "inspect auth model",
+          "read admin metadata"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "single_local_admin_without_complex_users",
+        "target_entity": "admin",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "admin_scope"
+      },
+      "status": "passed",
+      "title": "A single local administrator can use the application without a complex user system.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-015",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-016",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.0,
+        "criterion_id": "AC-016",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "unknown",
+        "target_entity": "",
+        "ui_hints": [],
+        "unsupported_reason": "No semantic verifier matched the criterion text and project profile",
+        "verifier_type": "manual_or_unsupported"
+      },
+      "status": "passed",
+      "title": "Application data persists after restart.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create record",
+          "stop application",
+          "restart application",
+          "retrieve or list records"
+        ],
+        "assertions": [
+          "record exists before restart",
+          "same record is observable after restart"
+        ],
+        "criterion_id": "AC-016",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "post-restart read response contains the pre-restart identifier and data"
+        ],
+        "required_fixtures": [
+          "request or record payload with a unique identifier",
+          "documented restart command or runtime adapter"
+        ],
+        "setup": [
+          "start application with persistent storage"
+        ],
+        "verifier_type": "persistence_restart"
+      }
+    },
+    {
+      "id": "AC-017",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.0,
+        "criterion_id": "AC-017",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "unknown",
+        "target_entity": "",
+        "ui_hints": [],
+        "unsupported_reason": "No semantic verifier matched the criterion text and project profile",
+        "verifier_type": "manual_or_unsupported"
+      },
+      "status": "passed",
+      "title": "The application starts successfully with the documented run command.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "start application",
+          "probe observable endpoint or page",
+          "stop owned process"
+        ],
+        "assertions": [
+          "process starts",
+          "observable endpoint or page responds",
+          "owned process stops cleanly"
+        ],
+        "criterion_id": "AC-017",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "runtime probe returns a successful response before shutdown"
+        ],
+        "required_fixtures": [
+          "documented run command",
+          "expected local port, health endpoint, or landing page"
+        ],
+        "setup": [
+          "prepare documented runtime command"
+        ],
+        "verifier_type": "runtime_start"
+      }
+    },
+    {
+      "id": "AC-018",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-018",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "primary_controls_trigger_observable_behavior",
+        "target_entity": "primary_ui",
+        "ui_hints": [
+          "create",
+          "open",
+          "update",
+          "delete",
+          "filter"
+        ],
+        "unsupported_reason": "",
+        "verifier_type": "primary_ui_actions"
+      },
+      "status": "passed",
+      "title": "Primary interface buttons perform their intended actions.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-018",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-019",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-019",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "inspect tests",
+          "run tests"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "tests_cover_main_behaviors",
+        "target_entity": "tests",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "behavior_test_coverage"
+      },
+      "status": "passed",
+      "title": "Automated tests cover the main application functions.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "run configured command"
+        ],
+        "assertions": [
+          "command exits with the expected code",
+          "command output contains no blocking error"
+        ],
+        "criterion_id": "AC-019",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "captured exit code and output match the command expectation"
+        ],
+        "required_fixtures": [
+          "deterministic command",
+          "expected exit code"
+        ],
+        "setup": [
+          "prepare project dependencies required by the command"
+        ],
+        "verifier_type": "command"
+      }
+    },
+    {
+      "id": "AC-020",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-020",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "inspect README",
+          "execute safe install command"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "windows_install_run_docs",
+        "target_entity": "documentation",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "documentation_validation"
+      },
+      "status": "passed",
+      "title": "Windows installation and run instructions are documented.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-020",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-021",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-021",
+        "expected_outcomes": [],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "inspect dependencies",
+          "inspect infrastructure"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "simple_local_maintainable_stack",
+        "target_entity": "architecture",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "architecture_simplicity"
+      },
+      "status": "passed",
+      "title": "The selected technology stack remains simple for local startup and future maintenance.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-021",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-022",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-022",
+        "expected_outcomes": [
+          "module imports without exception"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "import FastAPI application module"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "fastapi_application_import",
+        "target_entity": "runtime",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "python_import"
+      },
+      "status": "passed",
+      "title": "FastAPI application imports",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-022",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "id": "AC-023",
+      "priority": "high",
+      "semantic_verifier_plan": {
+        "confidence": 0.9,
+        "criterion_id": "AC-023",
+        "expected_outcomes": [
+          "runtime is ready and stops cleanly"
+        ],
+        "expected_values": [],
+        "project_profile": [
+          "REST_API",
+          "fastapi",
+          "python_application"
+        ],
+        "required_actions": [
+          "start runtime",
+          "probe endpoint",
+          "stop process"
+        ],
+        "required_fields": [],
+        "route_hints": [],
+        "semantic_intent": "fastapi_runtime_start",
+        "target_entity": "runtime",
+        "ui_hints": [],
+        "unsupported_reason": "",
+        "verifier_type": "runtime_start"
+      },
+      "status": "passed",
+      "title": "FastAPI runtime starts",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-023",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    }
+  ],
+  "acceptance_criteria_source": "legacy_delivery_report_definitions",
+  "created_at": "2026-07-10T00:39:10Z",
+  "current_state": "created",
+  "effective_project_profile": [
+    "fastapi",
+    "REST_API",
+    "python_application"
+  ],
+  "gates": {
+    "_final_audit_passed": false,
+    "_generation_finished": false,
+    "_product_judge_passed": false,
+    "_qa_passed": true
+  },
+  "issues": [],
+  "latest_delivery_report_path": "generated_projects\\\\test-project\\DELIVERY_REPORT.json",
+  "latest_evidence_snapshot": "4c2287bf1d822c55bf3cd7843c327a5fd6f44149e3723d9fb06eac51c5197037",
+  "latest_final_audit_status": "failed",
+  "latest_project_snapshot": "4c2287bf1d822c55bf3cd7843c327a5fd6f44149e3723d9fb06eac51c5197037",
+  "pipeline_stage": "",
+  "product_runtime_profile": {},
+  "project_id": "legacy-32e7623fdfa69cc7",
+  "project_name": "Test-Project",
+  "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project",
+  "project_spec": {
+    "project_profiles": [
+      "fastapi",
+      "REST_API",
+      "python_application"
+    ],
+    "project_type": "fastapi"
+  },
+  "qa_summary": {
+    "command": "python -m pytest -q",
+    "errors": [],
+    "result": "12 passed in 1.12s",
+    "round_history": [],
+    "rounds_completed": 1,
+    "source": "fresh_generated_project_pytest",
+    "success": true,
+    "total_errors": 0
+  },
+  "recovery_status": "legacy_project",
+  "revision": 56,
+  "schema_version": 1,
+  "updated_at": "2026-07-10T09:18:36Z"
+}

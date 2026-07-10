@@ -1,0 +1,420 @@
+{
+  "acceptance_criteria_summary": [
+    {
+      "id": "AC-001",
+      "priority": "high",
+      "status": "passed",
+      "title": "Project has delivery documentation"
+    },
+    {
+      "id": "AC-002",
+      "priority": "high",
+      "status": "passed",
+      "title": "Project has no placeholder implementation"
+    },
+    {
+      "id": "AC-003",
+      "priority": "high",
+      "status": "passed",
+      "title": "The web application supports client request tracking."
+    },
+    {
+      "id": "AC-004",
+      "priority": "high",
+      "status": "passed",
+      "title": "The application is usable through a browser."
+    },
+    {
+      "id": "AC-005",
+      "priority": "high",
+      "status": "passed",
+      "title": "User can create a new client request."
+    },
+    {
+      "id": "AC-006",
+      "priority": "high",
+      "status": "passed",
+      "title": "Client request records store all required fields."
+    },
+    {
+      "id": "AC-007",
+      "priority": "high",
+      "status": "passed",
+      "title": "Request statuses include the requested workflow states."
+    },
+    {
+      "id": "AC-008",
+      "priority": "high",
+      "status": "passed",
+      "title": "After creation, the new request appears in the common request list."
+    },
+    {
+      "id": "AC-009",
+      "priority": "high",
+      "status": "passed",
+      "title": "User can open an existing request and update its data."
+    },
+    {
+      "id": "AC-010",
+      "priority": "high",
+      "status": "passed",
+      "title": "The home page displays current request summary counts."
+    },
+    {
+      "id": "AC-011",
+      "priority": "high",
+      "status": "passed",
+      "title": "User can search requests by client, contact, or request text."
+    },
+    {
+      "id": "AC-012",
+      "priority": "high",
+      "status": "passed",
+      "title": "User can filter requests by status and priority."
+    },
+    {
+      "id": "AC-013",
+      "priority": "high",
+      "status": "not_verified",
+      "title": "The interface uses a modern, tidy visual design."
+    },
+    {
+      "id": "AC-014",
+      "priority": "high",
+      "status": "passed",
+      "title": "The application layout remains usable on desktop and tablet viewport sizes."
+    },
+    {
+      "id": "AC-015",
+      "priority": "high",
+      "status": "passed",
+      "title": "A single local administrator can use the application without a complex user system."
+    },
+    {
+      "id": "AC-016",
+      "priority": "high",
+      "status": "passed",
+      "title": "Application data persists after restart."
+    },
+    {
+      "id": "AC-017",
+      "priority": "high",
+      "status": "passed",
+      "title": "The application starts successfully with the documented run command."
+    },
+    {
+      "id": "AC-018",
+      "priority": "high",
+      "status": "passed",
+      "title": "Primary interface buttons perform their intended actions."
+    },
+    {
+      "id": "AC-019",
+      "priority": "high",
+      "status": "passed",
+      "title": "Automated tests cover the main application functions."
+    },
+    {
+      "id": "AC-020",
+      "priority": "high",
+      "status": "passed",
+      "title": "Windows installation and run instructions are documented."
+    },
+    {
+      "id": "AC-021",
+      "priority": "high",
+      "status": "passed",
+      "title": "The selected technology stack remains simple for local startup and future maintenance."
+    },
+    {
+      "id": "AC-022",
+      "priority": "high",
+      "status": "passed",
+      "title": "FastAPI application imports"
+    },
+    {
+      "id": "AC-023",
+      "priority": "high",
+      "status": "passed",
+      "title": "FastAPI runtime starts"
+    }
+  ],
+  "audit_engine_version": 2,
+  "checks": [
+    {
+      "evidence": {
+        "missing": [],
+        "required": [
+          "README.md"
+        ]
+      },
+      "name": "required_files",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "missing_sections": []
+      },
+      "name": "readme_instructions",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "files_with_secret_like_values": []
+      },
+      "name": "secret_scan",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "files_with_blocking_todos": []
+      },
+      "name": "todo_scan",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "rounds_completed": 1,
+        "total_errors": 0
+      },
+      "name": "latest_full_qa",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "unresolved_regressions": []
+      },
+      "name": "regression_status",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "adapter": "fastapi",
+        "applicable": true,
+        "command": "C:\\Users\\aksen\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe -m uvicorn main:app --host 127.0.0.1 --port 44298",
+        "entrypoint": "main.py",
+        "error": "",
+        "evidence": {
+          "adapter": "fastapi",
+          "command": "C:\\Users\\aksen\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe -m uvicorn main:app --host 127.0.0.1 --port 44298",
+          "entrypoint": "main.py",
+          "free_port": 44298,
+          "host": "127.0.0.1",
+          "killed": false,
+          "module_ref": "main:app",
+          "owned_process_only": true,
+          "pid": 4804,
+          "probes": [
+            {
+              "error": "HTTP Error 404: Not Found",
+              "path": "/health",
+              "success": false,
+              "url": "http://127.0.0.1:44298/health"
+            },
+            {
+              "path": "/",
+              "status_code": 200,
+              "success": true,
+              "url": "http://127.0.0.1:44298/"
+            }
+          ],
+          "response_sample": "\n<!doctype html>\n<html lang=\"ru\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>Nerva Desk</title>\n  <style>\n    :root {\n      color-scheme: dark;\n      --bg: #0f172a;\n      --panel: #111c33;\n      --surface: #1e293b;\n      --line: #334155;\n      --text: #f8fafc;\n      --muted: #94a3b8;\n      --primary: #2563eb;\n      --accent: #f59e0b;\n      --danger: #ef4444;\n      --ok: #22c55e;\n    }\n    * { box-sizing: border-box; }\n    b",
+          "shutdown_method": "terminate",
+          "status_code": 200,
+          "url": "http://127.0.0.1:44298/"
+        },
+        "free_port": 44298,
+        "host": "127.0.0.1",
+        "killed": false,
+        "module_ref": "main:app",
+        "owned_process_only": true,
+        "pid": 4804,
+        "probes": [
+          {
+            "error": "HTTP Error 404: Not Found",
+            "path": "/health",
+            "success": false,
+            "url": "http://127.0.0.1:44298/health"
+          },
+          {
+            "path": "/",
+            "status_code": 200,
+            "success": true,
+            "url": "http://127.0.0.1:44298/"
+          }
+        ],
+        "response_sample": "\n<!doctype html>\n<html lang=\"ru\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>Nerva Desk</title>\n  <style>\n    :root {\n      color-scheme: dark;\n      --bg: #0f172a;\n      --panel: #111c33;\n      --surface: #1e293b;\n      --line: #334155;\n      --text: #f8fafc;\n      --muted: #94a3b8;\n      --primary: #2563eb;\n      --accent: #f59e0b;\n      --danger: #ef4444;\n      --ok: #22c55e;\n    }\n    * { box-sizing: border-box; }\n    b",
+        "shutdown_method": "terminate",
+        "started": true,
+        "status": "passed",
+        "status_code": 200,
+        "stopped_cleanly": true,
+        "url": "http://127.0.0.1:44298/",
+        "verified": true
+      },
+      "name": "runtime_smoke",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "active": []
+      },
+      "name": "active_operations",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "open_issue_ids": [],
+        "open_issue_severities": []
+      },
+      "name": "open_blocking_issues",
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "failed_mandatory": [
+          "AC-013"
+        ]
+      },
+      "name": "acceptance_criteria",
+      "status": "failed"
+    },
+    {
+      "evidence": {
+        "credentials": [
+          {
+            "blocks_completion": false,
+            "configured": false,
+            "description": "SMTP credentials",
+            "externally_verifiable": true,
+            "name": "SMTP_PASSWORD",
+            "required": false,
+            "source": "env_example"
+          }
+        ],
+        "credentials_still_required": [],
+        "optional_credentials_missing": [
+          {
+            "blocks_completion": false,
+            "configured": false,
+            "description": "SMTP credentials",
+            "externally_verifiable": true,
+            "name": "SMTP_PASSWORD",
+            "required": false,
+            "source": "env_example"
+          }
+        ],
+        "qa_needs_credentials": false,
+        "required_credentials": []
+      },
+      "name": "credential_status",
+      "status": "passed"
+    }
+  ],
+  "commands_executed": [],
+  "credential_state": [
+    {
+      "blocks_completion": false,
+      "configured": false,
+      "description": "SMTP credentials",
+      "externally_verifiable": true,
+      "name": "SMTP_PASSWORD",
+      "required": false,
+      "source": "env_example"
+    }
+  ],
+  "credentials_still_required": [],
+  "detected_profiles": [
+    "fastapi",
+    "REST_API",
+    "python_application"
+  ],
+  "evidence_ledger_fingerprint": "5c02c6dba9102b00dbc9a7f6ecfac6a38892554671257f2d179f86a60783c216",
+  "generated_at": "2026-07-10T09:18:36Z",
+  "implementation_summary": "Generated project at generated_projects\\\\test-project",
+  "installation_instructions": "See README.md",
+  "known_limitations": [],
+  "legend": {
+    "blocked_by_credentials": "blocked",
+    "not_verified": "failed",
+    "optional_limitation": "optional failed/non-critical",
+    "verified": "passed"
+  },
+  "mandatory_criteria_passed": false,
+  "optional_criteria_failed": [],
+  "project_name": "Test-Project",
+  "project_snapshot_fingerprint": "4c2287bf1d822c55bf3cd7843c327a5fd6f44149e3723d9fb06eac51c5197037",
+  "project_type": "fastapi",
+  "report_version": 2,
+  "run_instructions": "See README.md",
+  "runtime_verification": {
+    "adapter": "fastapi",
+    "applicable": true,
+    "command": "C:\\Users\\aksen\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe -m uvicorn main:app --host 127.0.0.1 --port 44298",
+    "entrypoint": "main.py",
+    "error": "",
+    "evidence": {
+      "adapter": "fastapi",
+      "command": "C:\\Users\\aksen\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe -m uvicorn main:app --host 127.0.0.1 --port 44298",
+      "entrypoint": "main.py",
+      "free_port": 44298,
+      "host": "127.0.0.1",
+      "killed": false,
+      "module_ref": "main:app",
+      "owned_process_only": true,
+      "pid": 4804,
+      "probes": [
+        {
+          "error": "HTTP Error 404: Not Found",
+          "path": "/health",
+          "success": false,
+          "url": "http://127.0.0.1:44298/health"
+        },
+        {
+          "path": "/",
+          "status_code": 200,
+          "success": true,
+          "url": "http://127.0.0.1:44298/"
+        }
+      ],
+      "response_sample": "\n<!doctype html>\n<html lang=\"ru\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>Nerva Desk</title>\n  <style>\n    :root {\n      color-scheme: dark;\n      --bg: #0f172a;\n      --panel: #111c33;\n      --surface: #1e293b;\n      --line: #334155;\n      --text: #f8fafc;\n      --muted: #94a3b8;\n      --primary: #2563eb;\n      --accent: #f59e0b;\n      --danger: #ef4444;\n      --ok: #22c55e;\n    }\n    * { box-sizing: border-box; }\n    b",
+      "shutdown_method": "terminate",
+      "status_code": 200,
+      "url": "http://127.0.0.1:44298/"
+    },
+    "free_port": 44298,
+    "host": "127.0.0.1",
+    "killed": false,
+    "module_ref": "main:app",
+    "owned_process_only": true,
+    "pid": 4804,
+    "probes": [
+      {
+        "error": "HTTP Error 404: Not Found",
+        "path": "/health",
+        "success": false,
+        "url": "http://127.0.0.1:44298/health"
+      },
+      {
+        "path": "/",
+        "status_code": 200,
+        "success": true,
+        "url": "http://127.0.0.1:44298/"
+      }
+    ],
+    "response_sample": "\n<!doctype html>\n<html lang=\"ru\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>Nerva Desk</title>\n  <style>\n    :root {\n      color-scheme: dark;\n      --bg: #0f172a;\n      --panel: #111c33;\n      --surface: #1e293b;\n      --line: #334155;\n      --text: #f8fafc;\n      --muted: #94a3b8;\n      --primary: #2563eb;\n      --accent: #f59e0b;\n      --danger: #ef4444;\n      --ok: #22c55e;\n    }\n    * { box-sizing: border-box; }\n    b",
+    "shutdown_method": "terminate",
+    "started": true,
+    "status": "passed",
+    "status_code": 200,
+    "stopped_cleanly": true,
+    "url": "http://127.0.0.1:44298/",
+    "verified": true
+  },
+  "status": "failed",
+  "test_results": {
+    "errors": [],
+    "latest_full_qa_passed": true,
+    "rounds": 1
+  }
+}

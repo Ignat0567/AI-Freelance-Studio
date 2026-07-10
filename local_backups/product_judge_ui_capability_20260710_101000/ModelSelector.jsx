@@ -17,15 +17,6 @@ export default function ModelSelector({ activePort, onClose, addLog }) {
         together: ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"],
         ollama: ["codellama", "llama3.1", "mistral"],
     };
-    const providerCapabilities = {
-        openai: { image_input: true },
-        anthropic: { image_input: true },
-    };
-    const providerLabels = {
-        nvidia: 'NVIDIA (Free)', ollama: 'Ollama (Free Local)', openai: 'OpenAI (Paid)',
-        anthropic: 'Claude by Anthropic (Paid)', google: 'Google Gemini (Paid)', groq: 'Groq',
-        mistral: 'Mistral', deepseek: 'DeepSeek', together: 'Together',
-    };
 
     useEffect(() => {
         fetchAgentsRegistry();
@@ -251,9 +242,15 @@ function AgentCard({ id, agent, providerModels, onUpdate, onDelete }) {
                         className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-300 disabled:opacity-40"
                     >
                         {id === 'product_judge' && <option value="">Auto-select independent provider</option>}
-                        {Object.keys(providerModels)
-                            .filter((provider) => id !== 'product_judge' || providerCapabilities[provider]?.image_input)
-                            .map((provider) => <option key={provider} value={provider}>{providerLabels[provider]}</option>)}
+                        <option value="nvidia">NVIDIA (Free)</option>
+                        <option value="ollama">Ollama (Free Local)</option>
+                        <option value="openai">OpenAI (Paid)</option>
+                        <option value="anthropic">Claude by Anthropic (Paid)</option>
+                        <option value="google">Google Gemini (Paid)</option>
+                        <option value="groq">Groq</option>
+                        <option value="mistral">Mistral</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="together">Together</option>
                     </select>
                 </div>
                 <div className="col-span-2">
