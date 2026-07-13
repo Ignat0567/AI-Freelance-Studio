@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { tr } from '../i18n.js';
 import OpenCodeConnectionSetup from './OpenCodeConnectionSetup.jsx';
 
@@ -17,14 +17,6 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
   const [settings, setSettings] = useState(null);
   const [activeTab, setActiveTab] = useState('appearance');
   const [loading, setLoading] = useState(true);
-  const dialogRef = useRef(null);
-  const closeButtonRef = useRef(null);
-  const returnFocusRef = useRef(null);
-  const onCloseRef = useRef(onClose);
-
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
 
   useEffect(() => {
     fetch(`http://localhost:${activePort}/api/config/system`)
@@ -67,47 +59,7 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
     if (settings) applyTheme(settings);
   }, [settings]);
 
-  useEffect(() => {
-    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      const focusable = Array.from(dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
-        .filter(el => !el.disabled && el.offsetParent !== null);
-      if (!focusable.length) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.clearTimeout(focusTimer);
-      document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      returnFocusRef.current?.focus?.();
-    };
-  }, []);
-
-  if (loading) return <div className="settings-modal-overlay"><div className="text-xs text-slate-500">Loading settings...</div></div>;
+  if (loading) return <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50"><div className="text-xs text-slate-500">Loading settings...</div></div>;
 
   const s = settings || {};
   const t = (key) => tr(s.language || 'en', key);
@@ -120,16 +72,16 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
   ];
 
   return (
-    <div className="settings-modal-overlay animate-fade-in" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" className="settings-modal-container bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full max-w-2xl shadow-2xl" style={{ borderColor: 'var(--border)' }}>
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+      <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col" style={{ borderColor: 'var(--border)' }}>
 
-        <div className="settings-modal-header p-4 border-b border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
-          <h3 id="settings-modal-title" className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{t('systemPreferences')}</h3>
-          <button ref={closeButtonRef} onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] font-mono text-sm" aria-label="Close settings">✕</button>
+        <div className="p-4 border-b border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+          <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{t('systemPreferences')}</h3>
+          <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] font-mono text-sm">✕</button>
         </div>
 
         {/* Tabs */}
-        <div className="settings-modal-tabs flex border-b border-[var(--border)]" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+        <div className="flex border-b border-[var(--border)]" style={{ backgroundColor: 'var(--bg-secondary)' }}>
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -146,7 +98,7 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
           ))}
         </div>
 
-        <div className="settings-modal-body p-5 space-y-5" style={{ backgroundColor: 'var(--bg-card)' }}>
+        <div className="flex-1 overflow-y-auto p-5 space-y-5" style={{ backgroundColor: 'var(--bg-card)' }}>
           {activeTab === 'appearance' && (
             <>
               {/* Theme */}
@@ -335,7 +287,7 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
           )}
         </div>
 
-        <div className="settings-modal-footer p-3 border-t border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+        <div className="p-3 border-t border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t('savedAutomatically')}</span>
           <button
             onClick={onClose}

@@ -212,7 +212,7 @@ export default function StudioDashboard({
         </header>
 
         <div className="fs-body">
-          <main className={`fs-workspace ${activeView === 'overview' ? 'fs-overview-workspace' : ''}`} tabIndex={0} aria-label="Central workspace content">
+          <main className="fs-workspace">
             <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />
             {activeView === 'overview' && (
               <>
@@ -227,7 +227,6 @@ export default function StudioDashboard({
             {activeView === 'issues' && <AttentionPanel issues={openIssues} project={project} onRetry={onRetry} onContinueDone={onContinueDone} expanded />}
             {activeView === 'logs' && <LogPanel logs={logs} />}
             {activeView !== 'overview' && !['team', 'issues', 'logs'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
-            <div className="fs-workspace-bottom-sentinel" data-testid="workspace-bottom-sentinel" aria-hidden="true" />
           </main>
 
           {chatOpen ? (
@@ -274,7 +273,7 @@ function ProjectOverview({ project, primaryAction, isGenerating, onStopGeneratio
 
 function PipelineSummary({ pipeline, project, workingAgent, criteria, passedCriteria, onPipeline }) {
   return (
-    <section className="fs-panel fs-pipeline-panel">
+    <section className="fs-panel">
       <div className="fs-panel-title">
         <div><span>Pipeline Status</span><strong>{pretty(project?._phase || project?.status, 'Waiting')}</strong></div>
         <button type="button" onClick={onPipeline}>Details</button>
@@ -298,7 +297,7 @@ function PipelineSummary({ pipeline, project, workingAgent, criteria, passedCrit
 
 function AgentActivity({ agents, statuses, onAgentChat, expanded = false }) {
   return (
-    <section className="fs-panel fs-team-panel">
+    <section className="fs-panel">
       <div className="fs-panel-title"><div><span>AI Team</span><strong>{agents.length || 0} configured agents</strong></div></div>
       <div className={`fs-agent-grid ${expanded ? 'expanded' : ''}`}>
         {agents.length ? agents.map(agent => {
@@ -320,7 +319,7 @@ function AttentionPanel({ issues, project, onRetry, onContinueDone, expanded = f
   const manualSteps = Array.isArray(project?.manual_steps) ? project.manual_steps : [];
   const needsInput = ['needs_user_input', 'awaiting_input'].includes(project?.status);
   return (
-    <section className="fs-panel fs-attention-panel">
+    <section className="fs-panel">
       <div className="fs-panel-title"><div><span>Attention Required</span><strong>{issues.length || manualSteps.length || (needsInput ? 1 : 0) || 'Clear'}</strong></div></div>
       {needsInput && <div className="fs-alert warning"><b>User input required</b><span>{manualSteps[0] || 'The active project is waiting for guidance.'}</span><button type="button" onClick={onContinueDone}>Continue</button></div>}
       {issues.length ? issues.slice(0, expanded ? issues.length : 3).map((issue, index) => <div className="fs-alert" key={`${issue.title || issue.message || index}`}><b>{issue.title || issue.type || `Issue ${index + 1}`}</b><span>{issue.message || issue.detail || pretty(issue.status)}</span><button type="button" onClick={onRetry}>Resolve</button></div>) : !needsInput && <p className="fs-empty">No open issues are currently reported.</p>}
@@ -330,7 +329,7 @@ function AttentionPanel({ issues, project, onRetry, onContinueDone, expanded = f
 
 function ActivityPanel({ logs, onOpenLogs }) {
   return (
-    <section className="fs-panel fs-activity fs-activity-panel">
+    <section className="fs-panel fs-activity">
       <div className="fs-panel-title"><div><span>Recent Activity</span><strong>{logs.length ? `${logs.length} latest events` : 'No events'}</strong></div><button type="button" onClick={onOpenLogs}>Open logs</button></div>
       <div className="fs-log-list">
         {logs.length ? logs.map((log, index) => <div className="fs-log-line" key={`${log}-${index}`}><i aria-hidden="true" /><span>{log}</span></div>) : <p className="fs-empty">No recent activity is available.</p>}
@@ -352,7 +351,7 @@ function DevelopmentTools({ project, onOpenEditor, onOpenCode, onFiles, onPush, 
     { id: 'claude', name: 'Claude Code', mark: 'CC', action: undefined, available: false },
   ];
   return (
-    <section className="fs-panel fs-dev-tools-panel">
+    <section className="fs-panel">
       <div className="fs-panel-title"><div><span>Development Tools</span><strong>{project ? 'Project actions' : 'No active project'}</strong></div></div>
       <div className="fs-tool-grid">
         {tools.map(tool => {

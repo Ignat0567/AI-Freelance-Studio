@@ -532,14 +532,6 @@ function App() {
                 onOpenCode={() => fetch(`http://localhost:${activePort}/api/opencode/web`, { method: 'POST' }).then(r => r.json()).then(data => { if (data.url) window.open(data.url, '_blank', 'noopener,noreferrer'); addLog(`[OpenCode]: ${data.message || data.status}`); }).catch(error => addLog(`[OpenCode]: ${error.message}`))}
                 onAgentChat={setActiveAgentChat}
                 onPipeline={() => activeProject ? setIsPipelineDetailOpen(true) : addLog('[Pipeline]: No active project.')}
-                onOpenBriefing={() => activeProject ? setIsChatOpen(true) : addLog('[Chat]: No active project.')}
-                onStopGeneration={handleStopGeneration}
-                onRetry={() => activeProject ? handleRestart() : addLog('[System]: No active project.')}
-                onResume={() => activeProject ? handleResume(activeProject) : addLog('[System]: No active project.')}
-                onContinueDone={() => handleQARetry(activePort, activeProject)}
-                onKeyManager={() => setIsKeyManagerOpen(true)}
-                onInfo={() => setIsInfoOpen(true)}
-                isGenerating={Boolean(isGenerating)}
             />
 
             {isModelSelectorOpen && <ModelSelector activePort={activePort} onClose={() => setIsModelSelectorOpen(false)} addLog={addLog} />}

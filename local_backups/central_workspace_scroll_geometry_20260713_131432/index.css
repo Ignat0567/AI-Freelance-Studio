@@ -335,7 +335,6 @@ html,
 .fs-body { min-height: 0; flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) var(--fs-chat-width); gap: 16px; padding: 16px; overflow: hidden; }
 .fs-shell.chat-collapsed .fs-body { grid-template-columns: minmax(0, 1fr) 42px; }
 .fs-workspace { height: 100%; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; display: grid; align-content: start; gap: 14px; padding: 0 2px 24px 0; scrollbar-width: thin; scrollbar-color: rgba(57, 189, 248, 0.35) transparent; overscroll-behavior: contain; }
-.fs-workspace-bottom-sentinel { width: 100%; height: 1px; min-height: 1px; pointer-events: none; }
 .fs-body > .fs-workspace,
 .fs-body > .fs-chat-panel,
 .fs-body > .fs-chat-rail { min-height: 0; }
@@ -418,81 +417,6 @@ html,
 .fs-tool span, .fs-tool small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fs-tool span { font-size: 12px; }
 .fs-tool small { margin-top: 2px; color: var(--fs-muted); font-size: 10px; }
-
-.fs-overview-workspace {
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
-  grid-template-areas:
-    "hero hero"
-    "pipeline team"
-    "attention activity"
-    "tools tools"
-    "sentinel sentinel";
-  gap: 10px;
-  align-content: stretch;
-  overflow-y: hidden;
-  padding-bottom: 0;
-}
-
-.fs-overview-workspace .fs-hero { grid-area: hero; min-height: 0; padding: 13px 16px; }
-.fs-overview-workspace .fs-pipeline-panel { grid-area: pipeline; }
-.fs-overview-workspace .fs-team-panel { grid-area: team; }
-.fs-overview-workspace .fs-attention-panel { grid-area: attention; }
-.fs-overview-workspace .fs-activity-panel { grid-area: activity; }
-.fs-overview-workspace .fs-dev-tools-panel { grid-area: tools; }
-.fs-overview-workspace .fs-workspace-bottom-sentinel { grid-area: sentinel; }
-
-.fs-overview-workspace .fs-hero h1 { margin: 3px 0 5px; font-size: clamp(18px, 1.8vw, 27px); line-height: 1; }
-.fs-overview-workspace .fs-hero p { font-size: 11px; line-height: 1.35; }
-.fs-overview-workspace .fs-meta-row { margin-top: 8px; gap: 6px; }
-.fs-overview-workspace .fs-meta-row span,
-.fs-overview-workspace .fs-compact-facts span { padding: 4px 8px; font-size: 10px; }
-.fs-overview-workspace .fs-hero-actions { align-content: center; }
-.fs-overview-workspace .fs-primary,
-.fs-overview-workspace .fs-secondary,
-.fs-overview-workspace .fs-danger-button,
-.fs-overview-workspace .fs-panel-title button,
-.fs-overview-workspace .fs-alert button { padding: 7px 11px; font-size: 11px; }
-
-.fs-overview-workspace .fs-panel { min-height: 0; padding: 10px 12px; }
-.fs-overview-workspace .fs-panel-title { margin-bottom: 8px; }
-.fs-overview-workspace .fs-panel-title span { font-size: 9px; }
-.fs-overview-workspace .fs-panel-title strong { margin-top: 1px; font-size: 11px; }
-
-.fs-overview-workspace .fs-pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.fs-overview-workspace .fs-stage { padding: 7px 8px; border-radius: 10px; }
-.fs-overview-workspace .fs-stage i { width: 6px; height: 6px; margin-bottom: 5px; }
-.fs-overview-workspace .fs-stage b { font-size: 10px; }
-.fs-overview-workspace .fs-stage span { font-size: 9px; }
-.fs-overview-workspace .fs-compact-facts { margin-top: 8px; gap: 6px; }
-
-.fs-overview-workspace .fs-agent-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.fs-overview-workspace .fs-agent { gap: 7px; padding: 7px; border-radius: 11px; }
-.fs-overview-workspace .fs-agent-mark { width: 27px; height: 27px; border-radius: 9px; font-size: 10px; }
-.fs-overview-workspace .fs-agent b { font-size: 10px; }
-.fs-overview-workspace .fs-agent small { margin-top: 1px; font-size: 8px; }
-.fs-overview-workspace .fs-agent i { width: 6px; height: 6px; }
-
-.fs-overview-workspace .fs-alert { padding: 8px 10px; border-radius: 11px; }
-.fs-overview-workspace .fs-alert b { font-size: 11px; }
-.fs-overview-workspace .fs-alert span { font-size: 10px; }
-.fs-overview-workspace .fs-empty { font-size: 10px; line-height: 1.35; }
-.fs-overview-workspace .fs-log-list { gap: 3px; }
-.fs-overview-workspace .fs-log-line { font-size: 9px; gap: 7px; }
-.fs-overview-workspace .fs-log-line i { width: 5px; height: 5px; margin-top: 4px; }
-
-.fs-overview-workspace .fs-tool-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
-.fs-overview-workspace .fs-tool { gap: 8px; padding: 7px 9px; border-radius: 11px; }
-.fs-overview-workspace .fs-tool b { width: 27px; height: 27px; border-radius: 8px; font-size: 9px; }
-.fs-overview-workspace .fs-tool span { font-size: 10px; }
-.fs-overview-workspace .fs-tool small { margin-top: 1px; font-size: 8px; }
-
-@media (max-width: 1180px) {
-  .fs-overview-workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-  .fs-overview-workspace .fs-panel { padding: 8px 10px; }
-  .fs-overview-workspace .fs-hero { padding: 10px 12px; }
-  .fs-overview-workspace .fs-agent-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .fs-overview-workspace .fs-tool-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
 
 .fs-chat-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .fs-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; border-bottom: 1px solid var(--fs-border); }
