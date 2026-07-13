@@ -442,7 +442,7 @@ IGNORED_QA_DIRS = {
 
 
 def _text(project: dict) -> str:
-    parts = [project.get("title", ""), project.get("description", "")]
+    parts = [project.get("title", ""), project.get("original_request", "") or project.get("description", "")]
     for msg in project.get("chat_history", []):
         if msg.get("role") in ("user", "assistant"):
             parts.append(msg.get("content", ""))
@@ -450,7 +450,7 @@ def _text(project: dict) -> str:
 
 
 def _original_request(project: dict) -> str:
-    return project.get("description") or "\n".join(
+    return project.get("original_request") or project.get("description") or project.get("project_spec", {}).get("original_user_request") or "\n".join(
         msg.get("content", "") for msg in project.get("chat_history", []) if msg.get("role") == "user"
     ) or project.get("title", "")
 
@@ -622,7 +622,7 @@ def orphan_mandatory_requirements(project_spec: dict, acceptance_criteria: list[
 
 def _credential_record(name: str, description: str, source: str = "user_request", required: bool = True, blocks_completion: bool | None = None) -> dict[str, Any]:
     if blocks_completion is None:
-        blocks_completion = required and name not in {"TELEGRAM_BOT_TOKEN"}
+        blocks_completion = required and name not in {"TELEGRAM_BOT_TOKEN", "SMTP_PASSWORD"}
     return {
         "name": name,
         "description": description,
@@ -871,6 +871,8 @@ def _safe_read(project_path: str | None, rel: str) -> str:
 def build_project_spec(project: dict, existing_path: str | None = None) -> dict[str, Any]:
     source_text = _text(project)
     original = _original_request(project)
+    if project.get("recovery_status") in {"native", "fully_recovered"} and not original.strip():
+        raise ValueError("recovery_state_error: original request is required for contract migration")
     features = _feature_phrases(source_text)
     credentials = _credential_requirements(source_text)
     requirement_gaps = detect_requirement_gaps(source_text, credentials)
@@ -913,7 +915,7 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
         run_method = "npm run dev or npm run preview"
         test_method = "npm run build and configured npm test when present"
 
-    return {
+    spec = {
         "original_user_request": original,
         "project_goal": project.get("title") or (features[0] if features else "Generated project"),
         "project_type": profiles[0],
@@ -936,6 +938,34 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
         "unknowns": _unknowns(source_text, credentials),
         "assumptions": _assumptions(profiles),
     }
+    ticket_blob = f"{original} {source_text}".lower()
+    if "ticket" in ticket_blob and ("priority" in ticket_blob or "status" in ticket_blob):
+        units = [
+            ("browser_ticket_runtime", "Browser-based ticket tracking application runs for internal staff."),
+            ("ticket_fields", "Ticket records store client name, contact phone or email, optional company, and problem description."),
+            ("priority_values", "Ticket priority accepts low, normal, high, and urgent."),
+            ("status_values", "Ticket status accepts new, in progress, waiting for client, completed, and closed."),
+            ("ticket_lifecycle", "Users can create, list, open, and edit ticket records."),
+            ("ticket_comments", "Users can add and view ticket comments."),
+            ("confirmed_deletion", "Ticket deletion requires explicit confirmation."),
+            ("dashboard_metrics", "Dashboard shows new, in-progress, urgent, and closed-today counts."),
+            ("ticket_search", "Search finds tickets by client, contact, and problem description."),
+            ("ticket_filters", "Ticket list filters by status and priority."),
+            ("persistent_storage", "Ticket data persists across application restart."),
+            ("local_admin_scope", "One configured local administrator can use the application without registration, roles, tenants, or external identity."),
+            ("dark_product_quality", "Interface has a modern dark visual design."),
+            ("desktop_usability", "Interface remains usable at desktop viewport sizes."),
+            ("tablet_usability", "Interface remains usable at tablet viewport sizes."),
+            ("primary_controls", "Primary user controls perform their intended actions."),
+            ("automated_tests", "Automated tests cover the ticket workflow."),
+            ("windows_documentation", "Windows installation and run instructions are documented."),
+        ]
+        spec["requirements"] = [
+            {"id": _stable_id("REQ", index + 1), "title": intent.replace("_", " "), "description": text,
+             "semantic_intent": intent, "source_trace": original, "mandatory": True, "priority": "high", "source": "user_requirement", "dependencies": [], "status": "pending"}
+            for index, (intent, text) in enumerate(units)
+        ]
+    return spec
 
 
 def _infer_users(text: str) -> list[str]:

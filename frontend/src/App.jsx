@@ -15,6 +15,7 @@ import PipelineDetailModal from './components/PipelineDetailModal.jsx';
 import GoldieChat from './components/GoldieChat.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import QuestionAnswerModal from './components/QuestionAnswerModal.jsx';
+import StudioDashboard from './components/StudioDashboard.jsx';
 import { tr } from './i18n.js';
 
 const fallbackAgents = {};
@@ -507,6 +508,44 @@ function App() {
     const displayedAgents = Object.values(agentList).length ? Object.values(agentList) : Object.values(fallbackAgents);
     const isGenerating = activeProject && !['created', 'completed', 'failed', 'failed_qa', 'blocked', 'needs_credentials', 'cancelled', 'awaiting_input', 'needs_user_input'].includes(activeProject.status);
     const t = (key) => tr(language, key);
+
+    // The dashboard is the primary workspace; existing dialogs below remain mounted by state.
+    if (true) return (
+        <>
+            <StudioDashboard
+                activePort={activePort}
+                project={activeProject}
+                logs={logs}
+                agents={agentList}
+                statuses={agentStatuses}
+                autonomousMode={autonomousMode}
+                onAutonomousMode={setAutonomousMode}
+                onNewProject={() => setIsNewProjectOpen(true)}
+                onSettings={() => setIsSettingsOpen(true)}
+                onProjects={() => {
+                    fetch(`http://localhost:${activePort}/api/projects/all`).then(r => r.json()).then(data => { setAllProjects(data.projects || []); setIsProjectsListOpen(true); }).catch(() => addLog('[Projects]: Unable to load projects.'));
+                }}
+                onFiles={() => activeProject ? setIsFileBrowserOpen(true) : addLog('[Files]: No active project.')}
+                onPush={() => handlePushToGitHub(activePort, activeProject)}
+                onExport={() => handleExport(activePort, activeProject)}
+                onOpenEditor={(editor) => handleOpenEditor(activePort, activeProject, editor)}
+                onOpenCode={() => fetch(`http://localhost:${activePort}/api/opencode/web`, { method: 'POST' }).then(r => r.json()).then(data => { if (data.url) window.open(data.url, '_blank', 'noopener,noreferrer'); addLog(`[OpenCode]: ${data.message || data.status}`); }).catch(error => addLog(`[OpenCode]: ${error.message}`))}
+                onAgentChat={setActiveAgentChat}
+                onPipeline={() => activeProject ? setIsPipelineDetailOpen(true) : addLog('[Pipeline]: No active project.')}
+            />
+
+            {isModelSelectorOpen && <ModelSelector activePort={activePort} onClose={() => setIsModelSelectorOpen(false)} addLog={addLog} />}
+            {isNewProjectOpen && <NewProjectModal onCreate={handleCreateManualProject} onClose={() => setIsNewProjectOpen(false)} />}
+            {isChatOpen && activeProject && <ProjectChat activePort={activePort} projectId={activeProject.project_id} chatHistory={chatHistory} onUpdateHistory={setChatHistory} onApprove={handleApproveSpec} onClose={() => setIsChatOpen(false)} />}
+            {isKeyManagerOpen && <KeyManagerModal activePort={activePort} onClose={() => setIsKeyManagerOpen(false)} addLog={addLog} />}
+            {activeAgentChat && activeAgentChat === 'goldie' ? <GoldieChat activePort={activePort} onClose={() => setActiveAgentChat(null)} addLog={addLog} project={activeProject} /> : activeAgentChat && <AgentChat agentId={activeAgentChat} activePort={activePort} onClose={() => setActiveAgentChat(null)} addLog={addLog} project={activeProject} />}
+            {isSettingsOpen && <SettingsModal activePort={activePort} onClose={() => setIsSettingsOpen(false)} addLog={addLog} />}
+            {isFileBrowserOpen && activeProject && <FileBrowserModal activePort={activePort} projectId={activeProject.project_id} projectTitle={activeProject.title} onClose={() => setIsFileBrowserOpen(false)} addLog={addLog} />}
+            {isInfoOpen && <InfoModal activePort={activePort} onClose={() => setIsInfoOpen(false)} addLog={addLog} />}
+            {isPipelineDetailOpen && activeProject && <PipelineDetailModal project={activeProject} agentStatuses={agentStatuses} agents={agentList} pipelineMetadata={pipelineMetadata} onClose={() => setIsPipelineDetailOpen(false)} />}
+            {isQuestionOpen && activeProject && <QuestionAnswerModal activePort={activePort} projectId={activeProject.project_id} onClose={() => setIsQuestionOpen(false)} />}
+        </>
+    );
 
     return (
         <div className="studio-shell flex flex-col h-screen w-screen font-sans antialiased" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>

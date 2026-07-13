@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import threading as _threading
 import project_state
+import opencode_provider as opencode_provider_module
 from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
 
 # OpenCode bridge (optional — for real AI-assisted code generation)
@@ -230,6 +231,8 @@ class OpenCodeConnectionPayload(BaseModel):
     local_endpoint: str = ""
     executable_path: str = ""
     enabled: bool = True
+    capabilities: Dict[str, Any] = {}
+    last_checked_at: str = ""
 
 
 class OpenCodeLoginPayload(BaseModel):
@@ -294,6 +297,8 @@ PROJECT_TASKS.update(_persisted_tasks)
 
 
 def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
+    spec = state.get("project_spec", {}) if isinstance(state.get("project_spec"), dict) else {}
+    original_request = str(state.get("original_request") or spec.get("original_user_request") or state.get("problem_description") or state.get("description") or "")
     project = {
         "project_id": state["project_id"],
         "id": state["project_id"],
@@ -302,7 +307,9 @@ def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
         "target_path": state["project_path"],
         "status": state.get("current_state", "created"),
         "_phase": state.get("pipeline_stage", ""),
-        "project_spec": state.get("project_spec", {}),
+        "original_request": original_request,
+        "description": original_request,
+        "project_spec": spec,
         "project_profiles": state.get("effective_project_profile", []),
         "product_runtime_profile": state.get("product_runtime_profile", {}),
         "acceptance_criteria": state.get("acceptance_criteria", []),
@@ -544,6 +551,7 @@ def save_opencode_connection(payload: OpenCodeConnectionPayload):
         configured_model=payload.configured_model.strip(), enabled=payload.enabled,
         transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
         local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
+        capabilities=payload.capabilities, last_checked_at=payload.last_checked_at,
     )
     data = load_studio_keys()
     connections = _load_provider_connections(data)
@@ -551,6 +559,40 @@ def save_opencode_connection(payload: OpenCodeConnectionPayload):
     data["_provider_connections"] = connections
     save_studio_keys(data)
     return {"status": "saved", "connection": connection.to_dict(), "message": "OpenCode authentication remains owned by OpenCode; no token was requested or stored."}
+
+
+@app.post("/api/provider-connections/opencode/detect")
+def detect_opencode_connection(payload: OpenCodeConnectionPayload):
+    """Discover a local bridge without persisting or inspecting OpenCode credentials."""
+    connection = OpenCodeBridgeConnection(
+        connection_id="transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
+        configured_model=payload.configured_model.strip(), enabled=payload.enabled,
+        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
+        local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
+    )
+    binary = connection.executable_path or opencode_provider_module._find_binary()
+    report = connection.capability_report()
+    return {
+        "status": "detected" if binary else "executable_not_found",
+        "executable_path": binary,
+        "version": get_opencode_status().get("version", "") if _HAS_OPENCODE else "",
+        "available_models": connection.available_models(),
+        "capabilities": report,
+        "authentication": "Authentication is owned by OpenCode and is verified only by Test Connection.",
+    }
+
+
+@app.post("/api/provider-connections/opencode/test")
+def test_transient_opencode_connection(payload: OpenCodeConnectionPayload):
+    """Run text and attached-image probes before the user chooses to save a connection."""
+    connection = OpenCodeBridgeConnection(
+        connection_id="transient-opencode-test", name=payload.name.strip() or "My OpenCode",
+        configured_model=payload.configured_model.strip(), enabled=payload.enabled,
+        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
+        local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
+    )
+    result = connection.test_connection(include_vision=True)
+    return {"status": "ok" if result["health_status"] == "available_authenticated" else "error", "connection": connection.to_dict(), **result}
 
 
 @app.post("/api/provider-connections/{connection_id}/test")
@@ -561,7 +603,7 @@ def test_provider_connection(connection_id: str):
     if index is None:
         raise HTTPException(404, "Provider connection not found")
     connection = OpenCodeBridgeConnection.from_dict(connections[index])
-    result = connection.test_connection()
+    result = connection.test_connection(include_vision=True)
     connections[index] = connection.to_dict()
     data["_provider_connections"] = connections
     save_studio_keys(data)
@@ -831,6 +873,7 @@ _TERMINAL_PROJECT_STATES = {
     "completed",
     "failed",
     "failed_qa",
+    "failed_final_audit",
     "blocked",
     "needs_credentials",
     "cancelled",
@@ -851,6 +894,7 @@ _STATE_DISPLAY = {
     "completed": "Completed",
     "failed": "Failed",
     "failed_qa": "Failed QA",
+    "failed_final_audit": "Failed final audit",
     "blocked": "Blocked",
     "needs_credentials": "Needs credentials",
     "needs_user_input": "Needs human input",
@@ -896,11 +940,12 @@ _ALLOWED_STATE_TRANSITIONS = {
     "review": {"review", "verifying", "repairing", "cancelled", "failed", "blocked"},
     "verifying": {"repairing", "final_audit", "needs_user_input", "needs_human_input", "needs_credentials", "failed_qa", "cancelled", "failed", "blocked"},
     "repairing": {"review", "verifying", "failed_qa", "cancelled", "failed", "blocked"},
-    "final_audit": {"product_judge", "completed", "repairing", "failed_qa", "cancelled", "failed", "blocked"},
+    "final_audit": {"product_judge", "completed", "repairing", "failed_final_audit", "cancelled", "failed", "blocked"},
     "product_judge": {"completed", "repairing", "failed_qa", "cancelled", "failed", "blocked"},
     "needs_user_input": {"verifying", "cancelled", "failed_qa", "failed"},
     "needs_human_input": {"planning", "verifying", "cancelled", "failed"},
     "failed_qa": {"planning", "verifying", "cancelled"},
+    "failed_final_audit": {"verifying", "repairing", "cancelled"},
     "failed": {"planning", "verifying", "cancelled"},
     "blocked": {"planning", "verifying", "cancelled"},
     "needs_credentials": {"planning", "verifying", "cancelled"},
@@ -1527,6 +1572,8 @@ def get_agents():
         entry["enabled"] = cfg.get("enabled", agent.get("enabled", True))
         entry["top_p"] = cfg.get("top_p", agent.get("top_p"))
         entry["top_k"] = cfg.get("top_k", agent.get("top_k"))
+        if agent_id == "product_judge":
+            entry["connection_id"] = cfg.get("connection_id", "")
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
         if cfg.get("save_path"):
@@ -1598,7 +1645,7 @@ def update_agent_config(agent_id: str, payload: Dict[str, Any]):
     if agent_id not in _all_agent_ids():
         raise HTTPException(status_code=404, detail="Agent not found")
     current = agent_configs.get(agent_id, {})
-    allowed_keys = ("provider", "model", "temperature", "top_p", "top_k", "use_global", "enabled", "custom_prompt", "save_path")
+    allowed_keys = ("provider", "model", "temperature", "top_p", "top_k", "use_global", "enabled", "custom_prompt", "save_path", "connection_id")
     for key in allowed_keys:
         if key in payload:
             current[key] = payload[key]
@@ -3754,16 +3801,16 @@ def _pipeline_codex_fix(project, generated_data, target_path, feedback):
     return generated_data
 
 
-def _repair_product_judge_objections(project: dict, target_path: str, project_id: str) -> bool:
-    """Route Product Judge issues through the existing snapshot-aware OpenCode repair path."""
-    issues = [issue for issue in project.get("issues", []) if isinstance(issue, dict) and issue.get("source") == "product_judge" and issue.get("status", "open") == "open"]
+def _repair_final_audit_issues(project: dict, target_path: str, project_id: str) -> bool:
+    """Route actionable audit findings through the existing snapshot-aware OpenCode repair path."""
+    issues = [issue for issue in project.get("issues", []) if isinstance(issue, dict) and issue.get("source") in {"product_judge", "final_delivery_audit"} and issue.get("status", "open") == "open"]
     if not issues:
         return False
-    attempts = int(project.get("_product_judge_repair_attempts", 0))
+    attempts = int(project.get("_final_audit_repair_attempts", 0))
     if attempts >= 2:
         project.setdefault("logs", []).append("[PRODUCT JUDGE] Repair limit reached; blocking objection remains open.")
         return False
-    project["_product_judge_repair_attempts"] = attempts + 1
+    project["_final_audit_repair_attempts"] = attempts + 1
     project["_repair_active"] = True
     _set_project_status(project, "repairing")
     provider, model = get_agent_provider_model("codex")
@@ -3780,14 +3827,21 @@ def _repair_product_judge_objections(project: dict, target_path: str, project_id
         repair = engine._request_opencode_fix(
             issues,
             json.dumps(issues, ensure_ascii=False),
-            {"source": "product_judge", "issues": issues, "required_followup": "Run full QA, fresh browser evidence, Product Judge, and final audit after a changed snapshot."},
+            {"source": "final_delivery_audit", "issues": issues, "required_followup": "Run full QA and current acceptance evidence before a new Final Audit after a changed snapshot."},
         )
     finally:
         project["_repair_active"] = False
         for entry in engine.logs:
             if entry not in project.setdefault("logs", []):
                 project["logs"].append(entry)
-    if not repair or not repair.get(qa_engine_module.OPENCODE_FIX_APPLIED):
+    repair_history = project.setdefault("repair_attempts", [])
+    if not any(entry.get("attempt_id") == repair.get("attempt_id") for entry in repair_history if isinstance(entry, dict)):
+        repair_history.append(dict(repair))
+    try:
+        project_state.persist_project_state(project, target_path)
+    except Exception as exc:
+        project.setdefault("logs", []).append(f"[PRODUCT JUDGE] Could not persist repair diagnostics: {type(exc).__name__}")
+    if not repair.get("meaningful_changes_detected", False):
         project.setdefault("logs", []).append("[PRODUCT JUDGE] OpenCode did not produce a verified file change.")
         return False
     for issue in issues:
@@ -3795,6 +3849,11 @@ def _repair_product_judge_objections(project: dict, target_path: str, project_id
     project.setdefault("logs", []).append("[PRODUCT JUDGE] Repair changed files; restarting full QA before browser and judge re-verification.")
     _run_qa_only(project_id, target_path)
     return True
+
+
+def _repair_product_judge_objections(project: dict, target_path: str, project_id: str) -> bool:
+    """Backward-compatible entry point for the generalized audit repair loop."""
+    return _repair_final_audit_issues(project, target_path, project_id)
 
 
 def _run_final_delivery_audit(project: dict, target_path: str, project_id: str, qa_result: dict | None = None) -> tuple[bool, list[str]]:
@@ -4290,9 +4349,9 @@ def async_studio_production_pipeline(project_id: str):
                 else:
                     _mark_final_audit_passed(project, False)
                     project["final_audit_errors"] = final_errors
-                    if _repair_product_judge_objections(project, target_path, project_id):
+                    if _repair_final_audit_issues(project, target_path, project_id):
                         return
-                    _set_project_status(project, "failed_qa", reason="final audit failed")
+                    _set_project_status(project, "failed_final_audit", reason="final audit failed")
                     project["logs"].append("Final delivery audit failed. Project is not completed.")
             elif qa_result.get("needs_credentials"):
                 _mark_qa_passed(project, False)
@@ -4333,6 +4392,10 @@ def retry_project_qa(project_id: str, background_tasks: BackgroundTasks):
     project = active_projects[project_id]
     if project.get("status") in ("completed", "cancelled"):
         raise HTTPException(400, f"Cannot retry QA for project in terminal state: {project.get('status')}")
+    if project.get("status") == "failed_final_audit":
+        target_path = str(project.get("target_path") or os.path.join(BASE_DIR, "generated_projects", project['title'].replace(' ', '_').lower()))
+        if _repair_final_audit_issues(project, target_path, project_id):
+            return {"status": "repairing", "message": "Final Audit repair started."}
     if not _set_project_status(project, "verifying"):
         _save_projects_state()
         raise HTTPException(400, "Invalid project state transition to verifying")
@@ -4416,9 +4479,9 @@ def _run_qa_only(project_id: str, target_path: str):
         else:
             _mark_final_audit_passed(project, False)
             project["final_audit_errors"] = final_errors
-            if _repair_product_judge_objections(project, target_path, project_id):
+            if _repair_final_audit_issues(project, target_path, project_id):
                 return
-            _set_project_status(project, "failed_qa", reason="final audit failed")
+            _set_project_status(project, "failed_final_audit", reason="final audit failed")
             project["logs"].append("❌ Retry passed QA but failed final audit.")
     elif qa_result.get("needs_credentials"):
         _mark_qa_passed(project, False)

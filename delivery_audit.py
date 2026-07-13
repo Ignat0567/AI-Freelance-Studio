@@ -1,4 +1,5 @@
 import json
+import ast
 import hashlib
 import os
 import re
@@ -26,7 +27,7 @@ IGNORED_EXTS = {".pyc", ".db", ".sqlite", ".sqlite3", ".png", ".jpg", ".jpeg", "
 SECRET_PATTERNS = [
     r"\b\d{7,}:[A-Za-z0-9_-]{20,}\b",
     r"sk-[A-Za-z0-9_-]{16,}",
-    r"(?i)(api[_-]?key|token|secret|password)\s*=\s*(?!replace_me|your_|example|changeme|<)[^\s'\"]{10,}",
+    r"(?i)(api[_-]?key|token|secret|password)\s*=\s*(['\"])(?!replace_me|your_|example|changeme|<)[^'\"\r\n]{10,}\2",
 ]
 TODO_PATTERNS = ("todo: implement", "pass  # todo", "raise notimplementederror", "not implemented", "fake output")
 OUTPUT_TAIL_LIMIT = 4000
@@ -652,6 +653,10 @@ def _credential_description(name: str) -> str:
 
 
 def _credential_blocks_completion(name: str, required: bool, source: str, explicit: Any = None) -> bool:
+    # SMTP delivery depends on infrastructure outside the generated project. Local
+    # behavior can be verified with a configured transport or documented as optional.
+    if name == "SMTP_PASSWORD":
+        return False
     if explicit is not None:
         return _bool_field(explicit, default=required)
     if not required:
@@ -1631,11 +1636,30 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
                     failure_kind="project_failure" if status == "failed" else "tooling_failure",
                 )
 
+            openapi_response = _http_json_request(handle.base_url, "GET", "/openapi.json")
+            if openapi_response.get("ok") and isinstance(openapi_response.get("json"), dict):
+                auth_plan = _authenticate_runtime(handle, openapi_response["json"])
+            else:
+                auth_plan = {"auth_required": False, "ready": True, "auth_type": "unknown", "reason": "openapi_unavailable"}
+            collected["browser_authentication"] = {
+                **{key: value for key, value in auth_plan.items() if key not in {"password", "token", "secret"}},
+                "session_cookie_names": sorted(getattr(handle, "cookies", {})),
+            }
+            if not auth_plan.get("ready"):
+                return _targeted_evidence(
+                    criterion, project, root, str(plan.get("verifier_type") or "browser_ui"), "not_verified",
+                    "Browser evidence could not establish the required application session",
+                    classification=AC_CLASS_UNSUPPORTED,
+                    collected_evidence=collected,
+                    failure_reason=str(auth_plan.get("reason") or "authentication_failed"),
+                    failure_kind="tooling_failure",
+                )
+
             from playwright.sync_api import sync_playwright
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True)
                 collected["chromium_startup"] = {"launched": True, "browser_name": browser.browser_type.name, "isolated_user_profile": True}
-                browser_evidence = self._execute_browser_plan(browser, handle.base_url, criterion, project, root, plan, profile, collected)
+                browser_evidence = self._execute_browser_plan(browser, handle.base_url, getattr(handle, "cookies", {}), criterion, project, root, plan, profile, collected)
         except Exception as exc:
             collected["browser_execution_exception"] = _tail_output(str(exc))
             return _targeted_evidence(
@@ -1670,7 +1694,13 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
             failure_kind="tooling_failure",
         )
 
-    def _execute_browser_plan(self, browser: Any, base_url: str, criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any], collected: dict[str, Any]) -> dict[str, Any]:
+    def _authenticated_context(self, browser: Any, base_url: str, viewport: dict[str, int], cookies: dict[str, str]) -> Any:
+        context = browser.new_context(viewport=viewport, device_scale_factor=1)
+        if cookies:
+            context.add_cookies([{"name": name, "value": value, "url": base_url} for name, value in cookies.items()])
+        return context
+
+    def _execute_browser_plan(self, browser: Any, base_url: str, cookies: dict[str, str], criterion: dict[str, Any], project: dict, root: str, plan: dict[str, Any], profile: dict[str, Any], collected: dict[str, Any]) -> dict[str, Any]:
         verifier_type = str(plan.get("verifier_type") or "browser_ui")
         fingerprint = _project_snapshot_fingerprint(root)
         artifact_dir = _browser_artifact_dir(root, str(criterion.get("id", "AC-UI")), fingerprint)
@@ -1688,7 +1718,7 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
             network_failures: list[dict[str, Any]] = []
             screenshot_path = os.path.join(artifact_dir, _viewport_file_name(str(criterion.get("id", "AC-UI")), viewport))
             try:
-                context = browser.new_context(viewport={"width": int(viewport["width"]), "height": int(viewport["height"])}, device_scale_factor=1)
+                context = self._authenticated_context(browser, base_url, {"width": int(viewport["width"]), "height": int(viewport["height"])}, cookies)
                 page = context.new_page()
                 page.on("pageerror", lambda exc: page_errors.append(_page_event_record("pageerror", "fatal", str(exc), page.url if page else "")))
                 page.on("console", lambda msg: console_messages.append(_page_event_record("console", _browser_message_severity(msg.type, msg.text), msg.text, getattr(msg, "location", {}).get("url", "") if isinstance(getattr(msg, "location", {}), dict) else "")))
@@ -1762,7 +1792,7 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
                         pass
 
         if verifier_type == "primary_ui_actions":
-            primary_actions = self._execute_primary_action_flow(browser, base_url, artifact_dir, criterion, terms)
+            primary_actions = self._execute_primary_action_flow(browser, base_url, cookies, artifact_dir, criterion, terms)
 
         objective = {
             "passed": all(item.get("verdict") == "passed" for item in viewport_results),
@@ -1846,8 +1876,8 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
                 findings.append("ultra-wide main content spans nearly the full viewport; review readability")
         return findings
 
-    def _execute_primary_action_flow(self, browser: Any, base_url: str, artifact_dir: str, criterion: dict[str, Any], terms: list[str]) -> list[dict[str, Any]]:
-        context = browser.new_context(viewport={"width": 1366, "height": 768}, device_scale_factor=1)
+    def _execute_primary_action_flow(self, browser: Any, base_url: str, cookies: dict[str, str], artifact_dir: str, criterion: dict[str, Any], terms: list[str]) -> list[dict[str, Any]]:
+        context = self._authenticated_context(browser, base_url, {"width": 1366, "height": 768}, cookies)
         page = context.new_page()
         failed_requests: list[dict[str, Any]] = []
         page.on("requestfailed", lambda req: failed_requests.append(_page_event_record("network", "error", req.failure.get("errorText", "request failed") if req.failure else "request failed", req.url)))
@@ -2015,7 +2045,7 @@ def _ticket_app_routes(openapi: dict[str, Any]) -> tuple[dict[str, str], dict[st
         if {"get", "post"}.issubset(methods) and not _path_parameter_names(str(path)):
             post_schema = _json_request_schema(openapi, item.get("post", {}))
             props = set(_schema_properties(openapi, post_schema))
-            if {"client_name", "contact", "description"}.issubset(props):
+            if {"client_name", "contact"}.issubset(props) and ({"description"} <= props or {"problem_description"} <= props):
                 routes["collection"] = str(path)
         if {"get", "put", "delete"}.intersection(methods) and _path_parameter_names(str(path)) and "comment" not in key:
             routes["item"] = str(path)
@@ -2027,6 +2057,39 @@ def _ticket_app_routes(openapi: dict[str, Any]) -> tuple[dict[str, str], dict[st
             routes["comments"] = str(path)
     evidence["discovered_routes"] = dict(routes)
     return routes, evidence
+
+
+def _authenticate_runtime(handle: RuntimeServerHandle, openapi: dict[str, Any]) -> dict[str, Any]:
+    """Discover and establish optional session auth before protected verifier calls."""
+    candidates = []
+    for path, item in (openapi.get("paths", {}) if isinstance(openapi, dict) else {}).items():
+        if not isinstance(item, dict) or not isinstance(item.get("post"), dict):
+            continue
+        schema = _json_request_schema(openapi, item["post"])
+        properties = _schema_properties(openapi, schema)
+        password_field = next((name for name in properties if re.search(r"pass(word)?|secret", name, re.IGNORECASE)), "")
+        user_field = next((name for name in properties if re.search(r"user(name)?|email|login|account|identity", name, re.IGNORECASE)), "")
+        if password_field:
+            candidates.append((str(path), user_field, password_field))
+    if not candidates:
+        handle.cookies = {}
+        return {"auth_required": False, "ready": True, "auth_type": "none", "credential_source": "not_required"}
+    if len(candidates) != 1 or not candidates[0][1]:
+        return {"auth_required": True, "ready": False, "reason": "unsupported_auth_schema", "credential_source": "not_used"}
+    login_route, user_field, password_field = candidates[0]
+    username = os.getenv("FREELANCERSTUDIO_VERIFY_AUTH_USERNAME") or os.getenv("TICKET_TRACKER_ADMIN_USER") or "admin"
+    password = os.getenv("FREELANCERSTUDIO_VERIFY_AUTH_PASSWORD") or os.getenv("TICKET_TRACKER_ADMIN_PASSWORD")
+    if not password:
+        return {"auth_required": True, "ready": False, "reason": "missing_verifier_auth_credential", "login_route": login_route, "credential_source": "environment"}
+    response = _http_json_request(handle.base_url, "POST", login_route, {user_field: username, password_field: password})
+    cookies = {}
+    for header in response.get("set_cookie", []):
+        name_value = header.split(";", 1)[0]
+        if "=" in name_value:
+            name, value = name_value.split("=", 1)
+            cookies[name] = value
+    handle.cookies = cookies
+    return {"auth_required": True, "ready": bool(response.get("ok") and cookies), "reason": "" if response.get("ok") and cookies else "authentication_failed", "auth_type": "cookie_session", "login_route": login_route, "session_mechanism": "set_cookie", "credential_source": "environment", "authenticated": bool(response.get("ok") and cookies)}
 
 
 def _start_ticket_runtime(criterion: dict[str, Any], project: dict, root: str) -> tuple[RuntimeServerHandle | None, dict[str, Any], dict[str, Any], dict[str, str]]:
@@ -2042,35 +2105,36 @@ def _start_ticket_runtime(criterion: dict[str, Any], project: dict, root: str) -
         return handle, collected, {}, {}
     routes, route_evidence = _ticket_app_routes(openapi_response["json"])
     collected["route_discovery"] = route_evidence
+    collected["auth_plan"] = _authenticate_runtime(handle, openapi_response["json"])
     return handle, collected, openapi_response["json"], routes
 
 
-def _ticket_payload(marker: str, *, status: str = "новая", priority: str = "обычный", suffix: str = "") -> dict[str, Any]:
+def _ticket_payload(marker: str, *, status: str = "new", priority: str = "normal", suffix: str = "", description_field: str = "description") -> dict[str, Any]:
     label = f"{marker}{suffix}"
     return {
         "client_name": f"Client {label}",
         "contact": f"{label}@example.com",
         "company": f"Company {label}",
-        "description": f"Request description {label}",
+        description_field: f"Request description {label}",
         "priority": priority,
         "status": status,
     }
 
 
 def _ticket_create(handle: RuntimeServerHandle, routes: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
-    return _http_json_request(handle.base_url, "POST", routes["collection"], payload)
+    return _http_json_request(handle.base_url, "POST", routes["collection"], payload, getattr(handle, "cookies", None))
 
 
 def _ticket_read(handle: RuntimeServerHandle, routes: dict[str, str], identifier: Any) -> dict[str, Any]:
-    return _http_json_request(handle.base_url, "GET", _replace_path_params(routes["item"], str(identifier)))
+    return _http_json_request(handle.base_url, "GET", _replace_path_params(routes["item"], str(identifier)), cookies=getattr(handle, "cookies", None))
 
 
 def _ticket_update(handle: RuntimeServerHandle, routes: dict[str, str], identifier: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    return _http_json_request(handle.base_url, "PUT", _replace_path_params(routes["item"], str(identifier)), payload)
+    return _http_json_request(handle.base_url, "PUT", _replace_path_params(routes["item"], str(identifier)), payload, getattr(handle, "cookies", None))
 
 
 def _ticket_list(handle: RuntimeServerHandle, routes: dict[str, str], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    return _http_json_request(handle.base_url, "GET", _append_query(routes["collection"], params or {}))
+    return _http_json_request(handle.base_url, "GET", _append_query(routes["collection"], params or {}), cookies=getattr(handle, "cookies", None))
 
 
 def _ids_from_response(response: dict[str, Any]) -> list[Any]:
@@ -2392,22 +2456,26 @@ def _http_path_url(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}{cleaned}"
 
 
-def _http_json_request(base_url: str, method: str, path: str, payload: Any = None) -> dict[str, Any]:
+def _http_json_request(base_url: str, method: str, path: str, payload: Any = None, cookies: dict[str, str] | None = None) -> dict[str, Any]:
     data = None
     headers = {"Accept": "application/json"}
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    if cookies:
+        headers["Cookie"] = "; ".join(f"{name}={value}" for name, value in cookies.items())
     request = urllib.request.Request(_http_path_url(base_url, path), data=data, headers=headers, method=method.upper())
     try:
         with urllib.request.urlopen(request, timeout=5) as resp:
             body = resp.read(20000).decode("utf-8", errors="replace")
             status = resp.status
             error = ""
+            set_cookie = resp.headers.get_all("Set-Cookie") or []
     except urllib.error.HTTPError as exc:
         body = exc.read(20000).decode("utf-8", errors="replace")
         status = exc.code
         error = f"HTTP {exc.code}"
+        set_cookie = []
     except Exception as exc:
         return {"ok": False, "status": None, "json": None, "body_text": "", "excerpt": "", "error": _tail_output(str(exc))}
 
@@ -2424,6 +2492,7 @@ def _http_json_request(base_url: str, method: str, path: str, payload: Any = Non
         "body_text": redacted,
         "excerpt": redacted[:1000],
         "error": _tail_output(error),
+        "set_cookie": set_cookie,
     }
 
 
@@ -2804,6 +2873,37 @@ def _schema_value(openapi: dict[str, Any], name: str, schema: Any, marker: str, 
     return marker, name
 
 
+def _extract_allowed_enum_values(openapi: dict[str, Any], schema: Any, visited: set[str] | None = None, depth: int = 0) -> list[str]:
+    """Return declared non-null enum values from common local OpenAPI schema wrappers."""
+    if depth > 8 or not isinstance(schema, dict):
+        return []
+    visited = visited or set()
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        if ref in visited:
+            return []
+        visited.add(ref)
+        return _extract_allowed_enum_values(openapi, _resolve_openapi_schema(openapi, schema), visited, depth + 1)
+    values = [str(value) for value in schema.get("enum", []) if value is not None and str(value).strip()]
+    if values:
+        return values
+    for key in ("anyOf", "oneOf", "allOf"):
+        for item in schema.get(key, []) if isinstance(schema.get(key), list) else []:
+            values = _extract_allowed_enum_values(openapi, item, visited, depth + 1)
+            if values:
+                return values
+    return []
+
+
+def _select_semantic_enum_value(field_name: str, values: list[str]) -> str:
+    preferences = {"status": ("new", "open", "created", "pending"), "priority": ("normal", "medium", "standard", "default")}
+    normalized = {re.sub(r"[-_\s]", "", value).lower(): value for value in values}
+    for preferred in preferences.get(field_name.lower(), ()):
+        if preferred in normalized:
+            return normalized[preferred]
+    return values[0] if values else ""
+
+
 def _object_payload_from_schema(openapi: dict[str, Any], schema: dict[str, Any], marker: str, depth: int = 0) -> tuple[dict[str, Any], str]:
     properties = schema.get("properties", {}) if isinstance(schema.get("properties", {}), dict) else {}
     required = [str(name) for name in schema.get("required", []) if str(name)]
@@ -2834,6 +2934,14 @@ def _build_create_payload(openapi: dict[str, Any], create_route: dict[str, Any],
     if _schema_type(schema) != "object":
         return {}, "", "Create route JSON schema is not an object payload"
     payload, marker_field = _object_payload_from_schema(openapi, schema, marker)
+    for field_name in ("status", "priority"):
+        if field_name not in _schema_properties(openapi, schema):
+            continue
+        values = _extract_allowed_enum_values(openapi, _schema_properties(openapi, schema)[field_name])
+        # A writable string status/priority field may intentionally be open-ended.
+        # Preserve the schema-derived default rather than rejecting that API.
+        if values:
+            payload[field_name] = _select_semantic_enum_value(field_name, values)
     if not payload and schema.get("additionalProperties") is False:
         return {}, "", "Create route JSON schema does not expose writable payload fields"
     if not payload:
@@ -3144,12 +3252,12 @@ def _created_id_or_failure(create_response: dict[str, Any], marker: str, marker_
     return "", "Create response did not expose an id-like field or preserve the unique marker"
 
 
-def _execute_create_fixture(handle: RuntimeServerHandle, openapi: dict[str, Any], create_route: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str]) -> tuple[str, str, str, bool, dict[str, Any], dict[str, Any], str]:
+def _execute_create_fixture(handle: RuntimeServerHandle, openapi: dict[str, Any], create_route: dict[str, Any], marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], cookies: dict[str, str] | None = None) -> tuple[str, str, str, bool, dict[str, Any], dict[str, Any], str]:
     payload, marker_field, payload_reason = _build_create_payload(openapi, create_route, marker)
     safe_summary = _safe_request_summary(payload, marker, marker_field)
     if payload_reason:
         return "not_verified", "Create request payload could not be built from route schema", payload_reason, False, safe_summary, {}, ""
-    create_response = _http_json_request(handle.base_url, "POST", create_route["path"], payload)
+    create_response = _http_json_request(handle.base_url, "POST", create_route["path"], payload, cookies or getattr(handle, "cookies", None))
     _record_http_step(method_path, response_status, redacted_excerpt, "create", "POST", create_route["path"], create_response)
     if not create_response.get("ok"):
         return "failed", "Create endpoint did not return a successful response", create_response.get("error") or f"Create endpoint returned HTTP {create_response.get('status')}", False, safe_summary, payload, ""
@@ -3159,16 +3267,16 @@ def _execute_create_fixture(handle: RuntimeServerHandle, openapi: dict[str, Any]
     return "passed", "Fixture record was created successfully", "", True, safe_summary, payload, created_identifier
 
 
-def _fetch_persisted_record(handle: RuntimeServerHandle, route_set: dict[str, Any], created_identifier: str, marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], key: str) -> dict[str, Any]:
+def _fetch_persisted_record(handle: RuntimeServerHandle, route_set: dict[str, Any], created_identifier: str, marker: str, method_path: list[dict[str, str]], response_status: dict[str, Any], redacted_excerpt: dict[str, str], key: str, cookies: dict[str, str] | None = None) -> dict[str, Any]:
     if route_set.get("read") and created_identifier and created_identifier != marker:
         read_path = _replace_path_params(route_set["read"]["path"], created_identifier)
-        response = _http_json_request(handle.base_url, "GET", read_path)
+        response = _http_json_request(handle.base_url, "GET", read_path, cookies or getattr(handle, "cookies", None))
         _record_http_step(method_path, response_status, redacted_excerpt, key, "GET", read_path, response)
         return response
     if not route_set.get("list"):
         return {"ok": False, "status": None, "json": None, "body_text": "", "excerpt": "", "error": "No list route is available and create response did not provide a concrete identifier"}
     list_path = route_set["list"]["path"]
-    response = _http_json_request(handle.base_url, "GET", list_path)
+    response = _http_json_request(handle.base_url, "GET", list_path, cookies or getattr(handle, "cookies", None))
     _record_http_step(method_path, response_status, redacted_excerpt, key, "GET", list_path, response)
     return response
 
@@ -3235,6 +3343,18 @@ def _verify_persistence_restart(criterion: dict[str, Any], project: dict, root: 
             )
 
         openapi = openapi_response["json"]
+        auth_plan = _authenticate_runtime(handle, openapi)
+        collected["auth_plan"] = auth_plan
+        if not auth_plan.get("ready"):
+            return _persistence_evidence(
+                criterion,
+                "not_verified",
+                "Persistence authentication could not be established",
+                marker=marker,
+                failure_reason=str(auth_plan.get("reason") or "unsupported_auth"),
+                final_assertion={"passed": False, "reason": str(auth_plan.get("reason") or "unsupported_auth")},
+                collected_evidence=collected,
+            )
         route_set, discovery_reason, discovery_evidence = _discover_persistence_routes(openapi, criterion, plan)
         collected["route_discovery"] = discovery_evidence
         if discovery_reason or not route_set:
@@ -3341,6 +3461,21 @@ def _verify_persistence_restart(criterion: dict[str, Any], project: dict, root: 
                 failure_reason=str(reason),
                 final_assertion={"passed": False, "reason": str(reason)},
                 collected_evidence=collected,
+            )
+        restarted_openapi = _http_json_request(restarted_handle.base_url, "GET", "/openapi.json")
+        if not restarted_openapi.get("ok") or not isinstance(restarted_openapi.get("json"), dict):
+            return _persistence_evidence(
+                criterion, "not_verified", "Restarted runtime OpenAPI discovery was unavailable", marker=marker,
+                created_identifier=created_identifier, pre_restart_verification=pre_verification,
+                restart_result=restart_result, failure_reason="restart_openapi_unavailable", collected_evidence=collected,
+            )
+        restart_auth_plan = _authenticate_runtime(restarted_handle, restarted_openapi["json"])
+        collected["restart_auth_plan"] = restart_auth_plan
+        if not restart_auth_plan.get("ready"):
+            return _persistence_evidence(
+                criterion, "not_verified", "Persistence reauthentication could not be established", marker=marker,
+                created_identifier=created_identifier, pre_restart_verification=pre_verification,
+                restart_result=restart_result, failure_reason=str(restart_auth_plan.get("reason") or "unsupported_auth"), collected_evidence=collected,
             )
         if not restart_result.get("real_restart"):
             failure_reason = "Restart did not create a distinct runtime process"
@@ -4025,13 +4160,13 @@ def _verify_ac003_request_tracking(criterion: dict[str, Any], project: dict, roo
         if not handle or not routes.get("collection") or not routes.get("item"):
             return _ticket_runtime_unavailable_evidence(criterion, project, root, collected)
         marker = f"track_{int(time.time() * 1000)}"
-        create = _ticket_create(handle, routes, _ticket_payload(marker, status="новая"))
+        create = _ticket_create(handle, routes, _ticket_payload(marker, status="new", description_field="problem_description"))
         method_path.append({"method": "POST", "path": routes["collection"]})
         created = create.get("json") if isinstance(create.get("json"), dict) else {}
         identifier = created.get("id")
         first_read = _ticket_read(handle, routes, identifier)
         method_path.append({"method": "GET", "path": routes["item"]})
-        update = _ticket_update(handle, routes, identifier, {"status": "в работе"})
+        update = _ticket_update(handle, routes, identifier, {"status": "in progress"})
         method_path.append({"method": "PUT", "path": routes["item"]})
         second_read = _ticket_read(handle, routes, identifier)
         method_path.append({"method": "GET", "path": routes["item"]})
@@ -4072,7 +4207,7 @@ def _verify_ac006_required_fields(criterion: dict[str, Any], project: dict, root
             return _ticket_runtime_unavailable_evidence(criterion, project, root, collected)
         marker = f"fields_{int(time.time() * 1000)}"
         expected_fields = ["client_name", "contact", "company", "description", "priority", "status"]
-        submitted = _ticket_payload(marker, status="ожидает клиента", priority="срочный")
+        submitted = _ticket_payload(marker, status="waiting for client", priority="urgent", description_field="problem_description")
         create = _ticket_create(handle, routes, submitted)
         identifier = (create.get("json") or {}).get("id") if isinstance(create.get("json"), dict) else None
         read = _ticket_read(handle, routes, identifier)
@@ -4298,19 +4433,17 @@ def _verify_ac015_single_admin(criterion: dict[str, Any], project: dict, root: s
     try:
         source_files = {rel: _read(path) for rel, path in _walk_files(root) if rel.endswith((".py", ".html", ".js"))}
         route_paths = sorted((openapi.get("paths", {}) if isinstance(openapi, dict) else {}).keys())
-        signup_routes = [path for path in route_paths if re.search(r"signup|register|tenant|role|user", path, re.IGNORECASE)]
-        auth_complexity_hits = [rel for rel, text in source_files.items() if re.search(r"\b(User|Role|Tenant|register|signup|OAuth|JWT)\b", text)]
-        meta_json = {}
-        if handle and routes.get("meta"):
-            meta = _http_json_request(handle.base_url, "GET", routes["meta"])
-            meta_json = meta.get("json") if isinstance(meta.get("json"), dict) else {}
+        signup_routes = [path for path in route_paths if re.search(r"signup|register|tenant|role", path, re.IGNORECASE)]
+        auth_complexity_hits = [rel for rel, text in source_files.items() if re.search(r"\b(Role|Tenant|register|signup|OAuth|JWT)\b", text)]
+        login_routes = [path for path in route_paths if re.search(r"login|session|auth", path, re.IGNORECASE)]
+        configured_admin = any(re.search(r"(?i)(admin|administrator).{0,30}(user|username|name)", text) for text in source_files.values())
         evidence = {
             "route_inventory": route_paths,
             "public_signup_routes": signup_routes,
             "complex_user_system_source_hits": auth_complexity_hits,
-            "local_admin_available": bool(meta_json.get("admin_name")),
-            "admin_configuration_path": "ADMIN_NAME environment variable and .env.example",
-            "meta_admin_name_present": bool(meta_json.get("admin_name")),
+            "local_admin_available": bool(login_routes and configured_admin),
+            "auth_routes": login_routes,
+            "admin_configuration_detected": configured_admin,
         }
         passed = not signup_routes and not auth_complexity_hits and evidence["local_admin_available"]
         collected.update(evidence)
@@ -4358,6 +4491,73 @@ def _verify_ac018_primary_buttons(criterion: dict[str, Any], project: dict, root
             collected["runtime_stop"] = _stop_http_sequence_runtime(handle)
 
 
+def _ast_text(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(value.value if isinstance(value, ast.Constant) and isinstance(value.value, str) else "{}" for value in node.values)
+    return ast.unparse(node) if hasattr(ast, "unparse") else ""
+
+
+def _ac019_test_coverage(source: str, file_name: str) -> dict[str, Any]:
+    """Extract explainable HTTP behavior coverage from pytest source without executing it."""
+    categories = ("create", "read_list", "update", "delete", "search", "filtering", "dashboard_metrics", "restart_persistence")
+    matrix = {category: [] for category in categories}
+    weak_signals = {category: [] for category in categories}
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {"coverage_matrix": matrix, "weak_name_signals": weak_signals, "parse_error": "invalid_python_test_source"}
+    for function in (node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")):
+        calls = []
+        assertions = [_ast_text(node.test) for node in ast.walk(function) if isinstance(node, ast.Assert)]
+        assertion_text = "\n".join(assertions)
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            method = node.func.attr.lower()
+            if method not in {"get", "post", "put", "patch", "delete"} or not node.args:
+                continue
+            route = _ast_text(node.args[0])
+            query_keys = []
+            for keyword in node.keywords:
+                if keyword.arg == "params" and isinstance(keyword.value, ast.Dict):
+                    query_keys = [_ast_text(key).lower() for key in keyword.value.keys if key is not None]
+            calls.append({"method": method.upper(), "route": route, "query_keys": query_keys})
+
+        def add(category: str, call: dict[str, Any], signal: str, assertion: str, confidence: str = "strong") -> None:
+            matrix[category].append({"category": category, "test_function": function.name, "detection_signal": signal, "route_or_operation": f"{call['method']} {call['route']}", "assertion_evidence": assertion, "confidence": confidence, "file": file_name})
+
+        post_calls = [call for call in calls if call["method"] == "POST" and not re.search(r"login|auth|session", call["route"], re.IGNORECASE)]
+        get_calls = [call for call in calls if call["method"] == "GET"]
+        if post_calls and re.search(r"status_code\s*==\s*(200|201)", assertion_text) and ".json" in _ast_text(function):
+            add("create", post_calls[0], "POST with success assertion and response JSON use", assertion_text)
+        for call in get_calls:
+            if "search" in call["query_keys"]:
+                add("search", call, "GET collection with search query parameter", assertion_text)
+            if any(key in {"status", "priority", "filter"} for key in call["query_keys"]):
+                add("filtering", call, "GET collection with constrained query parameter", assertion_text)
+            if "dashboard" in call["route"].lower() and re.search(r"\[(['\"])(new|urgent|closed|in progress)\1\]", assertion_text):
+                add("dashboard_metrics", call, "GET dashboard with metric field assertions", assertion_text)
+            if ("{" in call["route"] or call["query_keys"] or call["route"].rstrip("/").endswith(("tickets", "requests", "items"))) and ".json" in _ast_text(function):
+                add("read_list", call, "GET detail or collection with JSON result use", assertion_text)
+        for call in calls:
+            if call["method"] in {"PUT", "PATCH"} and re.search(r"status_code\s*==\s*200|\[(['\"])status\1\]", assertion_text):
+                add("update", call, "PUT/PATCH with success or updated-field assertion", assertion_text)
+            if call["method"] == "DELETE":
+                if re.search(r"status_code\s*==\s*404", assertion_text):
+                    add("delete", call, "DELETE followed by unavailable-after-delete assertion", assertion_text)
+                if re.search(r"status_code\s*==\s*400", assertion_text):
+                    add("delete", call, "DELETE confirmation rejection assertion", assertion_text)
+        function_source = _ast_text(function)
+        if re.search(r"\b(restart|shutdown|stop)\b", function_source, re.IGNORECASE) and re.search(r"\b(reload|start)\b", function_source, re.IGNORECASE) and get_calls:
+            add("restart_persistence", get_calls[-1], "Explicit lifecycle restart followed by retrieval", assertion_text)
+        for category, terms in {"create": ("create",), "read_list": ("list", "read", "view"), "update": ("update",), "delete": ("delete",), "search": ("search",), "filtering": ("filter",), "dashboard_metrics": ("dashboard", "stats"), "restart_persistence": ("persist", "restart")}.items():
+            if not matrix[category] and any(term in function.name.lower() for term in terms):
+                weak_signals[category].append({"test_function": function.name, "signal": "test_name_only", "confidence": "weak", "file": file_name})
+    return {"coverage_matrix": matrix, "weak_name_signals": weak_signals}
+
+
 def _verify_ac019_test_coverage(criterion: dict[str, Any], project: dict, root: str, qa_result: dict | None, checks: list[dict[str, Any]]) -> dict[str, Any]:
     tests = []
     for rel, path in _walk_files(root):
@@ -4365,19 +4565,14 @@ def _verify_ac019_test_coverage(criterion: dict[str, Any], project: dict, root: 
             text = _read(path)
             names = re.findall(r"def\s+(test_[A-Za-z0-9_]+)", text)
             tests.append({"file": rel, "test_names": names, "text": text})
-    matrix = {
-        "create": [t["file"] + "::" + name for t in tests for name in t["test_names"] if "create" in name or "appears" in name],
-        "read_list": [t["file"] + "::" + name for t in tests for name in t["test_names"] if "list" in name or "home_page" in name or "persists" in name],
-        "update": [t["file"] + "::" + name for t in tests for name in t["test_names"] if "update" in name or "status" in name],
-        "delete": [t["file"] + "::" + name for t in tests for name in t["test_names"] if "delete" in name],
-        "search": [t["file"] + "::" + name for t in tests for name in t["test_names"] if "search" in name],
-        "filtering": [t["file"] + "::" + name for t in tests for name in t["test_names"] if "filter" in name],
-        "persistence_business_logic": [t["file"] + "::" + name for t in tests for name in t["test_names"] if "persist" in name or "stats" in name or "closed_today" in name],
-    }
-    missing = [requirement for requirement, covered_by in matrix.items() if not covered_by]
+    analysis = [_ac019_test_coverage(test["text"], test["file"]) for test in tests]
+    categories = ("create", "read_list", "update", "delete", "search", "filtering", "dashboard_metrics", "restart_persistence")
+    matrix = {category: [entry for item in analysis for entry in item["coverage_matrix"][category]] for category in categories}
+    weak_signals = {category: [entry for item in analysis for entry in item["weak_name_signals"][category]] for category in categories}
+    missing = [category for category, evidence in matrix.items() if not evidence]
     pytest_result = _run_command([sys.executable, "-m", "pytest", "-q"], root, timeout=120)
     passed = not missing and pytest_result.get("exit_code") == 0
-    collected = {"coverage_matrix": matrix, "missing_coverage": missing, "test_files": [{"file": t["file"], "test_names": t["test_names"]} for t in tests], "pytest_result": pytest_result}
+    collected = {"coverage_matrix": matrix, "weak_name_signals": weak_signals, "missing_coverage": missing, "test_files": [{"file": t["file"], "test_names": t["test_names"]} for t in tests], "pytest_result": pytest_result}
     return _targeted_evidence(
         criterion, project, root, "semantic_automated_test_coverage", "passed" if passed else "failed",
         "Automated tests semantically cover the main request-management functions" if passed else "Automated test coverage has critical gaps",
@@ -4647,6 +4842,8 @@ def verify_acceptance_criterion(criterion: dict[str, Any], project: dict, root: 
     semantic_plan = _semantic_verifier_plan(criterion, project, root)
     semantic_verifier = SEMANTIC_ACCEPTANCE_VERIFIERS.get(str(semantic_plan.get("verifier_type") or ""))
     semantic_text = _semantic_acceptance_text(criterion)
+    generic_plan = _criterion_verifier_plan(criterion)
+    generic_verifier = ACCEPTANCE_VERIFIERS.get(str(generic_plan.get("verifier_type") or ""))
     use_semantic_verifier = bool(
         semantic_verifier
         and (
@@ -4659,6 +4856,15 @@ def verify_acceptance_criterion(criterion: dict[str, Any], project: dict, root: 
         criterion = dict(criterion)
         criterion["semantic_verifier_plan"] = semantic_plan
         evidence = semantic_verifier(criterion, project, root, qa_result, checks)
+        normalized = normalize_acceptance_evidence(str(criterion.get("id", "")), str(evidence.get("status", "not_verified")), evidence)
+        _record_browser_project_issue(project, criterion, normalized)
+        return normalized
+    # The generic planner is the semantic strategy for CRUD and restart criteria
+    # that do not require one of the ticket-specific semantic verifiers above.
+    if method == "feature_trace_static_or_smoke" and generic_verifier:
+        criterion = dict(criterion)
+        criterion["verifier_plan"] = generic_plan
+        evidence = generic_verifier(criterion, project, root, qa_result, checks)
         normalized = normalize_acceptance_evidence(str(criterion.get("id", "")), str(evidence.get("status", "not_verified")), evidence)
         _record_browser_project_issue(project, criterion, normalized)
         return normalized
@@ -4787,6 +4993,7 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     _add(checks, "todo_scan", "passed" if todo_ok else "failed", {"files_with_blocking_todos": todo_hits})
 
     latest_qa_ok = bool((qa_result or {}).get("success"))
+    project["_qa_passed"] = latest_qa_ok
     _add(checks, "latest_full_qa", "passed" if latest_qa_ok else "failed", {"rounds_completed": (qa_result or {}).get("rounds_completed"), "total_errors": (qa_result or {}).get("total_errors")})
 
     unresolved_regressions = []
@@ -4871,7 +5078,36 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
         "legend": {"verified": "passed", "not_verified": "failed", "blocked_by_credentials": "blocked", "optional_limitation": "optional failed/non-critical"},
         "audit_engine_version": 2,
     }
+    if status == "failed":
+        snapshot = project_snapshot_fingerprint(root)
+        existing = {(item.get("source"), item.get("criterion_id"), item.get("title")) for item in project.get("issues", []) if isinstance(item, dict)}
+        for check in checks:
+            if check.get("status") != "failed" or check.get("name") in {"latest_full_qa", "credential_status"}:
+                continue
+            title = f"Final Audit: {check.get('name')}"
+            key = ("final_delivery_audit", "", title)
+            if key not in existing:
+                project.setdefault("issues", []).append(Issue(
+                    id=f"ISSUE-AUDIT-{check.get('name')}-{snapshot[:12]}", source="final_delivery_audit", severity="high",
+                    requirement_id="", criterion_id="", title=title,
+                    evidence={"check": check, "project_snapshot": snapshot},
+                    reproduction=["Run Final Delivery Audit", f"Inspect failed check: {check.get('name')}"], owner="opencode",
+                    verification_method="final_delivery_audit",
+                ).to_dict())
+        for criterion in project.get("acceptance_criteria", []):
+            if criterion.get("priority") in ("high", "critical") and criterion.get("status") in {"failed", "not_verified"}:
+                title = f"Final Audit acceptance: {criterion.get('title')}"
+                key = ("final_delivery_audit", criterion.get("id"), title)
+                if key not in existing:
+                    project.setdefault("issues", []).append(Issue(
+                        id=f"ISSUE-AUDIT-{criterion.get('id')}-{snapshot[:12]}", source="final_delivery_audit", severity="high",
+                        requirement_id="", criterion_id=str(criterion.get("id") or ""), title=title,
+                        evidence={"criterion": criterion, "project_snapshot": snapshot},
+                        reproduction=["Run Final Delivery Audit", "Run the criterion's direct verifier"], owner="opencode",
+                        verification_method="final_delivery_audit",
+                    ).to_dict())
     project["final_delivery_report"] = report
+    project["_final_audit_passed"] = status == "passed"
     persist_audit_run(project, root, report)
     return report
 

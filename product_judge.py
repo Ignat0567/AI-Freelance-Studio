@@ -285,7 +285,8 @@ def run_product_judge(
         if before != after:
             return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "Product Judge source-integrity check failed"}
         if response.get("status") != "success":
-            return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": f"Product Judge request failed: {response.get('error_category', 'unknown')}"}
+            diagnostics = {key: response.get(key) for key in ("failure_stage", "error_category", "exit_code", "stderr_summary", "stdout_summary", "timeout", "attachment_count", "attachment_metadata", "duration", "prompt_characters", "cli_invocation") if key in response}
+            return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": f"Product Judge request failed: {response.get('error_category', 'unknown')}", "request_diagnostics": diagnostics}
         raw = response.get("text", "")
     elif not provider_capabilities(provider).get("image_input") or not model:
         return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": "Configured provider/model does not have a supported image-input transport"}
@@ -305,5 +306,5 @@ def run_product_judge(
             return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": f"Product Judge request failed: {str(exc)[:300]}"}
     validated, error = validate_judge_response(raw)
     if not validated:
-        return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": error}
+        return {**result, "verdict": "insufficient_evidence", "availability": "unavailable", "findings": [], "blocking_findings": [], "reason": error, "request_diagnostics": {"failure_stage": "response_parsing", "error_category": "malformed_response", "stdout_summary": _redact(str(raw))[:1000]}}
     return {**result, **validated, "availability": "available", "reason": ""}

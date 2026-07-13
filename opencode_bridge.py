@@ -15,6 +15,7 @@ import threading
 import uuid
 import re
 import queue
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -25,6 +26,18 @@ OPCODE_SERVE_PORT = 4096
 OPCODE_SERVE_HOST = "127.0.0.1"
 OPENCODE_WEB_PORT = 4097
 TASK_TIMEOUT = 600  # 10 minutes max per task
+
+
+def _resolve_cli_task_file(project_dir: str, task_file_argument: str) -> tuple[Path, Path, str]:
+    """Resolve a CLI task file against its subprocess cwd without duplicate paths."""
+    cwd = Path(project_dir).resolve()
+    argument = Path(task_file_argument)
+    if not argument.is_absolute() and len(argument.parts) > 1:
+        parent = str(argument.parent).replace("/", "\\").casefold()
+        if parent and str(cwd).replace("/", "\\").casefold().endswith(parent):
+            return cwd, cwd / argument, "duplicated_project_relative_path"
+    resolved = argument.resolve() if argument.is_absolute() else (cwd / argument).resolve()
+    return cwd, resolved, ""
 
 # ── Provider mapping: FreelancerStudio → OpenCode ─────────────────────────
 # OpenCode uses "provider/model" format, e.g. "anthropic/claude-sonnet-4-20250514"
@@ -755,7 +768,7 @@ class OpencodeBridge:
         """Run OpenCode via CLI when the local HTTP API requires auth."""
         binary = self._binary or _discover_opencode()
         if not binary:
-            return {"success": False, "error": "OpenCode binary not found", "session_id": None}
+            return {"success": False, "error": "OpenCode binary not found", "session_id": None, "subprocess_started": False, "exit_code": None, "command_shape": []}
         provider, model = _preferred_provider_model()
         prompt = (
             f"SYSTEM:\n{system_prompt}\n\n"
@@ -764,12 +777,23 @@ class OpencodeBridge:
             "Do not ask for confirmation. Run npm install/build or tests when relevant. "
             "Before finishing, ensure root README.md, root dependency files, runnable entrypoints, and real verification commands are present."
         )
-        prompt_file = os.path.join(project_dir, ".opencode_task.md")
+        task_file_argument = ".opencode_task.md"
+        cwd, prompt_path, path_error = _resolve_cli_task_file(project_dir, task_file_argument)
+        task_metadata = {
+            "task_file_argument": task_file_argument,
+            "task_file_resolved_path": str(prompt_path),
+            "task_file_exists": False,
+        }
+        if path_error:
+            return {"success": False, "error": path_error, "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "preflight_status": "task_file_not_found", **task_metadata}
         try:
-            with open(prompt_file, "w", encoding="utf-8") as f:
+            with open(prompt_path, "w", encoding="utf-8") as f:
                 f.write(prompt)
         except Exception as e:
-            return {"success": False, "error": f"Failed to write OpenCode task file: {e}", "session_id": "opencode-cli"}
+            return {"success": False, "error": f"Failed to write OpenCode task file: {e}", "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "preflight_status": "task_file_not_found", **task_metadata}
+        task_metadata["task_file_exists"] = prompt_path.is_file()
+        if not task_metadata["task_file_exists"]:
+            return {"success": False, "error": "OpenCode task file was not created", "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "preflight_status": "task_file_not_found", **task_metadata}
         cmd = [
             binary,
             "run",
@@ -777,8 +801,9 @@ class OpencodeBridge:
             "--model",
             f"{provider}/{model}",
             "--dangerously-skip-permissions",
-            f"--file={prompt_file}",
+            f"--file={task_file_argument}",
         ]
+        command_shape = [str(binary), "run", "<task>", "--model", f"{provider}/{model}", "--dangerously-skip-permissions", "--file=<task-file>"]
         session_id = f"opencode-cli-{uuid.uuid4().hex[:8]}"
         if log_callback:
             log_callback(f"[Codex] Starting OpenCode CLI session: {session_id}")
@@ -786,7 +811,7 @@ class OpencodeBridge:
         try:
             proc = subprocess.Popen(
                 cmd,
-                cwd=project_dir,
+                cwd=str(cwd),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -824,7 +849,7 @@ class OpencodeBridge:
                 _drain_output()
                 if session_id in self._cancelled_sessions:
                     _terminate_process_tree(proc)
-                    return {"success": False, "error": "OpenCode task cancelled", "session_id": session_id, "cancelled": True, "timed_out": False}
+                    return {"success": False, "error": "OpenCode task cancelled", "session_id": session_id, "cancelled": True, "timed_out": False, "subprocess_started": True, "exit_code": proc.returncode, "command_shape": command_shape, **task_metadata}
                 if proc.poll() is not None:
                     break
                 if time.time() - started > TASK_TIMEOUT:
@@ -838,6 +863,11 @@ class OpencodeBridge:
                         "session_id": session_id,
                         "timed_out": True,
                         "summary": output[-4000:],
+                        "subprocess_started": True,
+                        "exit_code": proc.returncode,
+                        "timeout_seconds": TASK_TIMEOUT,
+                        "command_shape": command_shape,
+                        **task_metadata,
                     }
                 time.sleep(0.1)
             reader.join(timeout=1)
@@ -849,16 +879,20 @@ class OpencodeBridge:
                 "summary": output[-4000:],
                 "error": None if proc.returncode == 0 else _friendly_opencode_error(output[-2000:]),
                 "timed_out": False,
+                "subprocess_started": True,
+                "exit_code": proc.returncode,
+                "command_shape": command_shape,
+                **task_metadata,
             }
         except Exception as e:
             logger.exception("OpenCode CLI task failed")
-            return {"success": False, "error": str(e), "session_id": session_id, "timed_out": False}
+            return {"success": False, "error": str(e), "session_id": session_id, "timed_out": False, "subprocess_started": False, "exit_code": None, "command_shape": command_shape, **task_metadata}
         finally:
             self._active_processes.pop(session_id, None)
             self._cancelled_sessions.discard(session_id)
             try:
-                if os.path.exists(prompt_file):
-                    os.remove(prompt_file)
+                if prompt_path.exists():
+                    prompt_path.unlink()
             except Exception:
                 pass
 

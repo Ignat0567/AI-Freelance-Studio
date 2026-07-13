@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { tr } from '../i18n.js';
+import OpenCodeConnectionSetup from './OpenCodeConnectionSetup.jsx';
 
 const ACCENT_COLORS = [
   { name: 'Sky', color: '#0ea5e9' },
@@ -497,6 +498,8 @@ function AIProviderSettings({ activePort, addLog }) {
 
   return (
     <div className="space-y-5">
+      <OpenCodeConnectionSetup activePort={activePort} addLog={addLog} />
+      <ProductJudgeSettings activePort={activePort} addLog={addLog} />
       <div className="rounded-xl p-4 border" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
         <div className="flex items-center justify-between gap-3 mb-3">
           <div>
@@ -586,6 +589,23 @@ function AIProviderSettings({ activePort, addLog }) {
       </div>
     </div>
   );
+}
+
+function ProductJudgeSettings({ activePort, addLog }) {
+  const [agent, setAgent] = useState(null);
+  const [connections, setConnections] = useState([]);
+  const [connectionId, setConnectionId] = useState('');
+  const [model, setModel] = useState('');
+  const [message, setMessage] = useState('');
+  const load = () => Promise.all([
+    fetch(`http://localhost:${activePort}/api/agents`).then(r => r.json()),
+    fetch(`http://localhost:${activePort}/api/provider-connections`).then(r => r.json()),
+  ]).then(([agents, providerData]) => { const judge = agents.product_judge; setAgent(judge); const valid = (providerData.connections || []).filter(c => c.connection_type === 'opencode_bridge' && c.capabilities?.image_input?.status === 'supported'); setConnections(valid); setConnectionId(judge?.connection_id || valid[0]?.connection_id || ''); setModel(judge?.model || valid[0]?.configured_model || ''); }).catch(() => setMessage('Product Judge settings are unavailable.'));
+  useEffect(() => { load(); }, [activePort]);
+  const selected = connections.find(c => c.connection_id === connectionId);
+  const save = async () => { if (!selected) { setMessage('A saved OpenCode connection with proven image support is required.'); return; } const response = await fetch(`http://localhost:${activePort}/api/agents/product_judge/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: agent?.enabled !== false, use_global: false, provider: 'opencode_bridge', connection_id: connectionId, model, temperature: agent?.temperature ?? 0.3, top_p: agent?.top_p ?? 0.9, top_k: agent?.top_k ?? null }) }); const data = await response.json(); if (data.status === 'success') { setMessage('Product Judge assignment saved.'); addLog?.('[Product Judge]: OpenCode vision connection assigned.'); load(); } else setMessage(data.detail || 'Save failed.'); };
+  const independence = agent?.active_provider === 'opencode_bridge' && model ? 'same_provider_different_model or same_model_separate_role' : 'Calculated from current creator and judge identities after save.';
+  return <section className="provider-setup product-judge-settings"><div className="provider-heading"><div><strong>Product Judge</strong><p>Independent Product Reviewer. Read-only, evidence-bound vision review.</p></div><span className="connection-state">{selected ? 'Ready' : 'Unavailable'}</span></div><div className="provider-form"><label>Provider connection<select value={connectionId} onChange={e => { const next = connections.find(c => c.connection_id === e.target.value); setConnectionId(e.target.value); setModel(next?.configured_model || ''); }}><option value="">Select proven vision connection</option>{connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.name}</option>)}</select></label><label>Model<select value={model} onChange={e => setModel(e.target.value)}><option value={selected?.configured_model || model}>{selected?.configured_model || model || 'No model available'}</option></select></label></div><div className="judge-details"><span>Vision: <b>{selected ? 'Proven' : 'Unavailable'}</b></span><span>Independence: <b>{independence}</b></span></div><button type="button" className="primary" onClick={save} disabled={!selected}>Save Product Judge</button>{message && <p className="provider-message" role="status">{message}</p>}</section>;
 }
 
 function GitHubConfig({ activePort, addLog }) {

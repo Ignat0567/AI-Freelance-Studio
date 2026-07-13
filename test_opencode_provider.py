@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import opencode_provider
 import product_judge
@@ -51,6 +52,45 @@ def test_image_probe_requires_marker_from_actual_response(monkeypatch, tmp_path)
     result = connection.probe_image(str(image), "OPENCODE-BRIDGE-VISION-7391")
     assert result["capabilities"]["image_input"]["status"] == "unsupported"
     assert not result["effective_image_input"]
+
+
+def test_single_image_proof_does_not_claim_multi_image_support(monkeypatch, tmp_path):
+    image = tmp_path / "probe.png"
+    image.write_bytes(b"image")
+    connection = _connection()
+    monkeypatch.setattr(connection, "execute", lambda _request: {"status": "success", "text": "OPENCODE-BRIDGE-VISION-7391"})
+
+    result = connection.probe_image(str(image), "OPENCODE-BRIDGE-VISION-7391")
+
+    assert result["capabilities"]["single_image_input"]["status"] == "supported"
+    assert result["capabilities"]["multi_image_input"]["status"] == "unknown"
+
+
+def test_failed_request_preserves_safe_cli_diagnostics(monkeypatch, tmp_path):
+    image = tmp_path / "current screenshot.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 16)
+    connection = _connection(executable_path="opencode")
+    monkeypatch.setattr(opencode_provider, "_run_capture", lambda *_args, **_kwargs: (2, "", "error: unknown option --file token=secret-value"))
+
+    result = connection.execute({"user_content": "Describe this", "image_attachments": [str(image)], "timeout": 5})
+
+    assert result["failure_stage"] == "cli_process_exit"
+    assert result["error_category"] == "cli_argument_parsing"
+    assert result["exit_code"] == 2
+    assert result["attachment_count"] == 1
+    assert result["attachment_metadata"][0]["format"] == "png"
+    assert "secret-value" not in result["stderr_summary"]
+
+
+def test_timeout_is_not_request_rejection(monkeypatch):
+    connection = _connection(executable_path="opencode")
+    monkeypatch.setattr(opencode_provider, "_run_capture", lambda *_args, **_kwargs: (None, "", "timeout"))
+
+    result = connection.execute({"user_content": "Describe this", "timeout": 5})
+
+    assert result["error_category"] == "timeout"
+    assert result["failure_stage"] == "model_execution"
+    assert result["timeout"] is True
 
 
 def test_text_only_bridge_is_rejected_for_product_judge(tmp_path):

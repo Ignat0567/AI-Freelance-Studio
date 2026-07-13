@@ -6,6 +6,9 @@ import json
 import re
 import traceback
 import hashlib
+import shutil
+import uuid
+from datetime import datetime, timezone
 from ai_utils import ask_studio_ai_with_history
 from project_spec import Issue, detect_project_profiles
 from project_state import persist_project_state
@@ -13,6 +16,16 @@ from project_state import persist_project_state
 MAX_ROUNDS = 4
 MAX_REPAIR_ATTEMPTS = 3
 OPENCODE_FIX_APPLIED = "__opencode_fix_applied__"
+REPAIR_ATTEMPT_STATUSES = {
+    "issue_not_selected", "prompt_build_failed", "executable_not_found",
+    "subprocess_start_failed", "subprocess_timeout", "subprocess_nonzero_exit",
+    "subprocess_zero_exit_no_changes", "subprocess_zero_exit_changes_detected",
+    "task_file_not_found", "exception", "completed",
+}
+
+
+class RepairAttemptResult(dict):
+    """Sanitized, durable outcome of one OpenCode repair invocation."""
 POLICY_GROUPS = ("python", "fastapi", "telegram", "node", "react_vite", "static_web", "generic")
 POLICY_GROUP_RULES = {
     "python": ("python_requirements", "python_pytest", "python_source_quality", "python_getenv_defaults"),
@@ -71,6 +84,11 @@ IGNORED_QA_DIRS = {
 }
 
 IGNORED_QA_EXTENSIONS = {".db", ".sqlite", ".sqlite3", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".glb"}
+
+
+def _safe_repair_text(value: str) -> str:
+    """Keep repair diagnostics useful without retaining credential-shaped output."""
+    return re.sub(r"(?i)(authorization|api[_-]?key|token|secret|password|cookie)\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", value or "")
 
 
 def _walk_project_files(root_path):
@@ -1287,11 +1305,58 @@ asyncio.run(main())
         return None
 
     def _request_opencode_fix(self, errors, error_text, repair_report=None):
+        """Run one repair attempt and always retain a safe, structured outcome."""
+        started_at = datetime.now(timezone.utc)
+        issue_summaries = []
+        for item in errors or []:
+            if isinstance(item, dict):
+                issue_summaries.append({"id": str(item.get("id") or ""), "category": str(item.get("category") or item.get("source") or "")})
+            else:
+                issue_summaries.append({"id": "", "category": "qa_failure"})
+        selected = [item for index, item in enumerate(issue_summaries) if not isinstance((errors or [])[index], dict) or (errors or [])[index].get("status", "open") == "open"]
+        result = RepairAttemptResult({
+            "attempt_id": f"repair-{uuid.uuid4().hex}", "success": False,
+            "status": "issue_not_selected", "failure_stage": "issue_selection", "error_category": "",
+            "issues_received": issue_summaries, "repairable_issues_selected": selected,
+            "issue_ids": [item["id"] for item in selected if item["id"]],
+            "prompt_built": False, "prompt_length": 0, "prompt_hash": "",
+            "working_directory": os.path.abspath(self.target_path), "executable": "", "executable_found": False,
+            "opencode_version": "", "transport": "opencode_cli", "command_shape": [], "model": self.model,
+            "task_file_argument": "", "task_file_resolved_path": "", "task_file_exists": False,
+            "subprocess_started": False, "started_at": started_at.isoformat(), "finished_at": "",
+            "duration_seconds": 0.0, "timeout": False, "timeout_seconds": None, "exit_code": None,
+            "stdout_length": 0, "stderr_length": 0, "stdout_summary": "", "stderr_summary": "",
+            "exception_type": "", "exception_summary": "", "snapshot_before": {}, "snapshot_after": {},
+            "filesystem_changes_detected": False, "changed_files": [], "meaningful_changes_detected": False,
+            "textual_result_present": False, "diagnostics": {},
+        })
+        try:
+            initial_snapshot = _snapshot_project_files(self.target_path)
+            result["snapshot_before"] = initial_snapshot
+            result["snapshot_after"] = initial_snapshot
+        except Exception as exc:
+            result["diagnostics"]["snapshot_error"] = _safe_repair_text(str(exc))
+
+        def finish():
+            finished = datetime.now(timezone.utc)
+            result["finished_at"] = finished.isoformat()
+            result["duration_seconds"] = round((finished - started_at).total_seconds(), 6)
+            self.project.setdefault("repair_attempts", []).append(dict(result))
+            try:
+                persist_project_state(self.project, self.target_path)
+            except Exception as exc:
+                result["diagnostics"]["persistence_error"] = _safe_repair_text(str(exc))
+            return result
+
+        if not selected:
+            self.log("[QA OpenCode Fix]: No repairable issues selected.")
+            return finish()
         try:
             from opencode_bridge import get_bridge
         except Exception as e:
             self.log(f"[QA OpenCode Fix]: Bridge unavailable: {e}")
-            return None
+            result.update(status="subprocess_start_failed", failure_stage="bridge_import", error_category="bridge_unavailable", exception_type=type(e).__name__, exception_summary=_safe_repair_text(str(e)))
+            return finish()
 
         criteria_lines = []
         for criterion in self.project.get("acceptance_criteria", [])[:30]:
@@ -1301,9 +1366,10 @@ asyncio.run(main())
             )
         criteria_text = "\n".join(criteria_lines) if criteria_lines else "No acceptance criteria stored."
 
-        report_json = json.dumps(repair_report or {}, ensure_ascii=False, indent=2)
-        profile_rules = policy_prompt_rules(self.policy_groups)
-        issue_report = (
+        try:
+            report_json = json.dumps(repair_report or {}, ensure_ascii=False, indent=2)
+            profile_rules = policy_prompt_rules(self.policy_groups)
+            issue_report = (
             "You are repairing an existing software project. Inspect the actual files before changing anything. "
             "Fix the root cause of the failures. Do not remove required functionality. Do not weaken, delete, skip, or falsify tests only to obtain a passing result. "
             "Do not fake outputs. Do not remove difficult requirements. Make the smallest correct fix. Edit the real files directly. "
@@ -1326,22 +1392,34 @@ asyncio.run(main())
             "- Ensure README/dependency/run/test instructions match the actual app.\n"
             "- Stop only when the product is runnable and the listed QA failures are resolved.\n"
             "\nProfile-specific rules selected for this project:\n"
-            f"{profile_rules}"
-        )
+                f"{profile_rules}"
+            )
+            result["prompt_built"] = True
+            result["prompt_length"] = len(issue_report)
+            result["prompt_hash"] = hashlib.sha256(issue_report.encode("utf-8")).hexdigest()
+        except Exception as e:
+            result.update(status="prompt_build_failed", failure_stage="prompt_build", error_category="prompt_serialization", exception_type=type(e).__name__, exception_summary=_safe_repair_text(str(e)))
+            return finish()
         try:
             if self.project.get("cancel_requested") or self.project.get("status") == "cancelled":
                 self.log("[QA OpenCode Fix]: Cancelled before OpenCode repair start.")
-                return None
+                result.update(status="issue_not_selected", failure_stage="cancelled", error_category="cancelled")
+                return finish()
             bridge = get_bridge()
+            executable = getattr(bridge, "_binary", None) or shutil.which("opencode.cmd") or shutil.which("opencode") or ""
+            result["executable"] = _safe_repair_text(str(executable))
+            result["executable_found"] = bool(executable)
             if not bridge.ensure_running(workdir=self.target_path):
                 self.log("[QA OpenCode Fix]: OpenCode is unavailable or not authenticated.")
-                return None
+                result.update(status="executable_not_found" if not executable else "subprocess_start_failed", failure_stage="bridge_start", error_category="executable_not_found" if not executable else "bridge_unavailable")
+                return finish()
 
             snapshot = _snapshot_project_files(self.target_path)
+            result["snapshot_before"] = snapshot
             self.log(f"[QA OpenCode Fix] Snapshot captured: {len(snapshot)} relevant files")
             self.log("[QA OpenCode Fix]: Starting OpenCode repair task...")
 
-            result = bridge.execute_fix_task(
+            result_from_bridge = bridge.execute_fix_task(
                 project_dir=self.target_path,
                 issues=issue_report,
                 log_callback=lambda msg: self.log(msg.replace("[Codex]", "[OpenCode]")),
@@ -1349,11 +1427,18 @@ asyncio.run(main())
 
             after_snapshot = _snapshot_project_files(self.target_path)
             changed = _compare_snapshots(snapshot, after_snapshot)
+            result["snapshot_after"] = after_snapshot
+            result["changed_files"] = changed
+            result["filesystem_changes_detected"] = bool(changed)
+            result["meaningful_changes_detected"] = bool(changed)
 
-            timed_out = result.get("timed_out", False)
-            session_id = result.get("session_id") or "?"
-            success = result.get("success", False)
-            error = result.get("error")
+            timed_out = bool(result_from_bridge.get("timed_out", False))
+            session_id = result_from_bridge.get("session_id") or "?"
+            success = bool(result_from_bridge.get("success", False))
+            error = result_from_bridge.get("error")
+            output = str(result_from_bridge.get("summary") or "")
+            result.update({"timeout": timed_out, "timeout_seconds": result_from_bridge.get("timeout_seconds"), "exit_code": result_from_bridge.get("exit_code"), "subprocess_started": bool(result_from_bridge.get("subprocess_started", True)), "stdout_length": len(output), "stdout_summary": _safe_repair_text(output[-1000:]), "stderr_length": len(str(result_from_bridge.get("stderr") or "")), "stderr_summary": _safe_repair_text(str(result_from_bridge.get("stderr") or "")[-1000:]), "textual_result_present": bool(output), "task_file_argument": result_from_bridge.get("task_file_argument", ""), "task_file_resolved_path": _safe_repair_text(str(result_from_bridge.get("task_file_resolved_path") or "")), "task_file_exists": bool(result_from_bridge.get("task_file_exists", False)), "diagnostics": {"session_id": session_id, "command_shape": result_from_bridge.get("command_shape", [])}})
+            result["command_shape"] = result["diagnostics"]["command_shape"]
 
             if changed:
                 self.log(f"[QA OpenCode Fix] {len(changed)} project file(s) changed: {', '.join(changed[:10])}")
@@ -1363,7 +1448,8 @@ asyncio.run(main())
                     self.log(f"[QA OpenCode Fix] OpenCode exited with error: {error}. Project files changed — running full QA to verify the actual repair.")
                 else:
                     self.log(f"[QA OpenCode Fix]: OpenCode repair completed (session {session_id}). Files changed — running full QA to verify.")
-                return {OPENCODE_FIX_APPLIED: True, "session_id": session_id, "changed_files": len(changed)}
+                result.update(success=True, status="subprocess_zero_exit_changes_detected" if success else "subprocess_nonzero_exit", failure_stage="", error_category="" if success else "nonzero_exit", **{OPENCODE_FIX_APPLIED: True})
+                return finish()
             else:
                 if timed_out:
                     self.log("[QA OpenCode Fix] OpenCode timed out. No meaningful files changed. Repair attempt considered unsuccessful.")
@@ -1371,7 +1457,10 @@ asyncio.run(main())
                     self.log(f"[QA OpenCode Fix]: OpenCode repair failed: {error}. No files changed.")
                 else:
                     self.log("[QA OpenCode Fix]: OpenCode completed but no project files changed.")
-                return None
+                preflight_status = result_from_bridge.get("preflight_status")
+                result.update(status="task_file_not_found" if preflight_status == "task_file_not_found" else ("subprocess_timeout" if timed_out else ("subprocess_nonzero_exit" if not success else "subprocess_zero_exit_no_changes")), failure_stage="preflight_path_validation" if preflight_status == "task_file_not_found" else "subprocess", error_category="task_file_not_found" if preflight_status == "task_file_not_found" else ("timeout" if timed_out else ("nonzero_exit" if not success else "no_source_changes")))
+                return finish()
         except Exception as e:
             self.log(f"[QA OpenCode Fix]: Exception: {e}")
-            return None
+            result.update(status="exception", failure_stage="repair_invocation", error_category="exception", exception_type=type(e).__name__, exception_summary=_safe_repair_text(str(e)))
+            return finish()

@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+import os
+import secrets
+import sqlite3
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Literal
+
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+Priority = Literal["low", "normal", "high", "urgent"]
+TicketStatus = Literal["new", "in progress", "waiting for client", "completed", "closed"]
+
+DATABASE_PATH = Path(os.getenv("TICKET_TRACKER_DB", "tickets.db"))
+ADMIN_USER = os.getenv("TICKET_TRACKER_ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.getenv("TICKET_TRACKER_ADMIN_PASSWORD", "admin123")
+SESSION_COOKIE = "ticket_tracker_session"
+SESSION_TOKEN = secrets.token_urlsafe(32)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def get_connection() -> sqlite3.Connection:
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_db() -> None:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with get_connection() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_name TEXT NOT NULL,
+                contact TEXT NOT NULL,
+                company TEXT,
+                problem_description TEXT NOT NULL,
+                priority TEXT NOT NULL CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+                status TEXT NOT NULL CHECK (status IN ('new', 'in progress', 'waiting for client', 'completed', 'closed')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                author TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+            );
+            """
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="IT Ticket Tracker", lifespan=lifespan)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TicketIn(BaseModel):
+    client_name: str = Field(min_length=1, max_length=120)
+    contact: str = Field(min_length=3, max_length=160)
+    company: str = Field(default="", max_length=120)
+    problem_description: str = Field(min_length=3, max_length=4000)
+    priority: Priority = "normal"
+    status: TicketStatus = "new"
+
+    @field_validator("client_name", "contact", "company", "problem_description", mode="before")
+    @classmethod
+    def clean_text(cls, value: object) -> str:
+        return str(value or "").strip()
+
+    @model_validator(mode="after")
+    def require_phone_or_email(self):
+        if "@" not in self.contact and not any(character.isdigit() for character in self.contact):
+            raise ValueError("contact must contain a phone number or email address")
+        return self
+
+
+class CommentIn(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+    author: str = Field(default="admin", max_length=80)
+
+    @field_validator("body", "author", mode="before")
+    @classmethod
+    def clean_text(cls, value: object) -> str:
+        return str(value or "").strip()
+
+
+def row_to_ticket(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "client_name": row["client_name"],
+        "contact": row["contact"],
+        "company": row["company"] or "",
+        "problem_description": row["problem_description"],
+        "priority": row["priority"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "closed_at": row["closed_at"],
+    }
+
+
+def require_admin(ticket_tracker_session: str | None = Cookie(default=None)) -> None:
+    if ticket_tracker_session != SESSION_TOKEN:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login required")
+
+
+@app.post("/login")
+def login(credentials: LoginRequest, response: Response) -> dict:
+    if credentials.username != ADMIN_USER or credentials.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid administrator credentials")
+    response.set_cookie(SESSION_COOKIE, SESSION_TOKEN, httponly=True, samesite="lax")
+    return {"username": ADMIN_USER}
+
+
+@app.post("/logout")
+def logout(response: Response) -> dict:
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/session")
+def session(_: None = Depends(require_admin)) -> dict:
+    return {"username": ADMIN_USER}
+
+
+@app.get("/api/tickets")
+def list_tickets(
+    search: str = "",
+    priority: Priority | Literal[""] = "",
+    ticket_status: TicketStatus | Literal[""] = Query(default="", alias="status"),
+    _: None = Depends(require_admin),
+) -> list[dict]:
+    clauses: list[str] = []
+    params: list[str] = []
+    if search.strip():
+        clauses.append("(client_name LIKE ? OR contact LIKE ? OR problem_description LIKE ?)")
+        term = f"%{search.strip()}%"
+        params.extend([term, term, term])
+    if priority:
+        clauses.append("priority = ?")
+        params.append(priority)
+    if ticket_status:
+        clauses.append("status = ?")
+        params.append(ticket_status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT * FROM tickets {where} ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, updated_at DESC",
+            params,
+        ).fetchall()
+    return [row_to_ticket(row) for row in rows]
+
+
+@app.post("/api/tickets", status_code=status.HTTP_201_CREATED)
+def create_ticket(ticket: TicketIn, _: None = Depends(require_admin)) -> dict:
+    now = utc_now()
+    closed_at = now if ticket.status == "closed" else None
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO tickets (client_name, contact, company, problem_description, priority, status, created_at, updated_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ticket.client_name,
+                ticket.contact,
+                ticket.company,
+                ticket.problem_description,
+                ticket.priority,
+                ticket.status,
+                now,
+                now,
+                closed_at,
+            ),
+        )
+        row = connection.execute("SELECT * FROM tickets WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return row_to_ticket(row)
+
+
+@app.get("/api/tickets/{ticket_id}")
+def get_ticket(ticket_id: int, _: None = Depends(require_admin)) -> dict:
+    with get_connection() as connection:
+        ticket = connection.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        if ticket is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+        comments = connection.execute(
+            "SELECT * FROM comments WHERE ticket_id = ? ORDER BY created_at ASC, id ASC", (ticket_id,)
+        ).fetchall()
+    result = row_to_ticket(ticket)
+    result["comments"] = [dict(comment) for comment in comments]
+    return result
+
+
+@app.put("/api/tickets/{ticket_id}")
+def update_ticket(ticket_id: int, ticket: TicketIn, _: None = Depends(require_admin)) -> dict:
+    now = utc_now()
+    with get_connection() as connection:
+        existing = connection.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        if existing is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+        closed_at = existing["closed_at"]
+        if ticket.status == "closed" and closed_at is None:
+            closed_at = now
+        if ticket.status != "closed":
+            closed_at = None
+        connection.execute(
+            """
+            UPDATE tickets
+            SET client_name = ?, contact = ?, company = ?, problem_description = ?, priority = ?, status = ?, updated_at = ?, closed_at = ?
+            WHERE id = ?
+            """,
+            (
+                ticket.client_name,
+                ticket.contact,
+                ticket.company,
+                ticket.problem_description,
+                ticket.priority,
+                ticket.status,
+                now,
+                closed_at,
+                ticket_id,
+            ),
+        )
+        row = connection.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    return row_to_ticket(row)
+
+
+@app.delete("/api/tickets/{ticket_id}")
+def delete_ticket(ticket_id: int, confirm: bool = False, _: None = Depends(require_admin)) -> dict:
+    if not confirm:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deletion requires confirm=true")
+    with get_connection() as connection:
+        cursor = connection.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    return {"deleted": True}
+
+
+@app.post("/api/tickets/{ticket_id}/comments", status_code=status.HTTP_201_CREATED)
+def add_comment(ticket_id: int, comment: CommentIn, _: None = Depends(require_admin)) -> dict:
+    now = utc_now()
+    with get_connection() as connection:
+        ticket = connection.execute("SELECT id FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        if ticket is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+        cursor = connection.execute(
+            "INSERT INTO comments (ticket_id, author, body, created_at) VALUES (?, ?, ?, ?)",
+            (ticket_id, comment.author or ADMIN_USER, comment.body, now),
+        )
+        connection.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (now, ticket_id))
+        row = connection.execute("SELECT * FROM comments WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return dict(row)
+
+
+@app.get("/api/dashboard")
+def dashboard(_: None = Depends(require_admin)) -> dict:
+    today = datetime.now(timezone.utc).date().isoformat()
+    with get_connection() as connection:
+        new_count = connection.execute("SELECT COUNT(*) FROM tickets WHERE status = 'new'").fetchone()[0]
+        in_progress_count = connection.execute("SELECT COUNT(*) FROM tickets WHERE status = 'in progress'").fetchone()[0]
+        urgent_count = connection.execute("SELECT COUNT(*) FROM tickets WHERE priority = 'urgent'").fetchone()[0]
+        closed_today = connection.execute(
+            "SELECT COUNT(*) FROM tickets WHERE status = 'closed' AND substr(closed_at, 1, 10) = ?", (today,)
+        ).fetchone()[0]
+    return {
+        "new": new_count,
+        "in_progress": in_progress_count,
+        "urgent": urgent_count,
+        "closed_today": closed_today,
+    }
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return HTML_PAGE
+
+
+HTML_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IT Ticket Tracker</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0f172a; --panel:#111c32; --surface:#1e293b; --muted:#94a3b8; --text:#f8fafc; --line:#334155; --blue:#2563eb; --amber:#f59e0b; --red:#ef4444; --green:#22c55e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif; background: radial-gradient(circle at top left, #1d4ed833, transparent 34rem), var(--bg); color: var(--text); }
+    button, input, select, textarea { font: inherit; }
+    button { border: 0; border-radius: 10px; padding: .7rem 1rem; color: white; background: var(--blue); cursor: pointer; font-weight: 700; }
+    button.secondary { background: #334155; } button.danger { background: var(--red); } button:disabled { opacity: .55; cursor: not-allowed; }
+    input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #0b1220; color: var(--text); padding: .7rem; }
+    textarea { min-height: 110px; resize: vertical; }
+    label { display: grid; gap: .35rem; color: var(--muted); font-size: .9rem; }
+    .shell { max-width: 1220px; margin: 0 auto; padding: 24px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 22px; }
+    h1, h2, h3 { margin: 0; letter-spacing: -.03em; } p { color: var(--muted); }
+    .grid { display: grid; grid-template-columns: 380px 1fr; gap: 18px; align-items: start; }
+    .card { background: linear-gradient(180deg, #17233bcc, #111827ee); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 22px 60px #00000044; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+    .stat { border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #0b1220aa; }
+    .stat strong { display:block; font-size: 2rem; } .stat span { color: var(--muted); }
+    .form-grid { display: grid; gap: 12px; } .two { grid-template-columns: 1fr 1fr; }
+    .toolbar { display: grid; grid-template-columns: 1fr 170px 190px; gap: 10px; margin-bottom: 14px; }
+    .ticket { border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #0b1220c9; margin-bottom: 12px; }
+    .ticket-head { display:flex; justify-content:space-between; gap:1rem; align-items:start; }
+    .badges { display:flex; gap:.5rem; flex-wrap:wrap; margin:.65rem 0; }
+    .badge { border-radius:999px; padding:.25rem .55rem; background:#334155; color:#dbeafe; font-size:.78rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .urgent { background:#7f1d1d; color:#fecaca; } .high { background:#78350f; color:#fde68a; } .closed { background:#064e3b; color:#bbf7d0; }
+    .actions { display:flex; gap:.5rem; flex-wrap:wrap; } .hidden { display:none !important; }
+    .login { min-height:100vh; display:grid; place-items:center; padding:24px; } .login .card { width:min(440px, 100%); }
+    .comments { border-top:1px solid var(--line); margin-top:12px; padding-top:12px; }
+    .comment { color:#cbd5e1; border-left:3px solid var(--blue); padding-left:10px; margin:8px 0; }
+    @media (max-width: 900px) { .grid, .toolbar, .two, .stats { grid-template-columns: 1fr; } header { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body>
+  <section id="loginView" class="login">
+    <form id="loginForm" class="card form-grid">
+      <div><h1>IT Ticket Tracker</h1><p>Local administrator sign in</p></div>
+      <label>Username <input id="username" value="admin" autocomplete="username" required></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+      <p id="loginError"></p>
+    </form>
+  </section>
+  <main id="appView" class="shell hidden">
+    <header>
+      <div><h1>Service Requests</h1><p>Create, prioritize, comment, and close client IT tickets.</p></div>
+      <button id="logoutBtn" class="secondary">Log out</button>
+    </header>
+    <section class="stats">
+      <div class="stat"><strong id="countNew">0</strong><span>New</span></div>
+      <div class="stat"><strong id="countProgress">0</strong><span>In progress</span></div>
+      <div class="stat"><strong id="countUrgent">0</strong><span>Urgent</span></div>
+      <div class="stat"><strong id="countClosed">0</strong><span>Closed today</span></div>
+    </section>
+    <section class="grid">
+      <form id="ticketForm" class="card form-grid">
+        <h2 id="formTitle">New request</h2>
+        <input id="ticketId" type="hidden">
+        <label>Client name <input id="clientName" required></label>
+        <label>Phone or email <input id="contact" required></label>
+        <label>Company, optional <input id="company"></label>
+        <label>Problem description <textarea id="problem" required></textarea></label>
+        <div class="form-grid two">
+          <label>Priority <select id="priority"><option>low</option><option selected>normal</option><option>high</option><option>urgent</option></select></label>
+          <label>Status <select id="status"><option>new</option><option>in progress</option><option>waiting for client</option><option>completed</option><option>closed</option></select></label>
+        </div>
+        <div class="actions"><button type="submit">Save request</button><button type="button" id="resetBtn" class="secondary">Clear</button></div>
+      </form>
+      <section class="card">
+        <div class="toolbar">
+          <input id="search" aria-label="Search client, phone, email, problem">
+          <select id="filterPriority"><option value="">All priorities</option><option>low</option><option>normal</option><option>high</option><option>urgent</option></select>
+          <select id="filterStatus"><option value="">All statuses</option><option>new</option><option>in progress</option><option>waiting for client</option><option>completed</option><option>closed</option></select>
+        </div>
+        <div id="tickets"></div>
+      </section>
+    </section>
+  </main>
+  <script>
+    const api = async (url, options = {}) => {
+      const response = await fetch(url, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...options });
+      if (!response.ok) throw new Error((await response.json()).detail || 'Request failed');
+      return response.json();
+    };
+    const state = { tickets: [] };
+    const $ = (id) => document.getElementById(id);
+    const esc = (value) => String(value ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+    async function load() {
+      const params = new URLSearchParams({ search: $('search').value, priority: $('filterPriority').value, status: $('filterStatus').value });
+      const [tickets, dash] = await Promise.all([api('/api/tickets?' + params), api('/api/dashboard')]);
+      state.tickets = tickets; $('countNew').textContent = dash.new; $('countProgress').textContent = dash.in_progress; $('countUrgent').textContent = dash.urgent; $('countClosed').textContent = dash.closed_today;
+      $('tickets').innerHTML = tickets.length ? tickets.map(renderTicket).join('') : '<p>No requests match the current view.</p>';
+    }
+    function renderTicket(ticket) {
+      const priorityClass = ticket.priority === 'urgent' ? 'urgent' : ticket.priority === 'high' ? 'high' : '';
+      const statusClass = ticket.status === 'closed' ? 'closed' : '';
+      return `<article class="ticket"><div class="ticket-head"><div><h3>${esc(ticket.client_name)}</h3><p>${esc(ticket.contact)} ${ticket.company ? '&middot; ' + esc(ticket.company) : ''}</p></div><div class="actions"><button onclick="editTicket(${ticket.id})">Edit</button><button class="danger" onclick="deleteTicket(${ticket.id})">Delete</button></div></div><div class="badges"><span class="badge ${priorityClass}">${esc(ticket.priority)}</span><span class="badge ${statusClass}">${esc(ticket.status)}</span></div><p>${esc(ticket.problem_description)}</p><div class="comments"><form onsubmit="addComment(event, ${ticket.id})" class="form-grid"><label>Add comment <input name="body" required></label><button type="submit">Comment</button></form><div id="comments-${ticket.id}"></div><button class="secondary" onclick="showComments(${ticket.id})">View comments</button></div></article>`;
+    }
+    async function showComments(id) {
+      const ticket = await api('/api/tickets/' + id);
+      $('comments-' + id).innerHTML = ticket.comments.length ? ticket.comments.map(c => `<div class="comment"><strong>${esc(c.author)}</strong>: ${esc(c.body)}</div>`).join('') : '<p>No comments yet.</p>';
+    }
+    async function addComment(event, id) { event.preventDefault(); await api(`/api/tickets/${id}/comments`, { method: 'POST', body: JSON.stringify({ body: event.target.body.value }) }); event.target.reset(); await showComments(id); await load(); }
+    function editTicket(id) { const t = state.tickets.find(item => item.id === id); $('ticketId').value = t.id; $('clientName').value = t.client_name; $('contact').value = t.contact; $('company').value = t.company; $('problem').value = t.problem_description; $('priority').value = t.priority; $('status').value = t.status; $('formTitle').textContent = 'Edit request'; scrollTo({ top: 0, behavior: 'smooth' }); }
+    async function deleteTicket(id) { if (confirm('Delete this request permanently?')) { await api('/api/tickets/' + id + '?confirm=true', { method: 'DELETE' }); await load(); } }
+    function resetForm() { $('ticketForm').reset(); $('ticketId').value = ''; $('formTitle').textContent = 'New request'; $('priority').value = 'normal'; $('status').value = 'new'; }
+
+    $('loginForm').addEventListener('submit', async (event) => { event.preventDefault(); try { await api('/login', { method: 'POST', body: JSON.stringify({ username: $('username').value, password: $('password').value }) }); $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden'); await load(); } catch (error) { $('loginError').textContent = error.message; } });
+    $('logoutBtn').addEventListener('click', async () => { await api('/logout', { method: 'POST' }); location.reload(); });
+    $('ticketForm').addEventListener('submit', async (event) => { event.preventDefault(); const id = $('ticketId').value; const payload = { client_name: $('clientName').value, contact: $('contact').value, company: $('company').value, problem_description: $('problem').value, priority: $('priority').value, status: $('status').value }; await api(id ? '/api/tickets/' + id : '/api/tickets', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); resetForm(); await load(); });
+    $('resetBtn').addEventListener('click', resetForm); ['search','filterPriority','filterStatus'].forEach(id => $(id).addEventListener('input', load));
+    api('/api/session').then(async () => { $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden'); await load(); }).catch(() => {});
+  </script>
+</body>
+</html>
+"""
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

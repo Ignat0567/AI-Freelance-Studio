@@ -1,0 +1,3245 @@
+{
+  "acceptance_criteria": [
+    {
+      "description": "Root documentation explains installation, run, and test commands.",
+      "expected_result": "README.md exists and contains install/run/test guidance",
+      "id": "AC-001",
+      "priority": "high",
+      "requirement_ids": [],
+      "source": "system_safety",
+      "status": "pending",
+      "title": "Project has delivery documentation",
+      "trace": "",
+      "verification_method": "file_check",
+      "verifier_plan": {
+        "actions": [
+          "inspect required artifact paths",
+          "inspect required file content when specified"
+        ],
+        "assertions": [
+          "required files exist",
+          "required observable file content is present"
+        ],
+        "criterion_id": "AC-001",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "filesystem inspection reports the required artifact paths and content"
+        ],
+        "required_fixtures": [
+          "declared artifact paths and required documentation content"
+        ],
+        "setup": [],
+        "verifier_type": "file_artifact"
+      }
+    },
+    {
+      "description": "Required functionality is implemented, not replaced by TODO/pass/stub code.",
+      "expected_result": "No blocking placeholder patterns in source files",
+      "id": "AC-002",
+      "priority": "high",
+      "requirement_ids": [],
+      "source": "system_safety",
+      "status": "pending",
+      "title": "Project has no placeholder implementation",
+      "trace": "",
+      "verification_method": "static_scan",
+      "verifier_plan": {
+        "actions": [
+          "inspect required artifact paths",
+          "inspect required file content when specified"
+        ],
+        "assertions": [
+          "required files exist",
+          "required observable file content is present"
+        ],
+        "criterion_id": "AC-002",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "filesystem inspection reports the required artifact paths and content"
+        ],
+        "required_fixtures": [
+          "declared artifact paths and required documentation content"
+        ],
+        "setup": [],
+        "verifier_type": "file_artifact"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Browser-based ticket tracking application runs for internal staff.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-003",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-001"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Browser-based ticket tracking application runs for internal staff.",
+      "trace": "Browser-based ticket tracking application runs for internal staff.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-003",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "A client request stores client identity, contact, company, problem description, priority, and status where applicable.",
+      "expected_result": "Saved request records expose the required fields with their submitted values.",
+      "id": "AC-004",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-002"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Client request records store all required fields.",
+      "trace": "Ticket records store client name, contact phone or email, optional company, and problem description.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-004",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Ticket priority accepts low, normal, high, and urgent.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-005",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-003"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Ticket priority accepts low, normal, high, and urgent.",
+      "trace": "Ticket priority accepts low, normal, high, and urgent.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-005",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Ticket status accepts new, in progress, waiting for client, completed, and closed.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-006",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-004"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Ticket status accepts new, in progress, waiting for client, completed, and closed.",
+      "trace": "Ticket status accepts new, in progress, waiting for client, completed, and closed.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-006",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "A staff user can enter required client request data and receive a persisted request record.",
+      "expected_result": "Creating a client request returns a saved record with the submitted client data.",
+      "id": "AC-007",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-005"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "User can create a new client request.",
+      "trace": "Users can create, list, open, and edit ticket records.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create record",
+          "stop application",
+          "restart application",
+          "retrieve or list records"
+        ],
+        "assertions": [
+          "record exists before restart",
+          "same record is observable after restart"
+        ],
+        "criterion_id": "AC-007",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "post-restart read response contains the pre-restart identifier and data"
+        ],
+        "required_fixtures": [
+          "request or record payload with a unique identifier",
+          "documented restart command or runtime adapter"
+        ],
+        "setup": [
+          "start application with persistent storage"
+        ],
+        "verifier_type": "persistence_restart"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Users can add and view ticket comments.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-008",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-006"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Users can add and view ticket comments.",
+      "trace": "Users can add and view ticket comments.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create or seed request",
+          "read request"
+        ],
+        "assertions": [
+          "read succeeds",
+          "read response contains the same identifier or marker"
+        ],
+        "criterion_id": "AC-008",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "read response returns the created record by its identifier"
+        ],
+        "required_fixtures": [
+          "existing request record"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Ticket deletion requires explicit confirmation.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-009",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-007"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Ticket deletion requires explicit confirmation.",
+      "trace": "Ticket deletion requires explicit confirmation.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-009",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Dashboard shows new, in-progress, urgent, and closed-today counts.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-010",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-008"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Dashboard shows new, in-progress, urgent, and closed-today counts.",
+      "trace": "Dashboard shows new, in-progress, urgent, and closed-today counts.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-010",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "A user can search the request list using client, phone, email, company, description, or comment text where applicable.",
+      "expected_result": "Search results include matching requests and exclude non-matching requests.",
+      "id": "AC-011",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-009"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "User can search requests by client, contact, or request text.",
+      "trace": "Search finds tickets by client, contact, and problem description.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create target request",
+          "create control request",
+          "search requests"
+        ],
+        "assertions": [
+          "search succeeds",
+          "target record appears",
+          "control record is excluded"
+        ],
+        "criterion_id": "AC-011",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "search response contains only records matching the search term"
+        ],
+        "required_fixtures": [
+          "two request records with distinct searchable values"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "description": "The request list can be narrowed by status and priority values.",
+      "expected_result": "Filtered results contain only requests matching the selected status or priority.",
+      "id": "AC-012",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-010"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "User can filter requests by status and priority.",
+      "trace": "Ticket list filters by status and priority.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create target request",
+          "create control request",
+          "filter requests"
+        ],
+        "assertions": [
+          "filter succeeds",
+          "target record appears",
+          "control record is excluded"
+        ],
+        "criterion_id": "AC-012",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "filtered response contains only records matching the requested field value"
+        ],
+        "required_fixtures": [
+          "two request records with distinct filter values"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "description": "Saved client request data remains available after the application process is stopped and started again.",
+      "expected_result": "Data created before restart can be retrieved after restart.",
+      "id": "AC-013",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-011"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Application data persists after restart.",
+      "trace": "Ticket data persists across application restart.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create record",
+          "stop application",
+          "restart application",
+          "retrieve or list records"
+        ],
+        "assertions": [
+          "record exists before restart",
+          "same record is observable after restart"
+        ],
+        "criterion_id": "AC-013",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "post-restart read response contains the pre-restart identifier and data"
+        ],
+        "required_fixtures": [
+          "request or record payload with a unique identifier",
+          "documented restart command or runtime adapter"
+        ],
+        "setup": [
+          "start application with persistent storage"
+        ],
+        "verifier_type": "persistence_restart"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: One configured local administrator can use the application without registration, roles, tenants, or external identity.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-014",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-012"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "One configured local administrator can use the application without registration, roles, tenants, or external identity.",
+      "trace": "One configured local administrator can use the application without registration, roles, tenants, or external identity.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-014",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Interface has a modern dark visual design.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-015",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-013"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Interface has a modern dark visual design.",
+      "trace": "Interface has a modern dark visual design.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-015",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Interface remains usable at desktop viewport sizes.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-016",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-014"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Interface remains usable at desktop viewport sizes.",
+      "trace": "Interface remains usable at desktop viewport sizes.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create or seed request",
+          "read request"
+        ],
+        "assertions": [
+          "read succeeds",
+          "read response contains the same identifier or marker"
+        ],
+        "criterion_id": "AC-016",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "read response returns the created record by its identifier"
+        ],
+        "required_fixtures": [
+          "existing request record"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Interface remains usable at tablet viewport sizes.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-017",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-015"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Interface remains usable at tablet viewport sizes.",
+      "trace": "Interface remains usable at tablet viewport sizes.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create or seed request",
+          "read request"
+        ],
+        "assertions": [
+          "read succeeds",
+          "read response contains the same identifier or marker"
+        ],
+        "criterion_id": "AC-017",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "read response returns the created record by its identifier"
+        ],
+        "required_fixtures": [
+          "existing request record"
+        ],
+        "setup": [
+          "start application"
+        ],
+        "verifier_type": "http_sequence"
+      }
+    },
+    {
+      "description": "Requested behavior is implemented as an observable, testable outcome: Primary user controls perform their intended actions.",
+      "expected_result": "The delivered project provides observable behavior matching this requirement.",
+      "id": "AC-018",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-016"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Primary user controls perform their intended actions.",
+      "trace": "Primary user controls perform their intended actions.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [],
+        "assertions": [],
+        "criterion_id": "AC-018",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [],
+        "required_fixtures": [],
+        "setup": [],
+        "verifier_type": "manual_or_unsupported"
+      }
+    },
+    {
+      "description": "The delivered project includes automated tests for the main create, read, update, and persistence behavior where applicable.",
+      "expected_result": "Automated tests execute and assert the main application functions.",
+      "id": "AC-019",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-017"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Automated tests cover the main application functions.",
+      "trace": "Automated tests cover the ticket workflow.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "create record",
+          "stop application",
+          "restart application",
+          "retrieve or list records"
+        ],
+        "assertions": [
+          "record exists before restart",
+          "same record is observable after restart"
+        ],
+        "criterion_id": "AC-019",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "post-restart read response contains the pre-restart identifier and data"
+        ],
+        "required_fixtures": [
+          "request or record payload with a unique identifier",
+          "documented restart command or runtime adapter"
+        ],
+        "setup": [
+          "start application with persistent storage"
+        ],
+        "verifier_type": "persistence_restart"
+      }
+    },
+    {
+      "description": "The README explains how to install dependencies and start the project on Windows.",
+      "expected_result": "Windows setup and run instructions are present and specific to the delivered project.",
+      "id": "AC-020",
+      "priority": "high",
+      "requirement_ids": [
+        "REQ-018"
+      ],
+      "source": "user_requirement",
+      "status": "pending",
+      "title": "Windows installation and run instructions are documented.",
+      "trace": "Windows installation and run instructions are documented.",
+      "verification_method": "feature_trace_static_or_smoke",
+      "verifier_plan": {
+        "actions": [
+          "inspect required artifact paths",
+          "inspect required file content when specified"
+        ],
+        "assertions": [
+          "required files exist",
+          "required observable file content is present"
+        ],
+        "criterion_id": "AC-020",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "filesystem inspection reports the required artifact paths and content"
+        ],
+        "required_fixtures": [
+          "declared artifact paths and required documentation content"
+        ],
+        "setup": [],
+        "verifier_type": "file_artifact"
+      }
+    },
+    {
+      "description": "FastAPI app module imports successfully.",
+      "expected_result": "Expected ASGI app can be imported",
+      "id": "AC-021",
+      "priority": "high",
+      "requirement_ids": [],
+      "source": "project_profile",
+      "status": "pending",
+      "title": "FastAPI application imports",
+      "trace": "",
+      "verification_method": "python_import",
+      "verifier_plan": {
+        "actions": [
+          "import target module in an isolated Python process"
+        ],
+        "assertions": [
+          "module imports without exception"
+        ],
+        "criterion_id": "AC-021",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "import process exits successfully and reports the imported module"
+        ],
+        "required_fixtures": [
+          "target module name"
+        ],
+        "setup": [
+          "prepare Python import path"
+        ],
+        "verifier_type": "python_import"
+      }
+    },
+    {
+      "description": "Application starts with python -m uvicorn on a free local port.",
+      "expected_result": "Process stays up long enough to serve HTTP",
+      "id": "AC-022",
+      "priority": "high",
+      "requirement_ids": [],
+      "source": "project_profile",
+      "status": "pending",
+      "title": "FastAPI runtime starts",
+      "trace": "",
+      "verification_method": "runtime_smoke",
+      "verifier_plan": {
+        "actions": [
+          "start application",
+          "probe observable endpoint or page",
+          "stop owned process"
+        ],
+        "assertions": [
+          "process starts",
+          "observable endpoint or page responds",
+          "owned process stops cleanly"
+        ],
+        "criterion_id": "AC-022",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "runtime probe returns a successful response before shutdown"
+        ],
+        "required_fixtures": [
+          "documented run command",
+          "expected local port, health endpoint, or landing page"
+        ],
+        "setup": [
+          "prepare documented runtime command"
+        ],
+        "verifier_type": "runtime_start"
+      }
+    },
+    {
+      "description": "All required credentials are represented in docs/env examples without real secrets.",
+      "expected_result": ".env.example exists, .gitignore excludes .env, and no real secrets are committed",
+      "id": "AC-023",
+      "priority": "critical",
+      "requirement_ids": [],
+      "source": "inferred_requirement",
+      "status": "pending",
+      "title": "Credentials are documented safely",
+      "trace": "",
+      "verification_method": "secret_scan",
+      "verifier_plan": {
+        "actions": [
+          "inspect required artifact paths",
+          "inspect required file content when specified"
+        ],
+        "assertions": [
+          "required files exist",
+          "required observable file content is present"
+        ],
+        "criterion_id": "AC-023",
+        "execution_status": "not_executed",
+        "observable_expected_outcomes": [
+          "filesystem inspection reports the required artifact paths and content"
+        ],
+        "required_fixtures": [
+          "declared artifact paths and required documentation content"
+        ],
+        "setup": [],
+        "verifier_type": "file_artifact"
+      }
+    }
+  ],
+  "acceptance_criteria_source": "semantic_requirement_contract_v2",
+  "audit_finding_history": [
+    {
+      "current_classification": "obsolete_verifier_failure",
+      "finding": "HTTP 401 persistence",
+      "old_classification": "application/persistence failure",
+      "resolution_reason": "Authenticated verifier login, create, restart, reauthentication, and retrieval succeeded."
+    },
+    {
+      "current_classification": "obsolete_verifier_failure",
+      "finding": "local admin scope",
+      "old_classification": "application scope mismatch",
+      "resolution_reason": "Semantic verifier recognizes the simple one-local-admin architecture."
+    }
+  ],
+  "contract_migration": {
+    "contract_fingerprint": "7d7c5b8dc3120596d56fd94ce3858930c86bb2bc61d29bb6e29528d7d1a1e735",
+    "contract_version": 2,
+    "criterion_count": 23,
+    "migration_reason": "Original source request restored from authoritative user-reprovided input; previous contract was generated from corrupted source context.",
+    "normalized_requirement_unit_count": 18,
+    "previous_contract": [
+      {
+        "description": "Root documentation explains installation, run, and test commands.",
+        "evidence": [
+          {
+            "action_steps": [
+              "Resolve each required and optional delivery artifact path from the project root"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "Every required artifact path exists exactly",
+              "Missing optional artifacts are reported separately"
+            ],
+            "collected_evidence": {
+              "missing_optional": [],
+              "missing_required": [],
+              "optional_paths": [],
+              "required_paths": [
+                "README.md"
+              ],
+              "summary": "Exact delivery artifact paths verified"
+            },
+            "command": null,
+            "criterion_id": "AC-001",
+            "exit_code": null,
+            "failure_reason": "",
+            "method": "file_check",
+            "missing_optional": [],
+            "missing_required": [],
+            "optional_paths": [],
+            "required_paths": [
+              "README.md"
+            ],
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "passed",
+            "summary": "Exact delivery artifact paths verified",
+            "timestamp": "2026-07-10T12:29:03.790699+00:00",
+            "verdict": "passed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "file_check"
+          },
+          {
+            "action_steps": [
+              "Resolve each required and optional delivery artifact path from the project root"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "Every required artifact path exists exactly",
+              "Missing optional artifacts are reported separately"
+            ],
+            "collected_evidence": {
+              "missing_optional": [],
+              "missing_required": [],
+              "optional_paths": [],
+              "required_paths": [
+                "README.md"
+              ],
+              "summary": "Exact delivery artifact paths verified"
+            },
+            "command": null,
+            "criterion_id": "AC-001",
+            "exit_code": null,
+            "failure_reason": "",
+            "method": "file_check",
+            "missing_optional": [],
+            "missing_required": [],
+            "optional_paths": [],
+            "required_paths": [
+              "README.md"
+            ],
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "passed",
+            "summary": "Exact delivery artifact paths verified",
+            "timestamp": "2026-07-10T12:29:03.790699+00:00",
+            "verdict": "passed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "file_check"
+          },
+          {
+            "action_steps": [
+              "Resolve each required and optional delivery artifact path from the project root"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "Every required artifact path exists exactly",
+              "Missing optional artifacts are reported separately"
+            ],
+            "collected_evidence": {
+              "missing_optional": [],
+              "missing_required": [],
+              "optional_paths": [],
+              "required_paths": [
+                "README.md"
+              ],
+              "summary": "Exact delivery artifact paths verified"
+            },
+            "command": null,
+            "criterion_id": "AC-001",
+            "exit_code": null,
+            "failure_reason": "",
+            "method": "file_check",
+            "missing_optional": [],
+            "missing_required": [],
+            "optional_paths": [],
+            "required_paths": [
+              "README.md"
+            ],
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "passed",
+            "summary": "Exact delivery artifact paths verified",
+            "timestamp": "2026-07-10T12:29:03.790699+00:00",
+            "verdict": "passed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "file_check"
+          }
+        ],
+        "expected_result": "README.md exists and contains install/run/test guidance",
+        "id": "AC-001",
+        "priority": "high",
+        "requirement_ids": [],
+        "source": "system_safety",
+        "status": "pending",
+        "title": "Project has delivery documentation",
+        "trace": "",
+        "verification_method": "file_check",
+        "verifier_plan": {
+          "actions": [
+            "inspect required artifact paths",
+            "inspect required file content when specified"
+          ],
+          "assertions": [
+            "required files exist",
+            "required observable file content is present"
+          ],
+          "criterion_id": "AC-001",
+          "execution_status": "not_executed",
+          "observable_expected_outcomes": [
+            "filesystem inspection reports the required artifact paths and content"
+          ],
+          "required_fixtures": [
+            "declared artifact paths and required documentation content"
+          ],
+          "setup": [],
+          "verifier_type": "file_artifact"
+        }
+      },
+      {
+        "description": "Required functionality is implemented, not replaced by TODO/pass/stub code.",
+        "evidence": [
+          {
+            "action_steps": [
+              "Scan source and documentation files for blocking placeholder patterns"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "No TODO-only, pass-only, not implemented, or fake-output implementation remains"
+            ],
+            "collected_evidence": {
+              "files_with_blocking_todos": [],
+              "summary": "Placeholder implementation scan mapped to acceptance criterion"
+            },
+            "command": null,
+            "criterion_id": "AC-002",
+            "exit_code": null,
+            "failure_reason": "",
+            "method": "static_scan",
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "passed",
+            "summary": "Placeholder implementation scan mapped to acceptance criterion",
+            "timestamp": "2026-07-10T12:29:03.986298+00:00",
+            "verdict": "passed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "static_scan"
+          },
+          {
+            "action_steps": [
+              "Scan source and documentation files for blocking placeholder patterns"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "No TODO-only, pass-only, not implemented, or fake-output implementation remains"
+            ],
+            "collected_evidence": {
+              "files_with_blocking_todos": [],
+              "summary": "Placeholder implementation scan mapped to acceptance criterion"
+            },
+            "command": null,
+            "criterion_id": "AC-002",
+            "exit_code": null,
+            "failure_reason": "",
+            "method": "static_scan",
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "passed",
+            "summary": "Placeholder implementation scan mapped to acceptance criterion",
+            "timestamp": "2026-07-10T12:29:03.986298+00:00",
+            "verdict": "passed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "static_scan"
+          },
+          {
+            "action_steps": [
+              "Scan source and documentation files for blocking placeholder patterns"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "No TODO-only, pass-only, not implemented, or fake-output implementation remains"
+            ],
+            "collected_evidence": {
+              "files_with_blocking_todos": [],
+              "summary": "Placeholder implementation scan mapped to acceptance criterion"
+            },
+            "command": null,
+            "criterion_id": "AC-002",
+            "exit_code": null,
+            "failure_reason": "",
+            "method": "static_scan",
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "passed",
+            "summary": "Placeholder implementation scan mapped to acceptance criterion",
+            "timestamp": "2026-07-10T12:29:03.986298+00:00",
+            "verdict": "passed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "static_scan"
+          }
+        ],
+        "expected_result": "No blocking placeholder patterns in source files",
+        "id": "AC-002",
+        "priority": "high",
+        "requirement_ids": [],
+        "source": "system_safety",
+        "status": "pending",
+        "title": "Project has no placeholder implementation",
+        "trace": "",
+        "verification_method": "static_scan",
+        "verifier_plan": {
+          "actions": [
+            "inspect required artifact paths",
+            "inspect required file content when specified"
+          ],
+          "assertions": [
+            "required files exist",
+            "required observable file content is present"
+          ],
+          "criterion_id": "AC-002",
+          "execution_status": "not_executed",
+          "observable_expected_outcomes": [
+            "filesystem inspection reports the required artifact paths and content"
+          ],
+          "required_fixtures": [
+            "declared artifact paths and required documentation content"
+          ],
+          "setup": [],
+          "verifier_type": "file_artifact"
+        }
+      },
+      {
+        "description": "Requested behavior is implemented as an observable, testable outcome: Test-Project-Recovery",
+        "evidence": [
+          {
+            "action_steps": [],
+            "artifacts": [],
+            "assertions": [
+              "Runtime starts",
+              "Ticket collection and item routes are discoverable"
+            ],
+            "classification": "UNSUPPORTED_VERIFIER",
+            "collected_evidence": {
+              "classification": "UNSUPPORTED_VERIFIER",
+              "criterion_id": "AC-003",
+              "criterion_text": "Build a browser-based ticket/request tracking application for a small IT company. Requested behavior is implemented as an observable, testable outcome: Build a browser-based ticket/request tracking application for a small IT company The delivered project provides observable behavior matching this requirement. Build a browser-based ticket/request tracking application for a small IT company",
+              "effective_project_profile": [
+                "REST_API",
+                "fastapi",
+                "python_application",
+                "python_cli"
+              ],
+              "execution_timestamp": "2026-07-10T12:29:04Z",
+              "openapi_status": 200,
+              "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery",
+              "project_snapshot_fingerprint": "c5bfc54a143fc385e5bb8ed8d4736609686d123c52095c5282e483a8e1153f13",
+              "route_discovery": {
+                "discovered_routes": {
+                  "collection": "",
+                  "comments": "/api/tickets/{ticket_id}/comments",
+                  "item": "/api/tickets/{ticket_id}",
+                  "meta": "",
+                  "stats": ""
+                },
+                "paths": [
+                  "/",
+                  "/api/dashboard",
+                  "/api/session",
+                  "/api/tickets",
+                  "/api/tickets/{ticket_id}",
+                  "/api/tickets/{ticket_id}/comments",
+                  "/login",
+                  "/logout"
+                ]
+              },
+              "runtime": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29369",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 9988,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "semantic_verifier_plan": {
+                "confidence": 0.9,
+                "criterion_id": "AC-003",
+                "expected_outcomes": [
+                  "stable identity",
+                  "status persisted"
+                ],
+                "expected_values": [],
+                "project_profile": [
+                  "REST_API",
+                  "fastapi",
+                  "python_application",
+                  "python_cli"
+                ],
+                "required_actions": [
+                  "create",
+                  "read",
+                  "change_status",
+                  "read"
+                ],
+                "required_fields": [],
+                "route_hints": [],
+                "semantic_intent": "track_record_lifecycle",
+                "target_entity": "request",
+                "ui_hints": [],
+                "unsupported_reason": "",
+                "verifier_type": "lifecycle_tracking"
+              },
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Ticket runtime or route discovery was unavailable"
+            },
+            "command": null,
+            "criterion_id": "AC-003",
+            "exit_code": null,
+            "failure_reason": "Runtime unavailable or ticket routes incomplete",
+            "method": "targeted_ticket_runtime",
+            "setup_steps": [
+              "Start the real app with isolated local storage",
+              "Discover ticket routes from OpenAPI"
+            ],
+            "source": "final_delivery_audit",
+            "status": "not_verified",
+            "summary": "Ticket runtime or route discovery was unavailable",
+            "timestamp": "2026-07-10T12:29:09.929077+00:00",
+            "verdict": "not_executed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "targeted_ticket_runtime"
+          },
+          {
+            "action_steps": [],
+            "artifacts": [],
+            "assertions": [
+              "Runtime starts",
+              "Ticket collection and item routes are discoverable"
+            ],
+            "classification": "UNSUPPORTED_VERIFIER",
+            "collected_evidence": {
+              "classification": "UNSUPPORTED_VERIFIER",
+              "criterion_id": "AC-003",
+              "criterion_text": "Build a browser-based ticket/request tracking application for a small IT company. Requested behavior is implemented as an observable, testable outcome: Build a browser-based ticket/request tracking application for a small IT company The delivered project provides observable behavior matching this requirement. Build a browser-based ticket/request tracking application for a small IT company",
+              "effective_project_profile": [
+                "REST_API",
+                "fastapi",
+                "python_application",
+                "python_cli"
+              ],
+              "execution_timestamp": "2026-07-10T12:29:04Z",
+              "openapi_status": 200,
+              "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery",
+              "project_snapshot_fingerprint": "c5bfc54a143fc385e5bb8ed8d4736609686d123c52095c5282e483a8e1153f13",
+              "route_discovery": {
+                "discovered_routes": {
+                  "collection": "",
+                  "comments": "/api/tickets/{ticket_id}/comments",
+                  "item": "/api/tickets/{ticket_id}",
+                  "meta": "",
+                  "stats": ""
+                },
+                "paths": [
+                  "/",
+                  "/api/dashboard",
+                  "/api/session",
+                  "/api/tickets",
+                  "/api/tickets/{ticket_id}",
+                  "/api/tickets/{ticket_id}/comments",
+                  "/login",
+                  "/logout"
+                ]
+              },
+              "runtime": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29369",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 9988,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "semantic_verifier_plan": {
+                "confidence": 0.9,
+                "criterion_id": "AC-003",
+                "expected_outcomes": [
+                  "stable identity",
+                  "status persisted"
+                ],
+                "expected_values": [],
+                "project_profile": [
+                  "REST_API",
+                  "fastapi",
+                  "python_application",
+                  "python_cli"
+                ],
+                "required_actions": [
+                  "create",
+                  "read",
+                  "change_status",
+                  "read"
+                ],
+                "required_fields": [],
+                "route_hints": [],
+                "semantic_intent": "track_record_lifecycle",
+                "target_entity": "request",
+                "ui_hints": [],
+                "unsupported_reason": "",
+                "verifier_type": "lifecycle_tracking"
+              },
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Ticket runtime or route discovery was unavailable"
+            },
+            "command": null,
+            "criterion_id": "AC-003",
+            "exit_code": null,
+            "failure_reason": "Runtime unavailable or ticket routes incomplete",
+            "method": "targeted_ticket_runtime",
+            "setup_steps": [
+              "Start the real app with isolated local storage",
+              "Discover ticket routes from OpenAPI"
+            ],
+            "source": "final_delivery_audit",
+            "status": "not_verified",
+            "summary": "Ticket runtime or route discovery was unavailable",
+            "timestamp": "2026-07-10T12:29:09.929077+00:00",
+            "verdict": "not_executed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "targeted_ticket_runtime"
+          },
+          {
+            "action_steps": [],
+            "artifacts": [],
+            "assertions": [
+              "Runtime starts",
+              "Ticket collection and item routes are discoverable"
+            ],
+            "classification": "UNSUPPORTED_VERIFIER",
+            "collected_evidence": {
+              "classification": "UNSUPPORTED_VERIFIER",
+              "criterion_id": "AC-003",
+              "criterion_text": "Build a browser-based ticket/request tracking application for a small IT company. Requested behavior is implemented as an observable, testable outcome: Build a browser-based ticket/request tracking application for a small IT company The delivered project provides observable behavior matching this requirement. Build a browser-based ticket/request tracking application for a small IT company",
+              "effective_project_profile": [
+                "REST_API",
+                "fastapi",
+                "python_application",
+                "python_cli"
+              ],
+              "execution_timestamp": "2026-07-10T12:29:04Z",
+              "openapi_status": 200,
+              "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery",
+              "project_snapshot_fingerprint": "c5bfc54a143fc385e5bb8ed8d4736609686d123c52095c5282e483a8e1153f13",
+              "route_discovery": {
+                "discovered_routes": {
+                  "collection": "",
+                  "comments": "/api/tickets/{ticket_id}/comments",
+                  "item": "/api/tickets/{ticket_id}",
+                  "meta": "",
+                  "stats": ""
+                },
+                "paths": [
+                  "/",
+                  "/api/dashboard",
+                  "/api/session",
+                  "/api/tickets",
+                  "/api/tickets/{ticket_id}",
+                  "/api/tickets/{ticket_id}/comments",
+                  "/login",
+                  "/logout"
+                ]
+              },
+              "runtime": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29369",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 9988,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "semantic_verifier_plan": {
+                "confidence": 0.9,
+                "criterion_id": "AC-003",
+                "expected_outcomes": [
+                  "stable identity",
+                  "status persisted"
+                ],
+                "expected_values": [],
+                "project_profile": [
+                  "REST_API",
+                  "fastapi",
+                  "python_application",
+                  "python_cli"
+                ],
+                "required_actions": [
+                  "create",
+                  "read",
+                  "change_status",
+                  "read"
+                ],
+                "required_fields": [],
+                "route_hints": [],
+                "semantic_intent": "track_record_lifecycle",
+                "target_entity": "request",
+                "ui_hints": [],
+                "unsupported_reason": "",
+                "verifier_type": "lifecycle_tracking"
+              },
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-003_sydnns65\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Ticket runtime or route discovery was unavailable"
+            },
+            "command": null,
+            "criterion_id": "AC-003",
+            "exit_code": null,
+            "failure_reason": "Runtime unavailable or ticket routes incomplete",
+            "method": "targeted_ticket_runtime",
+            "setup_steps": [
+              "Start the real app with isolated local storage",
+              "Discover ticket routes from OpenAPI"
+            ],
+            "source": "final_delivery_audit",
+            "status": "not_verified",
+            "summary": "Ticket runtime or route discovery was unavailable",
+            "timestamp": "2026-07-10T12:29:09.929077+00:00",
+            "verdict": "not_executed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "targeted_ticket_runtime"
+          }
+        ],
+        "expected_result": "The delivered project provides observable behavior matching this requirement.",
+        "id": "AC-003",
+        "priority": "high",
+        "requirement_ids": [
+          "REQ-001"
+        ],
+        "source": "user_requirement",
+        "status": "pending",
+        "title": "Test-Project-Recovery.",
+        "trace": "Test-Project-Recovery",
+        "verification_method": "feature_trace_static_or_smoke",
+        "verifier_plan": {
+          "actions": [],
+          "assertions": [],
+          "criterion_id": "AC-003",
+          "execution_status": "not_executed",
+          "observable_expected_outcomes": [],
+          "required_fixtures": [],
+          "setup": [],
+          "verifier_type": "manual_or_unsupported"
+        }
+      },
+      {
+        "description": "FastAPI app module imports successfully.",
+        "evidence": [
+          {
+            "action_steps": [
+              "POST /api/tickets"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "Record exists before restart",
+              "A distinct runtime process starts after clean stop",
+              "Same identifier and marker are observable after restart"
+            ],
+            "collected_evidence": {
+              "created_identifier": "",
+              "created_marker": "persist_ac_004_1783686550162",
+              "final_assertion": {
+                "passed": false,
+                "reason": "HTTP 401"
+              },
+              "initial_start": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29606",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 39280,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "method_path": [
+                {
+                  "method": "POST",
+                  "path": "/api/tickets"
+                }
+              ],
+              "openapi_status": 200,
+              "post_restart_verification": {},
+              "pre_restart_verification": {},
+              "redacted_response_excerpt": {
+                "create": "{\"detail\":\"Login required\"}"
+              },
+              "response_status": {
+                "create": 401
+              },
+              "restart_result": {},
+              "route_discovery": {
+                "create_candidates": [
+                  "POST /api/tickets"
+                ],
+                "related_route_candidates": {
+                  "list": [
+                    "GET /api/tickets"
+                  ],
+                  "read": [
+                    "GET /api/tickets/{ticket_id}"
+                  ]
+                }
+              },
+              "safe_request_summary": {
+                "content_type": "application/json",
+                "json_keys": [
+                  "client_name",
+                  "contact",
+                  "problem_description"
+                ],
+                "marker_field": "client_name",
+                "unique_marker": "persist_ac_004_1783686550162",
+                "value_policy": "Generated non-secret local test values; evidence records keys and marker only."
+              },
+              "stop_result": {},
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Create endpoint did not return a successful response",
+              "verifier_plan": {
+                "actions": [
+                  "create record",
+                  "stop application",
+                  "restart application",
+                  "retrieve or list records"
+                ],
+                "assertions": [
+                  "record exists before restart",
+                  "same record is observable after restart"
+                ],
+                "criterion_id": "AC-004",
+                "execution_status": "not_executed",
+                "observable_expected_outcomes": [
+                  "post-restart read response contains the pre-restart identifier and data"
+                ],
+                "required_fixtures": [
+                  "request or record payload with a unique identifier",
+                  "documented restart command or runtime adapter"
+                ],
+                "setup": [
+                  "start application with persistent storage"
+                ],
+                "verifier_type": "persistence_restart"
+              }
+            },
+            "command": null,
+            "created_identifier": "",
+            "created_marker": "persist_ac_004_1783686550162",
+            "criterion_id": "AC-004",
+            "exit_code": null,
+            "failure_reason": "HTTP 401",
+            "final_assertion": {
+              "passed": false,
+              "reason": "HTTP 401"
+            },
+            "method": "persistence_restart",
+            "method_path": [
+              {
+                "method": "POST",
+                "path": "/api/tickets"
+              }
+            ],
+            "post_restart_verification": {},
+            "pre_restart_verification": {},
+            "redacted_response_excerpt": {
+              "create": "{\"detail\":\"Login required\"}"
+            },
+            "response_status": {
+              "create": 401
+            },
+            "restart_result": {},
+            "safe_request_summary": {
+              "content_type": "application/json",
+              "json_keys": [
+                "client_name",
+                "contact",
+                "problem_description"
+              ],
+              "marker_field": "client_name",
+              "unique_marker": "persist_ac_004_1783686550162",
+              "value_policy": "Generated non-secret local test values; evidence records keys and marker only."
+            },
+            "setup_steps": [
+              "Start runtime with isolated storage configuration",
+              "Create and verify a uniquely identifiable record",
+              "Stop and restart the runtime with the same storage configuration"
+            ],
+            "source": "final_delivery_audit",
+            "status": "failed",
+            "stop_result": {},
+            "summary": "Create endpoint did not return a successful response",
+            "timestamp": "2026-07-10T12:29:15.859938+00:00",
+            "verdict": "failed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "persistence_restart"
+          },
+          {
+            "action_steps": [
+              "POST /api/tickets"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "Record exists before restart",
+              "A distinct runtime process starts after clean stop",
+              "Same identifier and marker are observable after restart"
+            ],
+            "collected_evidence": {
+              "created_identifier": "",
+              "created_marker": "persist_ac_004_1783686550162",
+              "final_assertion": {
+                "passed": false,
+                "reason": "HTTP 401"
+              },
+              "initial_start": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29606",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 39280,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "method_path": [
+                {
+                  "method": "POST",
+                  "path": "/api/tickets"
+                }
+              ],
+              "openapi_status": 200,
+              "post_restart_verification": {},
+              "pre_restart_verification": {},
+              "redacted_response_excerpt": {
+                "create": "{\"detail\":\"Login required\"}"
+              },
+              "response_status": {
+                "create": 401
+              },
+              "restart_result": {},
+              "route_discovery": {
+                "create_candidates": [
+                  "POST /api/tickets"
+                ],
+                "related_route_candidates": {
+                  "list": [
+                    "GET /api/tickets"
+                  ],
+                  "read": [
+                    "GET /api/tickets/{ticket_id}"
+                  ]
+                }
+              },
+              "safe_request_summary": {
+                "content_type": "application/json",
+                "json_keys": [
+                  "client_name",
+                  "contact",
+                  "problem_description"
+                ],
+                "marker_field": "client_name",
+                "unique_marker": "persist_ac_004_1783686550162",
+                "value_policy": "Generated non-secret local test values; evidence records keys and marker only."
+              },
+              "stop_result": {},
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Create endpoint did not return a successful response",
+              "verifier_plan": {
+                "actions": [
+                  "create record",
+                  "stop application",
+                  "restart application",
+                  "retrieve or list records"
+                ],
+                "assertions": [
+                  "record exists before restart",
+                  "same record is observable after restart"
+                ],
+                "criterion_id": "AC-004",
+                "execution_status": "not_executed",
+                "observable_expected_outcomes": [
+                  "post-restart read response contains the pre-restart identifier and data"
+                ],
+                "required_fixtures": [
+                  "request or record payload with a unique identifier",
+                  "documented restart command or runtime adapter"
+                ],
+                "setup": [
+                  "start application with persistent storage"
+                ],
+                "verifier_type": "persistence_restart"
+              }
+            },
+            "command": null,
+            "created_identifier": "",
+            "created_marker": "persist_ac_004_1783686550162",
+            "criterion_id": "AC-004",
+            "exit_code": null,
+            "failure_reason": "HTTP 401",
+            "final_assertion": {
+              "passed": false,
+              "reason": "HTTP 401"
+            },
+            "method": "persistence_restart",
+            "method_path": [
+              {
+                "method": "POST",
+                "path": "/api/tickets"
+              }
+            ],
+            "post_restart_verification": {},
+            "pre_restart_verification": {},
+            "redacted_response_excerpt": {
+              "create": "{\"detail\":\"Login required\"}"
+            },
+            "response_status": {
+              "create": 401
+            },
+            "restart_result": {},
+            "safe_request_summary": {
+              "content_type": "application/json",
+              "json_keys": [
+                "client_name",
+                "contact",
+                "problem_description"
+              ],
+              "marker_field": "client_name",
+              "unique_marker": "persist_ac_004_1783686550162",
+              "value_policy": "Generated non-secret local test values; evidence records keys and marker only."
+            },
+            "setup_steps": [
+              "Start runtime with isolated storage configuration",
+              "Create and verify a uniquely identifiable record",
+              "Stop and restart the runtime with the same storage configuration"
+            ],
+            "source": "final_delivery_audit",
+            "status": "failed",
+            "stop_result": {},
+            "summary": "Create endpoint did not return a successful response",
+            "timestamp": "2026-07-10T12:29:15.859938+00:00",
+            "verdict": "failed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "persistence_restart"
+          },
+          {
+            "action_steps": [
+              "POST /api/tickets"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "Record exists before restart",
+              "A distinct runtime process starts after clean stop",
+              "Same identifier and marker are observable after restart"
+            ],
+            "collected_evidence": {
+              "created_identifier": "",
+              "created_marker": "persist_ac_004_1783686550162",
+              "final_assertion": {
+                "passed": false,
+                "reason": "HTTP 401"
+              },
+              "initial_start": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29606",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 39280,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "method_path": [
+                {
+                  "method": "POST",
+                  "path": "/api/tickets"
+                }
+              ],
+              "openapi_status": 200,
+              "post_restart_verification": {},
+              "pre_restart_verification": {},
+              "redacted_response_excerpt": {
+                "create": "{\"detail\":\"Login required\"}"
+              },
+              "response_status": {
+                "create": 401
+              },
+              "restart_result": {},
+              "route_discovery": {
+                "create_candidates": [
+                  "POST /api/tickets"
+                ],
+                "related_route_candidates": {
+                  "list": [
+                    "GET /api/tickets"
+                  ],
+                  "read": [
+                    "GET /api/tickets/{ticket_id}"
+                  ]
+                }
+              },
+              "safe_request_summary": {
+                "content_type": "application/json",
+                "json_keys": [
+                  "client_name",
+                  "contact",
+                  "problem_description"
+                ],
+                "marker_field": "client_name",
+                "unique_marker": "persist_ac_004_1783686550162",
+                "value_policy": "Generated non-secret local test values; evidence records keys and marker only."
+              },
+              "stop_result": {},
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-004_wone6ha3\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Create endpoint did not return a successful response",
+              "verifier_plan": {
+                "actions": [
+                  "create record",
+                  "stop application",
+                  "restart application",
+                  "retrieve or list records"
+                ],
+                "assertions": [
+                  "record exists before restart",
+                  "same record is observable after restart"
+                ],
+                "criterion_id": "AC-004",
+                "execution_status": "not_executed",
+                "observable_expected_outcomes": [
+                  "post-restart read response contains the pre-restart identifier and data"
+                ],
+                "required_fixtures": [
+                  "request or record payload with a unique identifier",
+                  "documented restart command or runtime adapter"
+                ],
+                "setup": [
+                  "start application with persistent storage"
+                ],
+                "verifier_type": "persistence_restart"
+              }
+            },
+            "command": null,
+            "created_identifier": "",
+            "created_marker": "persist_ac_004_1783686550162",
+            "criterion_id": "AC-004",
+            "exit_code": null,
+            "failure_reason": "HTTP 401",
+            "final_assertion": {
+              "passed": false,
+              "reason": "HTTP 401"
+            },
+            "method": "persistence_restart",
+            "method_path": [
+              {
+                "method": "POST",
+                "path": "/api/tickets"
+              }
+            ],
+            "post_restart_verification": {},
+            "pre_restart_verification": {},
+            "redacted_response_excerpt": {
+              "create": "{\"detail\":\"Login required\"}"
+            },
+            "response_status": {
+              "create": 401
+            },
+            "restart_result": {},
+            "safe_request_summary": {
+              "content_type": "application/json",
+              "json_keys": [
+                "client_name",
+                "contact",
+                "problem_description"
+              ],
+              "marker_field": "client_name",
+              "unique_marker": "persist_ac_004_1783686550162",
+              "value_policy": "Generated non-secret local test values; evidence records keys and marker only."
+            },
+            "setup_steps": [
+              "Start runtime with isolated storage configuration",
+              "Create and verify a uniquely identifiable record",
+              "Stop and restart the runtime with the same storage configuration"
+            ],
+            "source": "final_delivery_audit",
+            "status": "failed",
+            "stop_result": {},
+            "summary": "Create endpoint did not return a successful response",
+            "timestamp": "2026-07-10T12:29:15.859938+00:00",
+            "verdict": "failed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "persistence_restart"
+          }
+        ],
+        "expected_result": "Expected ASGI app can be imported",
+        "id": "AC-004",
+        "priority": "high",
+        "requirement_ids": [],
+        "source": "project_profile",
+        "status": "pending",
+        "title": "FastAPI application imports",
+        "trace": "",
+        "verification_method": "python_import",
+        "verifier_plan": {
+          "actions": [
+            "import target module in an isolated Python process"
+          ],
+          "assertions": [
+            "module imports without exception"
+          ],
+          "criterion_id": "AC-004",
+          "execution_status": "not_executed",
+          "observable_expected_outcomes": [
+            "import process exits successfully and reports the imported module"
+          ],
+          "required_fixtures": [
+            "target module name"
+          ],
+          "setup": [
+            "prepare Python import path"
+          ],
+          "verifier_type": "python_import"
+        }
+      },
+      {
+        "description": "Application starts with python -m uvicorn on a free local port.",
+        "evidence": [
+          {
+            "action_steps": [
+              "Inspect route inventory",
+              "Inspect source for user/role/tenant complexity",
+              "Read runtime admin metadata"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "No public signup",
+              "No complex role/tenant system",
+              "Local admin identity is available"
+            ],
+            "classification": "PARTIALLY_IMPLEMENTED",
+            "collected_evidence": {
+              "admin_configuration_path": "ADMIN_NAME environment variable and .env.example",
+              "classification": "PARTIALLY_IMPLEMENTED",
+              "complex_user_system_source_hits": [],
+              "criterion_id": "AC-005",
+              "criterion_text": "Windows installation and run instructions are documented. The README explains how to install dependencies and start the project on Windows. Windows setup and run instructions are present and specific to the delivered project. One local administrator, persistent local storage, real startup and working buttons, automated tests, and Windows run instructions",
+              "effective_project_profile": [
+                "REST_API",
+                "fastapi",
+                "python_application",
+                "python_cli"
+              ],
+              "execution_timestamp": "2026-07-10T12:29:16Z",
+              "local_admin_available": false,
+              "meta_admin_name_present": false,
+              "openapi_status": 200,
+              "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery",
+              "project_snapshot_fingerprint": "c5bfc54a143fc385e5bb8ed8d4736609686d123c52095c5282e483a8e1153f13",
+              "public_signup_routes": [],
+              "route_discovery": {
+                "discovered_routes": {
+                  "collection": "",
+                  "comments": "/api/tickets/{ticket_id}/comments",
+                  "item": "/api/tickets/{ticket_id}",
+                  "meta": "",
+                  "stats": ""
+                },
+                "paths": [
+                  "/",
+                  "/api/dashboard",
+                  "/api/session",
+                  "/api/tickets",
+                  "/api/tickets/{ticket_id}",
+                  "/api/tickets/{ticket_id}/comments",
+                  "/login",
+                  "/logout"
+                ]
+              },
+              "route_inventory": [
+                "/",
+                "/api/dashboard",
+                "/api/session",
+                "/api/tickets",
+                "/api/tickets/{ticket_id}",
+                "/api/tickets/{ticket_id}/comments",
+                "/login",
+                "/logout"
+              ],
+              "runtime": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29772",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 4468,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "semantic_verifier_plan": {
+                "confidence": 0.9,
+                "criterion_id": "AC-005",
+                "expected_outcomes": [],
+                "expected_values": [],
+                "project_profile": [
+                  "REST_API",
+                  "fastapi",
+                  "python_application",
+                  "python_cli"
+                ],
+                "required_actions": [
+                  "inspect routes",
+                  "inspect auth model",
+                  "read admin metadata"
+                ],
+                "required_fields": [],
+                "route_hints": [],
+                "semantic_intent": "single_local_admin_without_complex_users",
+                "target_entity": "admin",
+                "ui_hints": [],
+                "unsupported_reason": "",
+                "verifier_type": "admin_scope"
+              },
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Admin/user scope verification found a blocking issue"
+            },
+            "command": null,
+            "criterion_id": "AC-005",
+            "exit_code": null,
+            "failure_reason": "Complex user system found or local admin unavailable",
+            "method": "single_local_admin_scope",
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "failed",
+            "summary": "Admin/user scope verification found a blocking issue",
+            "timestamp": "2026-07-10T12:29:21.795333+00:00",
+            "verdict": "failed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "single_local_admin_scope"
+          },
+          {
+            "action_steps": [
+              "Inspect route inventory",
+              "Inspect source for user/role/tenant complexity",
+              "Read runtime admin metadata"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "No public signup",
+              "No complex role/tenant system",
+              "Local admin identity is available"
+            ],
+            "classification": "PARTIALLY_IMPLEMENTED",
+            "collected_evidence": {
+              "admin_configuration_path": "ADMIN_NAME environment variable and .env.example",
+              "classification": "PARTIALLY_IMPLEMENTED",
+              "complex_user_system_source_hits": [],
+              "criterion_id": "AC-005",
+              "criterion_text": "Windows installation and run instructions are documented. The README explains how to install dependencies and start the project on Windows. Windows setup and run instructions are present and specific to the delivered project. One local administrator, persistent local storage, real startup and working buttons, automated tests, and Windows run instructions",
+              "effective_project_profile": [
+                "REST_API",
+                "fastapi",
+                "python_application",
+                "python_cli"
+              ],
+              "execution_timestamp": "2026-07-10T12:29:16Z",
+              "local_admin_available": false,
+              "meta_admin_name_present": false,
+              "openapi_status": 200,
+              "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery",
+              "project_snapshot_fingerprint": "c5bfc54a143fc385e5bb8ed8d4736609686d123c52095c5282e483a8e1153f13",
+              "public_signup_routes": [],
+              "route_discovery": {
+                "discovered_routes": {
+                  "collection": "",
+                  "comments": "/api/tickets/{ticket_id}/comments",
+                  "item": "/api/tickets/{ticket_id}",
+                  "meta": "",
+                  "stats": ""
+                },
+                "paths": [
+                  "/",
+                  "/api/dashboard",
+                  "/api/session",
+                  "/api/tickets",
+                  "/api/tickets/{ticket_id}",
+                  "/api/tickets/{ticket_id}/comments",
+                  "/login",
+                  "/logout"
+                ]
+              },
+              "route_inventory": [
+                "/",
+                "/api/dashboard",
+                "/api/session",
+                "/api/tickets",
+                "/api/tickets/{ticket_id}",
+                "/api/tickets/{ticket_id}/comments",
+                "/login",
+                "/logout"
+              ],
+              "runtime": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29772",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 4468,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "semantic_verifier_plan": {
+                "confidence": 0.9,
+                "criterion_id": "AC-005",
+                "expected_outcomes": [],
+                "expected_values": [],
+                "project_profile": [
+                  "REST_API",
+                  "fastapi",
+                  "python_application",
+                  "python_cli"
+                ],
+                "required_actions": [
+                  "inspect routes",
+                  "inspect auth model",
+                  "read admin metadata"
+                ],
+                "required_fields": [],
+                "route_hints": [],
+                "semantic_intent": "single_local_admin_without_complex_users",
+                "target_entity": "admin",
+                "ui_hints": [],
+                "unsupported_reason": "",
+                "verifier_type": "admin_scope"
+              },
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Admin/user scope verification found a blocking issue"
+            },
+            "command": null,
+            "criterion_id": "AC-005",
+            "exit_code": null,
+            "failure_reason": "Complex user system found or local admin unavailable",
+            "method": "single_local_admin_scope",
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "failed",
+            "summary": "Admin/user scope verification found a blocking issue",
+            "timestamp": "2026-07-10T12:29:21.795333+00:00",
+            "verdict": "failed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "single_local_admin_scope"
+          },
+          {
+            "action_steps": [
+              "Inspect route inventory",
+              "Inspect source for user/role/tenant complexity",
+              "Read runtime admin metadata"
+            ],
+            "artifacts": [],
+            "assertions": [
+              "No public signup",
+              "No complex role/tenant system",
+              "Local admin identity is available"
+            ],
+            "classification": "PARTIALLY_IMPLEMENTED",
+            "collected_evidence": {
+              "admin_configuration_path": "ADMIN_NAME environment variable and .env.example",
+              "classification": "PARTIALLY_IMPLEMENTED",
+              "complex_user_system_source_hits": [],
+              "criterion_id": "AC-005",
+              "criterion_text": "Windows installation and run instructions are documented. The README explains how to install dependencies and start the project on Windows. Windows setup and run instructions are present and specific to the delivered project. One local administrator, persistent local storage, real startup and working buttons, automated tests, and Windows run instructions",
+              "effective_project_profile": [
+                "REST_API",
+                "fastapi",
+                "python_application",
+                "python_cli"
+              ],
+              "execution_timestamp": "2026-07-10T12:29:16Z",
+              "local_admin_available": false,
+              "meta_admin_name_present": false,
+              "openapi_status": 200,
+              "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery",
+              "project_snapshot_fingerprint": "c5bfc54a143fc385e5bb8ed8d4736609686d123c52095c5282e483a8e1153f13",
+              "public_signup_routes": [],
+              "route_discovery": {
+                "discovered_routes": {
+                  "collection": "",
+                  "comments": "/api/tickets/{ticket_id}/comments",
+                  "item": "/api/tickets/{ticket_id}",
+                  "meta": "",
+                  "stats": ""
+                },
+                "paths": [
+                  "/",
+                  "/api/dashboard",
+                  "/api/session",
+                  "/api/tickets",
+                  "/api/tickets/{ticket_id}",
+                  "/api/tickets/{ticket_id}/comments",
+                  "/login",
+                  "/logout"
+                ]
+              },
+              "route_inventory": [
+                "/",
+                "/api/dashboard",
+                "/api/session",
+                "/api/tickets",
+                "/api/tickets/{ticket_id}",
+                "/api/tickets/{ticket_id}/comments",
+                "/login",
+                "/logout"
+              ],
+              "runtime": {
+                "adapter": "fastapi",
+                "base_url": "http://127.0.0.1:29772",
+                "env_overrides": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "error": "",
+                "pid": 4468,
+                "started": true,
+                "status": "passed",
+                "verified": true
+              },
+              "semantic_verifier_plan": {
+                "confidence": 0.9,
+                "criterion_id": "AC-005",
+                "expected_outcomes": [],
+                "expected_values": [],
+                "project_profile": [
+                  "REST_API",
+                  "fastapi",
+                  "python_application",
+                  "python_cli"
+                ],
+                "required_actions": [
+                  "inspect routes",
+                  "inspect auth model",
+                  "read admin metadata"
+                ],
+                "required_fields": [],
+                "route_hints": [],
+                "semantic_intent": "single_local_admin_without_complex_users",
+                "target_entity": "admin",
+                "ui_hints": [],
+                "unsupported_reason": "",
+                "verifier_type": "admin_scope"
+              },
+              "storage": {
+                "env_override_names": [
+                  "APP_DATABASE_PATH",
+                  "APP_ENV",
+                  "DATABASE_PATH",
+                  "DATABASE_URL",
+                  "DATA_DIR",
+                  "DATA_FILE",
+                  "DB_PATH",
+                  "ENV",
+                  "FREELANCERSTUDIO_ACCEPTANCE_TEST",
+                  "SQLITE_DB_PATH",
+                  "SQLITE_PATH",
+                  "STORAGE_DIR",
+                  "TEST_DATABASE_PATH"
+                ],
+                "isolated_storage_dir": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl",
+                "isolation_policy": "Verifier-created local storage paths are used when the app honors common storage environment variables.",
+                "json_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl\\acceptance_verifier.json",
+                "sqlite_path": "C:\\Users\\aksen\\AppData\\Local\\Temp\\freelancerstudio_AC-005_zc0onmzl\\acceptance_verifier.sqlite3"
+              },
+              "summary": "Admin/user scope verification found a blocking issue"
+            },
+            "command": null,
+            "criterion_id": "AC-005",
+            "exit_code": null,
+            "failure_reason": "Complex user system found or local admin unavailable",
+            "method": "single_local_admin_scope",
+            "setup_steps": [],
+            "source": "final_delivery_audit",
+            "status": "failed",
+            "summary": "Admin/user scope verification found a blocking issue",
+            "timestamp": "2026-07-10T12:29:21.795333+00:00",
+            "verdict": "failed",
+            "verifier": "final_delivery_audit",
+            "verifier_type": "single_local_admin_scope"
+          }
+        ],
+        "expected_result": "Process stays up long enough to serve HTTP",
+        "id": "AC-005",
+        "priority": "high",
+        "requirement_ids": [],
+        "source": "project_profile",
+        "status": "pending",
+        "title": "FastAPI runtime starts",
+        "trace": "",
+        "verification_method": "runtime_smoke",
+        "verifier_plan": {
+          "actions": [
+            "start application",
+            "probe observable endpoint or page",
+            "stop owned process"
+          ],
+          "assertions": [
+            "process starts",
+            "observable endpoint or page responds",
+            "owned process stops cleanly"
+          ],
+          "criterion_id": "AC-005",
+          "execution_status": "not_executed",
+          "observable_expected_outcomes": [
+            "runtime probe returns a successful response before shutdown"
+          ],
+          "required_fixtures": [
+            "documented run command",
+            "expected local port, health endpoint, or landing page"
+          ],
+          "setup": [
+            "prepare documented runtime command"
+          ],
+          "verifier_type": "runtime_start"
+        }
+      }
+    ],
+    "previous_contract_fingerprint": "fbf965eac62e02e01aa0deda7ec00e17f9101b8dd6198eae5dee4dbc8f9100ef",
+    "previous_contract_version": 1,
+    "previous_criterion_count": 5
+  },
+  "created_at": "2026-07-10T11:53:09Z",
+  "current_state": "failed_qa",
+  "effective_project_profile": [],
+  "gates": {
+    "_final_audit_passed": false,
+    "_generation_finished": false,
+    "_product_judge_passed": false,
+    "_qa_passed": false
+  },
+  "issues": [
+    {
+      "criterion_id": "AC-023",
+      "evidence": {
+        "check": "credential_safe_documentation",
+        "files": [
+          "main.py"
+        ]
+      },
+      "id": "ISSUE-AUDIT-CREDENTIAL-SAFETY",
+      "owner": "opencode",
+      "reproduction": [
+        "Run credential-safe documentation verifier"
+      ],
+      "requirement_id": "",
+      "resolution_reason": "Credential fixture is synthetic and isolated; focused scan, project tests, and current AC-023 evidence passed",
+      "severity": "high",
+      "source": "final_delivery_audit",
+      "status": "resolved",
+      "title": "Hardcoded credential-like default requires repair",
+      "verification_method": "credential_safe_documentation"
+    },
+    {
+      "blocking": true,
+      "criterion_id": "AC-019",
+      "defect_type": "missing_test_coverage",
+      "id": "ISSUE-AC019-RESTART-PERSISTENCE",
+      "repairable": true,
+      "resolution_reason": "Restart-persistence test passed generated-project QA and current AC-019 semantic evidence",
+      "resolved_snapshot": "9b71fb4ce69b78c4396d3b6f34c3079d22e512049049cfa19d1d0bc1a5060e5e",
+      "severity": "high",
+      "snapshot_fingerprint": "d4791149ef1030542b27cbdc37d952839d8a42b3aac9bbb3a0d81bf1ff1b24b8",
+      "source": "acceptance_evidence",
+      "status": "resolved",
+      "title": "Missing restart-persistence automated test coverage"
+    }
+  ],
+  "latest_delivery_report_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery\\DELIVERY_REPORT.json",
+  "latest_evidence_snapshot": "9b71fb4ce69b78c4396d3b6f34c3079d22e512049049cfa19d1d0bc1a5060e5e",
+  "latest_final_audit_status": "failed",
+  "latest_project_snapshot": "9b71fb4ce69b78c4396d3b6f34c3079d22e512049049cfa19d1d0bc1a5060e5e",
+  "original_request": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+  "pipeline_stage": "",
+  "product_runtime_profile": {},
+  "project_id": "39ec2bd7-d8fe-4c3c-8c89-24b05acc9828",
+  "project_name": "Test-Project-Recovery",
+  "project_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery",
+  "project_spec": {
+    "assumptions": [
+      "Generated project should run locally from its project root",
+      "FastAPI app exposes an ASGI app object named app"
+    ],
+    "delivery_artifacts": [
+      "README.md",
+      "requirements.txt",
+      ".env.example",
+      ".gitignore"
+    ],
+    "expected_entrypoint": "main.py",
+    "explicit_constraints": [
+      "Each request must contain:",
+      "delete a request only after confirmation",
+      "Dashboard counters must show:",
+      "Search must work by:",
+      "Filters must support:",
+      "The user interface must be:",
+      "no complex user-management system"
+    ],
+    "external_services": [
+      "SMTP credentials"
+    ],
+    "inferred_requirements": [
+      "Root README.md with install, run, and test instructions",
+      "No placeholder or TODO-only implementation",
+      "Python dependency file must match imports",
+      "Credential requirements must be documented in .env.example without real secrets"
+    ],
+    "installation_method": "python -m pip install -r requirements.txt",
+    "intended_users": [
+      "administrator",
+      "web users"
+    ],
+    "original_user_request": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+    "project_goal": "Test-Project-Recovery",
+    "project_profiles": [
+      "fastapi",
+      "REST_API",
+      "python_cli",
+      "python_application"
+    ],
+    "project_type": "fastapi",
+    "required_credentials": [
+      {
+        "blocks_completion": true,
+        "configured": false,
+        "description": "SMTP credentials",
+        "externally_verifiable": true,
+        "name": "SMTP_PASSWORD",
+        "required": true,
+        "source": "user_request"
+      }
+    ],
+    "required_features": [
+      "Build a browser-based ticket/request tracking application for a small IT company",
+      "Each request must contain:",
+      "client name; phone or email; company, optional; problem description; priority:; low; normal; high; urgent; status",
+      "new; in progress; waiting for client; completed; closed",
+      "create a request; display requests in a common list; open/view an existing request; edit/update an existing request; add comments to a request; delete a request only after confirmation",
+      "Dashboard counters must show:",
+      "new requests; requests in progress; urgent requests; requests closed today",
+      "Search must work by:",
+      "client name; phone; email; problem text",
+      "Filters must support:",
+      "status; priority",
+      "The user interface must be:",
+      "modern; dark; usable on desktop; usable on tablet",
+      "one local admin; no complex user-management system",
+      "persistent local storage",
+      "real application startup; real working controls/buttons; logical application behavior; automated tests for main functionality; Windows installation/run instructions",
+      "Analyze the requirements first and choose the appropriate implementation stack"
+    ],
+    "requirement_gaps": [
+      {
+        "category": "ambiguity",
+        "evidence": "modern",
+        "id": "GAP-001",
+        "severity": "medium",
+        "status": "unresolved",
+        "suggested_question": "What concrete behavior or measurable acceptance criteria should define 'modern'?",
+        "summary": "Requirement uses a subjective or open-ended term without measurable acceptance detail."
+      },
+      {
+        "category": "missing_credential",
+        "evidence": "SMTP_PASSWORD",
+        "id": "GAP-002",
+        "severity": "blocker",
+        "status": "unresolved",
+        "suggested_question": "Can you provide or confirm the placeholder/environment variable strategy for SMTP_PASSWORD?",
+        "summary": "External credential is required before full implementation or live verification can be completed."
+      }
+    ],
+    "requirements": [
+      {
+        "dependencies": [],
+        "description": "Browser-based ticket tracking application runs for internal staff.",
+        "id": "REQ-001",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "browser_ticket_runtime",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "browser ticket runtime"
+      },
+      {
+        "dependencies": [],
+        "description": "Ticket records store client name, contact phone or email, optional company, and problem description.",
+        "id": "REQ-002",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "ticket_fields",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "ticket fields"
+      },
+      {
+        "dependencies": [],
+        "description": "Ticket priority accepts low, normal, high, and urgent.",
+        "id": "REQ-003",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "priority_values",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "priority values"
+      },
+      {
+        "dependencies": [],
+        "description": "Ticket status accepts new, in progress, waiting for client, completed, and closed.",
+        "id": "REQ-004",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "status_values",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "status values"
+      },
+      {
+        "dependencies": [],
+        "description": "Users can create, list, open, and edit ticket records.",
+        "id": "REQ-005",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "ticket_lifecycle",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "ticket lifecycle"
+      },
+      {
+        "dependencies": [],
+        "description": "Users can add and view ticket comments.",
+        "id": "REQ-006",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "ticket_comments",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "ticket comments"
+      },
+      {
+        "dependencies": [],
+        "description": "Ticket deletion requires explicit confirmation.",
+        "id": "REQ-007",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "confirmed_deletion",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "confirmed deletion"
+      },
+      {
+        "dependencies": [],
+        "description": "Dashboard shows new, in-progress, urgent, and closed-today counts.",
+        "id": "REQ-008",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "dashboard_metrics",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "dashboard metrics"
+      },
+      {
+        "dependencies": [],
+        "description": "Search finds tickets by client, contact, and problem description.",
+        "id": "REQ-009",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "ticket_search",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "ticket search"
+      },
+      {
+        "dependencies": [],
+        "description": "Ticket list filters by status and priority.",
+        "id": "REQ-010",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "ticket_filters",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "ticket filters"
+      },
+      {
+        "dependencies": [],
+        "description": "Ticket data persists across application restart.",
+        "id": "REQ-011",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "persistent_storage",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "persistent storage"
+      },
+      {
+        "dependencies": [],
+        "description": "One configured local administrator can use the application without registration, roles, tenants, or external identity.",
+        "id": "REQ-012",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "local_admin_scope",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "local admin scope"
+      },
+      {
+        "dependencies": [],
+        "description": "Interface has a modern dark visual design.",
+        "id": "REQ-013",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "dark_product_quality",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "dark product quality"
+      },
+      {
+        "dependencies": [],
+        "description": "Interface remains usable at desktop viewport sizes.",
+        "id": "REQ-014",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "desktop_usability",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "desktop usability"
+      },
+      {
+        "dependencies": [],
+        "description": "Interface remains usable at tablet viewport sizes.",
+        "id": "REQ-015",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "tablet_usability",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "tablet usability"
+      },
+      {
+        "dependencies": [],
+        "description": "Primary user controls perform their intended actions.",
+        "id": "REQ-016",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "primary_controls",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "primary controls"
+      },
+      {
+        "dependencies": [],
+        "description": "Automated tests cover the ticket workflow.",
+        "id": "REQ-017",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "automated_tests",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "automated tests"
+      },
+      {
+        "dependencies": [],
+        "description": "Windows installation and run instructions are documented.",
+        "id": "REQ-018",
+        "mandatory": true,
+        "priority": "high",
+        "semantic_intent": "windows_documentation",
+        "source": "user_requirement",
+        "source_trace": "Build a browser-based ticket/request tracking application for a small IT company.\n\nEach request must contain:\n\n- client name\n- phone or email\n- company, optional\n- problem description\n- priority:\n  - low\n  - normal\n  - high\n  - urgent\n- status\n\nRequired statuses:\n\n- new\n- in progress\n- waiting for client\n- completed\n- closed\n\nRequired behavior:\n\n- create a request\n- display requests in a common list\n- open/view an existing request\n- edit/update an existing request\n- add comments to a request\n- delete a request only after confirmation\n\nDashboard counters must show:\n\n- new requests\n- requests in progress\n- urgent requests\n- requests closed today\n\nSearch must work by:\n\n- client name\n- phone\n- email\n- problem text\n\nFilters must support:\n\n- status\n- priority\n\nThe user interface must be:\n\n- modern\n- dark\n- usable on desktop\n- usable on tablet\n\nAdministration scope:\n\n- one local admin\n- no complex user-management system\n\nData:\n\n- persistent local storage\n\nDelivery requirements:\n\n- real application startup\n- real working controls/buttons\n- logical application behavior\n- automated tests for main functionality\n- Windows installation/run instructions\n\nTechnology:\n\nAnalyze the requirements first and choose the appropriate implementation stack.",
+        "status": "pending",
+        "title": "windows documentation"
+      }
+    ],
+    "risks": [
+      "Project depends on external credentials that cannot be validated without user input"
+    ],
+    "run_method": "python -m uvicorn main:app --host 127.0.0.1 --port <free-port>",
+    "technology_requirements": [],
+    "test_method": "python -m pytest -q",
+    "unknowns": [
+      "Real production credentials are not available during generation"
+    ]
+  },
+  "qa_summary": {},
+  "recovery_status": "native",
+  "repair_attempts": [
+    {
+      "attempt_id": "repair-44785ac31bf4462bad5411cd39089a10",
+      "changed_files": [],
+      "command_shape": [
+        "opencode.cmd",
+        "run",
+        "<task>",
+        "--model",
+        "openai/gpt-5.5",
+        "--dangerously-skip-permissions",
+        "--file=<task-file>"
+      ],
+      "diagnostics": {
+        "command_shape": [
+          "opencode.cmd",
+          "run",
+          "<task>",
+          "--model",
+          "openai/gpt-5.5",
+          "--dangerously-skip-permissions",
+          "--file=<task-file>"
+        ],
+        "session_id": "opencode-cli-3657c9e5"
+      },
+      "duration_seconds": 4.466888,
+      "error_category": "nonzero_exit",
+      "exception_summary": "",
+      "exception_type": "",
+      "executable": "C:\\Users\\aksen\\AppData\\Roaming\\npm\\opencode.cmd",
+      "executable_found": true,
+      "exit_code": 1,
+      "failure_stage": "subprocess",
+      "filesystem_changes_detected": false,
+      "finished_at": "2026-07-10T18:48:02.312584+00:00",
+      "issue_ids": [
+        "ISSUE-AUDIT-CREDENTIAL-SAFETY"
+      ],
+      "issues_received": [
+        {
+          "category": "final_delivery_audit",
+          "id": "ISSUE-AUDIT-CREDENTIAL-SAFETY"
+        }
+      ],
+      "meaningful_changes_detected": false,
+      "model": "configured",
+      "opencode_version": "",
+      "prompt_built": true,
+      "prompt_hash": "321f876bdf12eeabcfc6e87e281cbad6a96dcb97a2145f47e72549445088454b",
+      "prompt_length": 7627,
+      "repairable_issues_selected": [
+        {
+          "category": "final_delivery_audit",
+          "id": "ISSUE-AUDIT-CREDENTIAL-SAFETY"
+        }
+      ],
+      "snapshot_after": {
+        ".freelancerstudio/audit_runs/audit-4c92e877412f48fdad6123e1f5f33b34.json": {
+          "mtime": 1783686562.0226626,
+          "sha256": "f24fc9ff03ccd842b7243cb12700a4c7af0d9c735523d584245d43860b3f6a5f",
+          "size": 20027
+        },
+        ".freelancerstudio/audit_runs/audit-869838b1b3c043f3bfd8b483aa4924ae.json": {
+          "mtime": 1783696718.6076553,
+          "sha256": "622bf165a19a074bc574986e2682824a3ea2ef27b6c99b02afe912df6b5d8562",
+          "size": 20031
+        },
+        ".freelancerstudio/evidence_ledger.json": {
+          "mtime": 1783703757.7280712,
+          "sha256": "20c69b7bc7df9b116946db7da2ec48fd94cc7e4a7075ebfcebca39b09b82e99f",
+          "size": 109650
+        },
+        ".freelancerstudio/project_state.json": {
+          "mtime": 1783703782.3680243,
+          "sha256": "a6d2eaea7fb84c9430cab68c80f91e206d9105e0f924bdcd86911448254439d3",
+          "size": 140117
+        },
+        "DELIVERY_REPORT.json": {
+          "mtime": 1783696718.6960468,
+          "sha256": "70a1a686d4037173b54b7eec0e49ea88c24725a34c7f8a35e91ece702e9c0d4e",
+          "size": 19142
+        },
+        "README.md": {
+          "mtime": 1783684595.0358527,
+          "sha256": "70903e3cd69863c9875b15d55509cc5905235ed18952138dfe78fce6cfccefc6",
+          "size": 1064
+        },
+        "__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "main.py": {
+          "mtime": 1783684664.8960123,
+          "sha256": "caf94e63837e8dbfb8b84afd240c711945d61de1d6cef3a8bb19f11377a2b2fe",
+          "size": 22655
+        },
+        "requirements.txt": {
+          "mtime": 1783684724.9907837,
+          "sha256": "720220bc30e7729812e830be4c06c9fefbcbb4d21954dad5c108f92e11b067e1",
+          "size": 38
+        },
+        "tests/__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "tests/test_app.py": {
+          "mtime": 1783684638.8251097,
+          "sha256": "1b42df771c26b06a884d54a319e767bcab434ef179bed8c22dd8c7e94f62fc82",
+          "size": 3075
+        }
+      },
+      "snapshot_before": {
+        ".freelancerstudio/audit_runs/audit-4c92e877412f48fdad6123e1f5f33b34.json": {
+          "mtime": 1783686562.0226626,
+          "sha256": "f24fc9ff03ccd842b7243cb12700a4c7af0d9c735523d584245d43860b3f6a5f",
+          "size": 20027
+        },
+        ".freelancerstudio/audit_runs/audit-869838b1b3c043f3bfd8b483aa4924ae.json": {
+          "mtime": 1783696718.6076553,
+          "sha256": "622bf165a19a074bc574986e2682824a3ea2ef27b6c99b02afe912df6b5d8562",
+          "size": 20031
+        },
+        ".freelancerstudio/evidence_ledger.json": {
+          "mtime": 1783703757.7280712,
+          "sha256": "20c69b7bc7df9b116946db7da2ec48fd94cc7e4a7075ebfcebca39b09b82e99f",
+          "size": 109650
+        },
+        ".freelancerstudio/project_state.json": {
+          "mtime": 1783703782.3680243,
+          "sha256": "a6d2eaea7fb84c9430cab68c80f91e206d9105e0f924bdcd86911448254439d3",
+          "size": 140117
+        },
+        "DELIVERY_REPORT.json": {
+          "mtime": 1783696718.6960468,
+          "sha256": "70a1a686d4037173b54b7eec0e49ea88c24725a34c7f8a35e91ece702e9c0d4e",
+          "size": 19142
+        },
+        "README.md": {
+          "mtime": 1783684595.0358527,
+          "sha256": "70903e3cd69863c9875b15d55509cc5905235ed18952138dfe78fce6cfccefc6",
+          "size": 1064
+        },
+        "__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "main.py": {
+          "mtime": 1783684664.8960123,
+          "sha256": "caf94e63837e8dbfb8b84afd240c711945d61de1d6cef3a8bb19f11377a2b2fe",
+          "size": 22655
+        },
+        "requirements.txt": {
+          "mtime": 1783684724.9907837,
+          "sha256": "720220bc30e7729812e830be4c06c9fefbcbb4d21954dad5c108f92e11b067e1",
+          "size": 38
+        },
+        "tests/__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "tests/test_app.py": {
+          "mtime": 1783684638.8251097,
+          "sha256": "1b42df771c26b06a884d54a319e767bcab434ef179bed8c22dd8c7e94f62fc82",
+          "size": 3075
+        }
+      },
+      "started_at": "2026-07-10T18:47:57.845696+00:00",
+      "status": "subprocess_nonzero_exit",
+      "stderr_length": 0,
+      "stderr_summary": "",
+      "stdout_length": 81,
+      "stdout_summary": "Error: File not found: generated_projects/test-project-recovery\\.opencode_task.md",
+      "subprocess_started": true,
+      "success": false,
+      "textual_result_present": true,
+      "timeout": false,
+      "timeout_seconds": null,
+      "transport": "opencode_cli",
+      "working_directory": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery"
+    },
+    {
+      "__opencode_fix_applied__": true,
+      "attempt_id": "repair-0bd57d71b599498e812d541db150e310",
+      "changed_files": [
+        "main.py [MODIFIED]",
+        "README.md [MODIFIED]",
+        "tests/test_app.py [MODIFIED]"
+      ],
+      "command_shape": [
+        "opencode.cmd",
+        "run",
+        "<task>",
+        "--model",
+        "openai/gpt-5.5",
+        "--dangerously-skip-permissions",
+        "--file=<task-file>"
+      ],
+      "diagnostics": {
+        "command_shape": [
+          "opencode.cmd",
+          "run",
+          "<task>",
+          "--model",
+          "openai/gpt-5.5",
+          "--dangerously-skip-permissions",
+          "--file=<task-file>"
+        ],
+        "session_id": "opencode-cli-11134449"
+      },
+      "duration_seconds": 125.773528,
+      "error_category": "",
+      "exception_summary": "",
+      "exception_type": "",
+      "executable": "C:\\Users\\aksen\\AppData\\Roaming\\npm\\opencode.cmd",
+      "executable_found": true,
+      "exit_code": 0,
+      "failure_stage": "",
+      "filesystem_changes_detected": true,
+      "finished_at": "2026-07-10T19:05:11.945399+00:00",
+      "issue_ids": [
+        "ISSUE-AUDIT-CREDENTIAL-SAFETY"
+      ],
+      "issues_received": [
+        {
+          "category": "final_delivery_audit",
+          "id": "ISSUE-AUDIT-CREDENTIAL-SAFETY"
+        }
+      ],
+      "meaningful_changes_detected": true,
+      "model": "configured",
+      "opencode_version": "",
+      "prompt_built": true,
+      "prompt_hash": "321f876bdf12eeabcfc6e87e281cbad6a96dcb97a2145f47e72549445088454b",
+      "prompt_length": 7627,
+      "repairable_issues_selected": [
+        {
+          "category": "final_delivery_audit",
+          "id": "ISSUE-AUDIT-CREDENTIAL-SAFETY"
+        }
+      ],
+      "snapshot_after": {
+        ".freelancerstudio/audit_runs/audit-4c92e877412f48fdad6123e1f5f33b34.json": {
+          "mtime": 1783686562.0226626,
+          "sha256": "f24fc9ff03ccd842b7243cb12700a4c7af0d9c735523d584245d43860b3f6a5f",
+          "size": 20027
+        },
+        ".freelancerstudio/audit_runs/audit-869838b1b3c043f3bfd8b483aa4924ae.json": {
+          "mtime": 1783696718.6076553,
+          "sha256": "622bf165a19a074bc574986e2682824a3ea2ef27b6c99b02afe912df6b5d8562",
+          "size": 20031
+        },
+        ".freelancerstudio/evidence_ledger.json": {
+          "mtime": 1783703757.7280712,
+          "sha256": "20c69b7bc7df9b116946db7da2ec48fd94cc7e4a7075ebfcebca39b09b82e99f",
+          "size": 109650
+        },
+        ".freelancerstudio/project_state.json": {
+          "mtime": 1783709282.320251,
+          "sha256": "3b28b97b18447356b67b0a5b8b57c487cc145f812d35a469668d44d4e1a9aafa",
+          "size": 147105
+        },
+        "DELIVERY_REPORT.json": {
+          "mtime": 1783696718.6960468,
+          "sha256": "70a1a686d4037173b54b7eec0e49ea88c24725a34c7f8a35e91ece702e9c0d4e",
+          "size": 19142
+        },
+        "README.md": {
+          "mtime": 1783710254.529021,
+          "sha256": "42315f2e562cd05f4c9d88c59aea6eee145bbd877ed3dd3b499e4827252ee8e7",
+          "size": 1142
+        },
+        "__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "main.py": {
+          "mtime": 1783710254.5274942,
+          "sha256": "f75ff60b7cc2c62ce5802c76190e75d4768c7206cc005e53d2609122faeef2df",
+          "size": 22839
+        },
+        "requirements.txt": {
+          "mtime": 1783684724.9907837,
+          "sha256": "720220bc30e7729812e830be4c06c9fefbcbb4d21954dad5c108f92e11b067e1",
+          "size": 38
+        },
+        "tests/__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "tests/test_app.py": {
+          "mtime": 1783710254.529021,
+          "sha256": "d2aab8510890687a63c36db4c6fc6c75c9cf711a602d8f7650999ef1f929e1cd",
+          "size": 3227
+        }
+      },
+      "snapshot_before": {
+        ".freelancerstudio/audit_runs/audit-4c92e877412f48fdad6123e1f5f33b34.json": {
+          "mtime": 1783686562.0226626,
+          "sha256": "f24fc9ff03ccd842b7243cb12700a4c7af0d9c735523d584245d43860b3f6a5f",
+          "size": 20027
+        },
+        ".freelancerstudio/audit_runs/audit-869838b1b3c043f3bfd8b483aa4924ae.json": {
+          "mtime": 1783696718.6076553,
+          "sha256": "622bf165a19a074bc574986e2682824a3ea2ef27b6c99b02afe912df6b5d8562",
+          "size": 20031
+        },
+        ".freelancerstudio/evidence_ledger.json": {
+          "mtime": 1783703757.7280712,
+          "sha256": "20c69b7bc7df9b116946db7da2ec48fd94cc7e4a7075ebfcebca39b09b82e99f",
+          "size": 109650
+        },
+        ".freelancerstudio/project_state.json": {
+          "mtime": 1783709282.320251,
+          "sha256": "3b28b97b18447356b67b0a5b8b57c487cc145f812d35a469668d44d4e1a9aafa",
+          "size": 147105
+        },
+        "DELIVERY_REPORT.json": {
+          "mtime": 1783696718.6960468,
+          "sha256": "70a1a686d4037173b54b7eec0e49ea88c24725a34c7f8a35e91ece702e9c0d4e",
+          "size": 19142
+        },
+        "README.md": {
+          "mtime": 1783684595.0358527,
+          "sha256": "70903e3cd69863c9875b15d55509cc5905235ed18952138dfe78fce6cfccefc6",
+          "size": 1064
+        },
+        "__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "main.py": {
+          "mtime": 1783684664.8960123,
+          "sha256": "caf94e63837e8dbfb8b84afd240c711945d61de1d6cef3a8bb19f11377a2b2fe",
+          "size": 22655
+        },
+        "requirements.txt": {
+          "mtime": 1783684724.9907837,
+          "sha256": "720220bc30e7729812e830be4c06c9fefbcbb4d21954dad5c108f92e11b067e1",
+          "size": 38
+        },
+        "tests/__init__.py": {
+          "mtime": 1783684724.979452,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "tests/test_app.py": {
+          "mtime": 1783684638.8251097,
+          "sha256": "1b42df771c26b06a884d54a319e767bcab434ef179bed8c22dd8c7e94f62fc82",
+          "size": 3075
+        }
+      },
+      "started_at": "2026-07-10T19:03:06.171871+00:00",
+      "status": "subprocess_zero_exit_changes_detected",
+      "stderr_length": 0,
+      "stderr_summary": "",
+      "stdout_length": 4000,
+      "stdout_summary": "imitations\n\nImplemented the credential-safety repair in place.\n\n**Changed Files**\n- `main.py`: removed hardcoded admin password default; password now comes from `TICKET_TRACKER_ADMIN_PASSWORD`. Login returns `503` if it is not configured.\n- `README.md`: removed default credential documentation and added safe environment setup guidance.\n- `.env.example`: added safe placeholder configuration.\n- `.gitignore`: added `.env`.\n- `tests/test_app.py`: tests now set a test-only admin password through environment configuration.\n\n**Backup**\n- `E:\\Python\\OpenCode\\FreelancerStudio\\local_backups\\test_project_recovery_credential_safety_20260710_210348`\n\n**Verification**\n- `python -m pytest -q`\n- Result: `2 passed in 0.43s`\n- `python -c \"import main; print('import ok')\"`\n- Result: `import ok`\n- Targeted scan for `admin123`, old default getenv, and old README default credential heading: no matches.\n\n**Limitation**\n- Full FreelancerStudio QA was not run, per the task’s explicit `Do not run QA` follow-up.",
+      "subprocess_started": true,
+      "success": true,
+      "task_file_argument": ".opencode_task.md",
+      "task_file_exists": true,
+      "task_file_resolved_path": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery\\.opencode_task.md",
+      "textual_result_present": true,
+      "timeout": false,
+      "timeout_seconds": null,
+      "transport": "opencode_cli",
+      "working_directory": "E:\\Python\\OpenCode\\FreelancerStudio\\generated_projects\\test-project-recovery"
+    }
+  ],
+  "revision": 87,
+  "schema_version": 1,
+  "updated_at": "2026-07-11T09:30:31Z"
+}

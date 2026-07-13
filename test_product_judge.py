@@ -126,6 +126,29 @@ def test_input_excludes_secrets_and_old_approval_is_not_reused_after_repair(tmp_
     assert not product_judge.judge_result_is_fresh(result, criterion["id"], "snapshot-after-repair", product_judge.evidence_fingerprint(objective))
 
 
+def test_prompt_is_runtime_evidence_not_implementation_history(tmp_path):
+    criterion, objective, screenshots, project = _evidence(tmp_path)
+    bundle, reason = product_judge.build_judge_input(criterion, objective, screenshots, project, {}, "snapshot-a")
+
+    assert not reason
+    prompt = product_judge._prompt(bundle)
+    assert "implementation history" not in prompt.lower()
+    assert "PRODUCT JUDGE INPUT" in prompt
+
+
+def test_bridge_failure_and_malformed_response_are_distinct(tmp_path, monkeypatch):
+    criterion, objective, screenshots, project = _evidence(tmp_path)
+    connection = type("Connection", (), {"execute": lambda self, _request: {"status": "error", "failure_stage": "cli_process_exit", "error_category": "cli_argument_parsing", "exit_code": 2, "stderr_summary": "unknown option", "attachment_count": 4}})()
+    monkeypatch.setattr(product_judge, "OpenCodeBridgeConnection", type("FakeConnection", (), {"from_dict": staticmethod(lambda _value: connection)}))
+    monkeypatch.setattr(product_judge, "bridge_effective_capabilities", lambda _connection: {"image_input": True})
+
+    failed = product_judge.run_product_judge(criterion, objective, screenshots, project, {}, "snapshot-a", {"enabled": True, "provider": "opencode_bridge", "model": "openai/gpt-5.5", "connection": {}})
+    malformed, *_ = _run(tmp_path, lambda **_kwargs: "not json")
+
+    assert failed["request_diagnostics"]["failure_stage"] == "cli_process_exit"
+    assert malformed["request_diagnostics"]["failure_stage"] == "response_parsing"
+
+
 def test_blocking_judge_issue_uses_snapshot_repair_then_full_qa(tmp_path, monkeypatch):
     calls = []
 
@@ -135,7 +158,7 @@ def test_blocking_judge_issue_uses_snapshot_repair_then_full_qa(tmp_path, monkey
 
         def _request_opencode_fix(self, *_args):
             calls.append("repair")
-            return {main.qa_engine_module.OPENCODE_FIX_APPLIED: True, "changed_files": 1}
+            return {main.qa_engine_module.OPENCODE_FIX_APPLIED: True, "changed_files": 1, "meaningful_changes_detected": True}
 
     project = {
         "status": "final_audit",

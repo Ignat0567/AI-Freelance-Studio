@@ -2052,6 +2052,34 @@ def test_optional_missing_credential_is_not_blocking(tmp_path):
     assert next(check for check in report["checks"] if check["name"] == "credential_status")["status"] == "passed"
 
 
+def test_missing_smtp_credential_never_blocks_local_delivery(tmp_path):
+    project = _fastapi_project(tmp_path)
+    project["acceptance_criteria"] = []
+    project["project_spec"]["required_credentials"] = [{"name": "SMTP_PASSWORD", "description": "SMTP credentials", "required": True, "blocks_completion": True}]
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    assert report["status"] == "passed"
+    assert report["credential_state"][0]["blocks_completion"] is False
+
+
+def test_browser_context_receives_authenticated_session_cookie():
+    added = []
+
+    class Context:
+        def add_cookies(self, cookies):
+            added.extend(cookies)
+
+    class Browser:
+        def new_context(self, **_kwargs):
+            return Context()
+
+    context = delivery_audit.BrowserWebEvidenceAdapter()._authenticated_context(Browser(), "http://127.0.0.1:1234", {"width": 1366, "height": 768}, {"session": "opaque"})
+
+    assert context is not None
+    assert added == [{"name": "session", "value": "opaque", "url": "http://127.0.0.1:1234"}]
+
+
 def test_generated_project_credential_is_discovered_as_optional_from_env_example(tmp_path):
     _write(tmp_path / "README.md", "# Demo\n\nInstall: none\n\nRun: local\n\nTest: inspect\n")
     _write(tmp_path / ".env.example", "SMTP_PASSWORD=\n")

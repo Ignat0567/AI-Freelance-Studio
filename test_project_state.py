@@ -112,6 +112,31 @@ def test_replay_survives_fresh_reload_and_is_deterministic(tmp_path):
     assert first["criteria"] == second["criteria"]
 
 
+def test_focused_evidence_and_finding_history_survive_reload(tmp_path):
+    _write(tmp_path / "app.py", "print('app')")
+    persistence = {"id": "AC-PERSIST", "title": "Application data persists after restart.", "priority": "high", "verification_method": "persistence_restart", "status": "pending"}
+    admin = {"id": "AC-ADMIN", "title": "One configured local administrator can use the application.", "priority": "high", "verification_method": "admin_scope", "status": "pending"}
+    project = _project(tmp_path, persistence)
+    project["acceptance_criteria"].append(admin)
+    project["original_request"] = "Authoritative request"
+    project["contract_migration"] = {"contract_fingerprint": "contract-v2"}
+    project["audit_finding_history"] = [{"finding": "HTTP 401", "current_classification": "obsolete_verifier_failure", "resolution_reason": "Authenticated flow passed"}]
+    project_state.persist_project_state(project)
+    for criterion, verifier in ((persistence, "persistence_restart"), (admin, "single_local_admin_scope")):
+        project_state.append_evidence_record(project, criterion, {"criterion_id": criterion["id"], "verifier_type": verifier, "status": "passed", "verdict": "passed", "assertions": ["direct focused proof"], "collected_evidence": {"source_snapshot_binding": True}})
+
+    state, error = project_state.load_project_state(str(tmp_path))
+    ledger, ledger_error = project_state.load_evidence_ledger(str(tmp_path))
+
+    assert error == ledger_error == ""
+    assert state["original_request"] == "Authoritative request"
+    assert state["contract_migration"]["contract_fingerprint"] == "contract-v2"
+    assert state["audit_finding_history"][0]["current_classification"] == "obsolete_verifier_failure"
+    for criterion in state["acceptance_criteria"]:
+        record, reason = project_state.latest_valid_evidence(str(tmp_path), criterion, ledger)
+        assert record and record["status"] == "passed" and reason == ""
+
+
 def test_discovery_recovers_per_project_state_without_global_index(tmp_path):
     generated = tmp_path / "generated_projects"
     project_root = generated / "durable"
@@ -175,3 +200,15 @@ def test_product_judge_and_unavailable_results_persist_without_secrets(tmp_path)
 
     assert record["product_judge"]["verdict"] == "insufficient_evidence"
     assert "not-for-storage" not in json.dumps(record)
+
+
+def test_tampered_ledger_record_is_not_replayable(tmp_path):
+    _write(tmp_path / "app.py", "print('app')")
+    project = _project(tmp_path)
+    project_state.persist_project_state(project)
+    project_state.append_evidence_record(project, project["acceptance_criteria"][0], _evidence())
+    ledger, _ = project_state.load_evidence_ledger(str(tmp_path))
+    ledger["history"]["AC-ONE"][-1]["status"] = "failed"
+    project_state.atomic_write_json(project_state.ledger_path(str(tmp_path)), ledger)
+
+    assert project_state.latest_valid_evidence(str(tmp_path), project["acceptance_criteria"][0])[0] is None

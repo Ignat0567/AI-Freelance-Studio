@@ -87,7 +87,7 @@ def project_snapshot_fingerprint(root: str) -> str:
     digest = hashlib.sha256()
     root = os.path.abspath(root)
     for current, dirs, files in os.walk(root):
-        dirs[:] = [name for name in dirs if name not in _IGNORED_DIRS and not name.endswith(".egg-info")]
+        dirs[:] = sorted(name for name in dirs if name not in _IGNORED_DIRS and not name.endswith(".egg-info"))
         for name in sorted(files):
             if name == "DELIVERY_REPORT.json" or os.path.splitext(name)[1].lower() in _IGNORED_EXTS:
                 continue
@@ -139,6 +139,7 @@ def persist_project_state(project: dict[str, Any], root: str | None = None) -> d
             "project_id": str(project.get("project_id") or project.get("id") or Path(root).name),
             "project_name": str(project.get("title") or project.get("jobTitle") or Path(root).name),
             "project_path": os.path.abspath(root),
+            "original_request": _redact(str(project.get("original_request") or project.get("description") or project.get("project_spec", {}).get("original_user_request") or "")),
             "created_at": previous.get("created_at", now),
             "updated_at": now,
             "revision": int(previous.get("revision", 0)) + 1,
@@ -147,6 +148,8 @@ def persist_project_state(project: dict[str, Any], root: str | None = None) -> d
             "project_spec": _redact(project.get("project_spec", {})),
             "acceptance_criteria": _criteria_for_state(project),
             "acceptance_criteria_source": project.get("acceptance_criteria_source", "project_contract"),
+            "contract_migration": _redact(project.get("contract_migration", previous.get("contract_migration", {}))),
+            "audit_finding_history": _redact(project.get("audit_finding_history", previous.get("audit_finding_history", []))),
             "effective_project_profile": _redact(project.get("project_profiles", [])),
             "product_runtime_profile": _redact(project.get("product_runtime_profile", {})),
             "latest_project_snapshot": project_snapshot_fingerprint(root),
@@ -155,6 +158,7 @@ def persist_project_state(project: dict[str, Any], root: str | None = None) -> d
             "latest_delivery_report_path": os.path.join(root, "DELIVERY_REPORT.json"),
             "gates": {key: bool(project.get(key, False)) for key in ("_generation_finished", "_qa_passed", "_final_audit_passed", "_product_judge_passed")},
             "issues": _redact(project.get("issues", [])),
+            "repair_attempts": _redact(project.get("repair_attempts", previous.get("repair_attempts", []))),
             "qa_summary": _redact(project.get("latest_qa_result", {})),
             "recovery_status": project.get("recovery_status", "native"),
         }
@@ -278,6 +282,8 @@ def append_evidence_record(project: dict[str, Any], criterion: dict[str, Any], e
 
 
 def _record_artifacts_valid(root: str, record: dict[str, Any]) -> bool:
+    if record.get("record_hash") != _record_hash(record):
+        return False
     for artifact in record.get("artifact_references", []):
         path = os.path.join(root, artifact.get("path", ""))
         if not os.path.isfile(path) or artifact.get("sha256") != _hash_file(path):
