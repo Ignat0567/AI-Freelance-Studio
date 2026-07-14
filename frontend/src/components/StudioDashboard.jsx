@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { PipelineDetailContent } from './PipelineDetailModal.jsx';
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'OV' },
   { id: 'projects', label: 'Projects', icon: 'PR' },
   { id: 'pipeline', label: 'Pipeline', icon: 'PL' },
+  { id: 'mobile', label: 'Mobile Preview', icon: 'MB' },
   { id: 'team', label: 'AI Team', icon: 'AI' },
   { id: 'issues', label: 'Issues', icon: 'IS' },
   { id: 'logs', label: 'Logs', icon: 'LG' },
@@ -94,8 +96,12 @@ export default function StudioDashboard({
   autonomousMode,
   onAutonomousMode,
   onNewProject,
-  onSettings,
+  settingsContent,
+  infoContent,
+  projects,
   onProjects,
+  onDeleteProject,
+  onRemoveProjectFromList,
   onFiles,
   onPush,
   onExport,
@@ -103,13 +109,13 @@ export default function StudioDashboard({
   onOpenCode,
   onAgentChat,
   onPipeline,
+  pipelineMetadata,
   onOpenBriefing,
   onStopGeneration,
   onRetry,
   onResume,
   onContinueDone,
   onKeyManager,
-  onInfo,
   isGenerating,
 }) {
   const [tasks, setTasks] = useState([]);
@@ -146,8 +152,10 @@ export default function StudioDashboard({
     setActiveView(id);
     if (id === 'projects') onProjects();
     if (id === 'pipeline') onPipeline();
-    if (id === 'settings') onSettings();
   };
+
+  const openSettings = () => setActiveView('settings');
+  const openInfo = () => setActiveView('info');
 
   return (
     <div className={`fs-shell ${chatOpen ? '' : 'chat-collapsed'}`}>
@@ -176,14 +184,10 @@ export default function StudioDashboard({
             </button>
           ))}
         </nav>
-        <div className="fs-sidebar-card">
-          <span>Mode</span>
-          <label className="fs-switch">
-            <input type="checkbox" checked={autonomousMode} onChange={event => onAutonomousMode(event.target.checked)} />
-            <i aria-hidden="true" />
-            <b>{autonomousMode ? 'Autonomous' : 'Manual'}</b>
-          </label>
-        </div>
+        <button type="button" className="fs-about-button" onClick={openInfo} title="Info">
+          <span className="fs-nav-icon" aria-hidden="true">i</span>
+          <span>Info</span>
+        </button>
       </aside>
 
       <section className="fs-app">
@@ -195,6 +199,7 @@ export default function StudioDashboard({
               <span>{pretty(project?._phase || project?.stage || project?.pipeline_stage || project?.status, 'No stage')}</span>
               <i aria-hidden="true" />
               <span className={`fs-status ${statusTone(project?.status)}`}>{pretty(project?.status, 'Idle')}</span>
+              {project?.project_mode && <><i aria-hidden="true" /><span>Mode: {pretty(project.project_mode)}</span></>}
             </div>
           </div>
           <div className="fs-header-actions">
@@ -202,9 +207,10 @@ export default function StudioDashboard({
               <input type="checkbox" checked={autonomousMode} onChange={event => onAutonomousMode(event.target.checked)} />
               <span>Autonomous</span>
             </label>
+            <button type="button" className="fs-pill accent" onClick={onNewProject} title="Create a manual project from your own requirements">Manual Project</button>
             <button type="button" className="fs-pill" onClick={onKeyManager} title="Manage API keys">Keys</button>
-            <button type="button" className="fs-pill" onClick={onSettings} title="Open settings">Settings</button>
-            <button type="button" className="fs-pill status" onClick={onInfo} title="System information">Backend {activePort}</button>
+            <button type="button" className="fs-pill" onClick={openSettings} title="Open settings">Settings</button>
+            <span className="fs-pill status" title="Backend status">Backend {activePort}</span>
             <button type="button" className="fs-pill accent" onClick={() => setChatOpen(value => !value)} aria-expanded={chatOpen} aria-controls="fs-ai-chat-panel">
               {chatOpen ? 'Hide Chat' : 'Show Chat'}
             </button>
@@ -216,7 +222,7 @@ export default function StudioDashboard({
             <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />
             {activeView === 'overview' && (
               <>
-                <PipelineSummary pipeline={pipeline} project={project} workingAgent={workingAgent} criteria={criteria} passedCriteria={passedCriteria} onPipeline={onPipeline} />
+                <PipelineSummary pipeline={pipeline} project={project} workingAgent={workingAgent} criteria={criteria} passedCriteria={passedCriteria} onPipeline={() => setActiveView('pipeline')} />
                 <AgentActivity agents={agentEntries} statuses={statuses} onAgentChat={onAgentChat} />
                 <AttentionPanel issues={openIssues} project={project} onRetry={onRetry} onContinueDone={onContinueDone} />
                 <ActivityPanel logs={eventRows} onOpenLogs={() => setActiveView('logs')} />
@@ -224,9 +230,14 @@ export default function StudioDashboard({
               </>
             )}
             {activeView === 'team' && <AgentActivity agents={agentEntries} statuses={statuses} onAgentChat={onAgentChat} expanded />}
+            {activeView === 'projects' && <ProjectListPanel projects={projects} onRefresh={onProjects} onResume={onResume} onDeleteProject={onDeleteProject} onRemoveProjectFromList={onRemoveProjectFromList} />}
+            {activeView === 'pipeline' && <section className="fs-panel fs-pipeline-detail-page"><div className="fs-panel-title"><div><span>Pipeline</span><strong>{project?.title || 'No active project'}</strong></div></div>{project ? <PipelineDetailContent project={project} agentStatuses={statuses} agents={agents} pipelineMetadata={pipelineMetadata} inline /> : <p className="fs-empty">No active project.</p>}</section>}
+            {activeView === 'mobile' && <MobilePreviewPanel project={project} />}
             {activeView === 'issues' && <AttentionPanel issues={openIssues} project={project} onRetry={onRetry} onContinueDone={onContinueDone} expanded />}
             {activeView === 'logs' && <LogPanel logs={logs} />}
-            {activeView !== 'overview' && !['team', 'issues', 'logs'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
+            {activeView === 'settings' && <section className="fs-panel fs-settings-page">{settingsContent}</section>}
+            {activeView === 'info' && <section className="fs-panel fs-info-page">{infoContent}</section>}
+            {activeView !== 'overview' && !['team', 'projects', 'pipeline', 'mobile', 'issues', 'logs', 'settings', 'info'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
             <div className="fs-workspace-bottom-sentinel" data-testid="workspace-bottom-sentinel" aria-hidden="true" />
           </main>
 
@@ -260,13 +271,39 @@ function ProjectOverview({ project, primaryAction, isGenerating, onStopGeneratio
         <div className="fs-meta-row">
           <span>Stage: <b>{pretty(project?._phase || project?.stage || project?.status, 'Idle')}</b></span>
           <span>State: <b>{pretty(project?.status, 'No active project')}</b></span>
+          <span>Mode: <b>{pretty(project?.project_mode, 'MVP')}</b></span>
           {project?.project_id && <span>ID: <b>{project.project_id}</b></span>}
         </div>
       </div>
       <div className="fs-hero-actions">
-        <button type="button" className="fs-primary" onClick={primaryAction.onClick}>{primaryAction.label}</button>
-        {!project && <button type="button" className="fs-secondary" onClick={onNewProject}>New Project</button>}
         {isGenerating && <button type="button" className="fs-danger-button" onClick={onStopGeneration}>Stop Generation</button>}
+      </div>
+    </section>
+  );
+}
+
+function ProjectListPanel({ projects = [], onRefresh, onResume, onDeleteProject, onRemoveProjectFromList }) {
+  useEffect(() => { onRefresh?.(); }, []);
+  return (
+    <section className="fs-panel fs-project-list-page">
+      <div className="fs-panel-title">
+        <div><span>Projects</span><strong>{projects.length ? `${projects.length} projects` : 'No projects'}</strong></div>
+        <button type="button" onClick={onRefresh}>Refresh</button>
+      </div>
+      <div className="fs-project-list">
+        {projects.length ? projects.map(project => (
+          <article className="fs-project-row" key={project.project_id}>
+            <div>
+              <strong>{project.title || 'Untitled'}</strong>
+              <span>{pretty(project.status, 'unknown')} {project.target_path ? `- ${project.target_path}` : ''}</span>
+            </div>
+            <div className="fs-project-actions">
+              {project._phase && ['created', 'failed', 'failed_qa', 'blocked', 'needs_credentials', 'cancelled'].includes(project.status) && <button type="button" onClick={() => onResume(project)}>Resume</button>}
+              <button type="button" className="danger" onClick={() => onDeleteProject(project)}>Удалить с компьютера</button>
+              <button type="button" onClick={() => onRemoveProjectFromList(project)}>Удалить из списка</button>
+            </div>
+          </article>
+        )) : <p className="fs-empty">No projects are currently registered.</p>}
       </div>
     </section>
   );
@@ -364,6 +401,67 @@ function DevelopmentTools({ project, onOpenEditor, onOpenCode, onFiles, onPush, 
         <button type="button" className="fs-tool folder" onClick={onFiles} disabled={!project} title="Browse project files"><b>FD</b><span>Files<small>Browse project</small></span></button>
         <button type="button" className="fs-tool git" onClick={onPush} disabled={!project} title="Push project to GitHub"><b>GH</b><span>GitHub<small>Push</small></span></button>
         <button type="button" className="fs-tool export" onClick={onExport} disabled={!project} title="Export project"><b>EX</b><span>Export<small>Markdown</small></span></button>
+      </div>
+    </section>
+  );
+}
+
+const MOBILE_DEVICES = [
+  { id: 'iphone16pro', name: 'iPhone 16 Pro', width: 402, height: 874, radius: 48 },
+  { id: 'iphone16promax', name: 'iPhone 16 Pro Max', width: 440, height: 956, radius: 52 },
+  { id: 'iphone15promax', name: 'iPhone 15 Pro Max', width: 430, height: 932, radius: 50 },
+  { id: 'iphoneSE', name: 'iPhone SE 3rd Gen', width: 375, height: 667, radius: 26 },
+  { id: 'samsungS25ultra', name: 'Samsung Galaxy S25 Ultra', width: 412, height: 915, radius: 28 },
+  { id: 'samsungS24ultra', name: 'Samsung Galaxy S24 Ultra', width: 412, height: 915, radius: 28 },
+  { id: 'galaxyZFold6', name: 'Samsung Galaxy Z Fold6', width: 768, height: 960, radius: 24 },
+  { id: 'pixel9proxl', name: 'Google Pixel 9 Pro XL', width: 412, height: 915, radius: 36 },
+  { id: 'pixel9pro', name: 'Google Pixel 9 Pro', width: 402, height: 874, radius: 36 },
+  { id: 'ipadpro11', name: 'iPad Pro 11-inch', width: 834, height: 1194, radius: 28 },
+];
+
+function isEmbeddablePreviewUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  try {
+    const url = new URL(text);
+    return ['localhost', '127.0.0.1', '0.0.0.0'].includes(url.hostname) || url.hostname.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
+function MobilePreviewPanel({ project }) {
+  const [deviceId, setDeviceId] = useState('iphone16pro');
+  const initialUrl = project?.preview_url || project?.local_preview_url || '';
+  const [previewUrl, setPreviewUrl] = useState(initialUrl);
+  const device = MOBILE_DEVICES.find(item => item.id === deviceId) || MOBILE_DEVICES[0];
+  const scale = device.width > 500 ? 0.48 : device.width > 430 ? 0.62 : 0.74;
+  const canEmbed = isEmbeddablePreviewUrl(previewUrl);
+  const hasExternalUrl = previewUrl && !canEmbed;
+  return (
+    <section className="fs-panel fs-mobile-preview-page">
+      <div className="fs-panel-title">
+        <div><span>Mobile Preview</span><strong>{project?.title || 'No active project'}</strong></div>
+      </div>
+      <div className="fs-mobile-preview-layout">
+        <div className="fs-mobile-controls">
+          <label>Device
+            <select value={deviceId} onChange={event => setDeviceId(event.target.value)}>
+              {MOBILE_DEVICES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          <label>Preview URL
+            <input value={previewUrl} onChange={event => setPreviewUrl(event.target.value)} placeholder="http://localhost:5173 or Expo web URL" />
+          </label>
+          {project?.url && !previewUrl && <button type="button" onClick={() => setPreviewUrl(project.url)}>Use project URL</button>}
+          <p>Use a local running preview URL, for example Vite, Expo Web, React Native Web, Ionic, or Capacitor. External sites can block embedding inside the phone frame.</p>
+        </div>
+        <div className="fs-phone-stage">
+          <div className="fs-phone-frame" style={{ width: device.width * scale, height: device.height * scale, borderRadius: device.radius * scale }}>
+            <div className="fs-phone-speaker" />
+            {canEmbed ? <iframe title={`${device.name} preview`} src={previewUrl} style={{ borderRadius: Math.max(18, device.radius * scale - 10) }} /> : <div className="fs-phone-empty"><b>{device.name}</b>{hasExternalUrl ? <><span>This URL is external and may block embedded preview. Use a local preview URL to render it here.</span><button type="button" onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}>Open externally</button></> : <span>Enter a running local project URL to preview it in this virtual phone.</span>}</div>}
+          </div>
+        </div>
       </div>
     </section>
   );

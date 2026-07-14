@@ -5113,7 +5113,8 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
 
 
 def write_delivery_report(project: dict, root: str) -> str:
-    report = project.get("final_delivery_report", {})
+    report = dict(project.get("final_delivery_report", {}) or {})
+    report.setdefault("project_mode", project.get("project_mode") or project.get("project_spec", {}).get("project_mode") or "mvp")
     path = os.path.join(root, "DELIVERY_REPORT.json")
     atomic_write_json(path, report)
     return path

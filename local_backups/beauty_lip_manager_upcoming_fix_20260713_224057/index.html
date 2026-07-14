@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Beauty Lip Manager</title>
+  <style>
+    :root{font-family:Inter,system-ui,sans-serif;color:#2b2028;background:#fbf6f1}body{margin:0}.shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh}.side{background:#3b1029;color:#fff;padding:28px}.brand{font-size:28px;font-weight:800}.muted{color:#b99aad}.main{padding:32px}.card{background:#fff;border:1px solid #eadbd4;border-radius:22px;padding:22px;margin-bottom:18px;box-shadow:0 18px 50px #4a142214}.row{display:flex;justify-content:space-between;gap:16px;border-top:1px solid #f0e4de;padding:14px 0}.btn{border:0;border-radius:999px;background:#7e294d;color:white;padding:10px 16px;font-weight:700}input{border:1px solid #dcc7be;border-radius:12px;padding:10px;width:280px}.pill{background:#f6e8e2;color:#7e294d;border-radius:999px;padding:5px 10px;font-size:12px}@media(max-width:800px){.shell{display:block}.side{padding:18px}.main{padding:18px}.row{display:block}}
+  </style>
+</head>
+<body>
+  <div class="shell"><aside class="side"><div class="brand">Beauty Lip</div><p class="muted">Salon management</p><p>Demo manager: manager@beautylip.dev / Demo12345!</p></aside><main class="main"><section class="card"><h1>Manager Dashboard</h1><p class="muted">Today appointments, confirmations, and expected revenue.</p><input id="email" value="manager@beautylip.dev" /><input id="password" value="Demo12345!" type="password" /><button class="btn" onclick="login()">Login</button></section><section class="card"><h2>Today</h2><div id="stats" class="muted">Login to load dashboard.</div><div id="appointments"></div></section><section class="card"><h2>Services</h2><div id="services"></div></section></main></div>
+  <script>
+    let token='';
+    async function api(path, options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...(options.headers||{})}}); if(!r.ok) throw new Error(await r.text()); return r.json();}
+    async function login(){const data=await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:email.value,password:password.value})}); token=data.token; await load();}
+    async function load(){const d=await api('/api/manager/dashboard'); stats.textContent=`Appointments: ${d.today_appointments.length} | Awaiting confirmation: ${d.awaiting_confirmation.length} | Expected revenue: EUR ${d.expected_revenue}`; appointments.innerHTML=d.today_appointments.map(a=>`<div class=row><div><b>${a.customer_name}</b><br>${a.service_name} with ${a.specialist_name}<br><span class=muted>${a.start_at} · ${a.status}</span></div><button class=btn onclick="confirmAppt(${a.id})">Confirm</button></div>`).join('')||'<p class=muted>No appointments today.</p>'; const s=await api('/api/manager/services'); services.innerHTML=s.items.map(x=>`<div class=row><div><b>${x.name}</b><br>${x.duration_minutes} min · ${x.price} ${x.currency}</div><span class=pill>${x.is_active?'active':'inactive'}</span></div>`).join('');}
+    async function confirmAppt(id){await api('/api/manager/appointments/'+id+'/status',{method:'PATCH',body:JSON.stringify({status:'confirmed'})}); await load();}
+  </script>
+</body>
+</html>

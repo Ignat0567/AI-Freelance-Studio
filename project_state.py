@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from repair_scope import EXCLUDED_REPAIR_DIRS, EXCLUDED_REPAIR_EXTENSIONS, walk_repairable_files
+
 
 STATE_DIR_NAME = ".freelancerstudio"
 STATE_FILE_NAME = "project_state.json"
@@ -23,8 +25,8 @@ STATE_SCHEMA_VERSION = 1
 LEDGER_SCHEMA_VERSION = 1
 _LOCK = threading.RLock()
 _SECRET_RE = re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*[^\s'\"]+|\bsk-[A-Za-z0-9_-]{16,}\b")
-_IGNORED_DIRS = {".git", ".freelancerstudio", "evidence_artifacts", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", "__pycache__"}
-_IGNORED_EXTS = {".pyc", ".db", ".sqlite", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".glb"}
+_IGNORED_DIRS = EXCLUDED_REPAIR_DIRS | {".freelancerstudio"}
+_IGNORED_EXTS = EXCLUDED_REPAIR_EXTENSIONS
 
 
 def utc_now() -> str:
@@ -86,18 +88,14 @@ def project_snapshot_fingerprint(root: str) -> str:
     """Fingerprint user deliverables, excluding Studio outputs and runtime artifacts."""
     digest = hashlib.sha256()
     root = os.path.abspath(root)
-    for current, dirs, files in os.walk(root):
-        dirs[:] = sorted(name for name in dirs if name not in _IGNORED_DIRS and not name.endswith(".egg-info"))
-        for name in sorted(files):
-            if name == "DELIVERY_REPORT.json" or os.path.splitext(name)[1].lower() in _IGNORED_EXTS:
-                continue
-            path = os.path.join(current, name)
-            relative = os.path.relpath(path, root).replace(os.sep, "/")
-            digest.update(relative.encode("utf-8", errors="replace"))
-            try:
-                digest.update(Path(path).read_bytes())
-            except OSError as exc:
-                digest.update(str(exc).encode("utf-8", errors="replace"))
+    for relative, path in walk_repairable_files(root):
+        if os.path.basename(relative) == "DELIVERY_REPORT.json":
+            continue
+        digest.update(relative.encode("utf-8", errors="replace"))
+        try:
+            digest.update(Path(path).read_bytes())
+        except OSError as exc:
+            digest.update(str(exc).encode("utf-8", errors="replace"))
     return digest.hexdigest()
 
 
@@ -138,6 +136,7 @@ def persist_project_state(project: dict[str, Any], root: str | None = None) -> d
             "schema_version": STATE_SCHEMA_VERSION,
             "project_id": str(project.get("project_id") or project.get("id") or Path(root).name),
             "project_name": str(project.get("title") or project.get("jobTitle") or Path(root).name),
+            "project_mode": str(project.get("project_mode") or project.get("project_spec", {}).get("project_mode") or previous.get("project_mode") or "mvp"),
             "project_path": os.path.abspath(root),
             "original_request": _redact(str(project.get("original_request") or project.get("description") or project.get("project_spec", {}).get("original_user_request") or "")),
             "created_at": previous.get("created_at", now),

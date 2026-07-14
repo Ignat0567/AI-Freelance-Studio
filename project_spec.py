@@ -620,29 +620,111 @@ def orphan_mandatory_requirements(project_spec: dict, acceptance_criteria: list[
     return [req for req in mandatory_user_requirements(project_spec) if req.get("id") not in linked_requirement_ids]
 
 
-def _credential_record(name: str, description: str, source: str = "user_request", required: bool = True, blocks_completion: bool | None = None) -> dict[str, Any]:
+PROJECT_MODES = {"prototype", "manual", "mvp"}
+
+
+def normalize_project_mode(value: str | None) -> str:
+    mode = str(value or "mvp").strip().lower()
+    return mode if mode in PROJECT_MODES else "mvp"
+
+
+def _credential_record(name: str, description: str, source: str = "user_request", required: bool = True, blocks_completion: bool | None = None, project_mode: str = "mvp", text: str = "") -> dict[str, Any]:
+    mode = normalize_project_mode(project_mode)
+    lower = (text or "").lower()
+    live_required = _requires_live_credential(lower, name)
+    fallback_available = name in {"DATABASE_URL", "STRIPE_API_KEY", "SMTP_PASSWORD"} or _has_credential_fallback(lower, name)
+    fallback_selected = fallback_available and not live_required
     if blocks_completion is None:
         blocks_completion = required and name not in {"TELEGRAM_BOT_TOKEN", "SMTP_PASSWORD"}
+    if fallback_selected and mode in {"prototype", "manual", "mvp"}:
+        blocks_completion = False
+    blocks_coding = bool(live_required and mode != "manual")
+    blocks_feature = bool(live_required and not fallback_selected)
     return {
         "name": name,
+        "credential_name": name,
         "description": description,
         "source": source,
+        "detection_source": source,
+        "feature_scope": _credential_feature_scope(name),
         "required": bool(required),
+        "discovered": True,
         "configured": False,
+        "live_integration_required": live_required,
+        "mock_or_local_fallback_available": fallback_available,
+        "fallback_selected": fallback_selected,
+        "blocks_feature": blocks_feature,
+        "blocks_coding": blocks_coding,
         "externally_verifiable": True,
         "blocks_completion": bool(blocks_completion),
+        "linked_criteria": [],
+        "reason": _credential_reason(name, mode, live_required, fallback_selected),
     }
+
+
+def _credential_feature_scope(name: str) -> str:
+    return {
+        "DATABASE_URL": "persistence",
+        "STRIPE_API_KEY": "payments",
+        "SMTP_PASSWORD": "email_notifications",
+        "TELEGRAM_BOT_TOKEN": "telegram_bot",
+        "OPENAI_API_KEY": "ai_provider",
+        "ANTHROPIC_API_KEY": "ai_provider",
+        "DISCORD_TOKEN": "discord_integration",
+    }.get(name, "external_service")
+
+
+def _credential_reason(name: str, mode: str, live_required: bool, fallback_selected: bool) -> str:
+    if fallback_selected:
+        return f"{mode} mode can use a documented mock/local fallback for {name}."
+    if live_required:
+        return f"The request explicitly requires a live/production integration for {name}."
+    return f"{name} is documented as configuration; generic mentions do not block coding."
 
 
 def _wants_smtp_credentials(lower: str) -> bool:
     if "smtp" in lower:
         return True
-    email_terms = ("email", "e-mail", "mail", "электронн", "почт")
-    send_terms = ("send", "deliver", "notify", "notification", "newsletter", "отправ", "рассыл", "уведом")
-    return any(email in lower for email in email_terms) and any(send in lower for send in send_terms)
+    return any(term in lower for term in ("production email", "live email", "real email", "send real emails", "send real email"))
 
 
-def _credential_requirements(text: str) -> list[dict[str, Any]]:
+def _has_credential_fallback(lower: str, name: str) -> bool:
+    if name == "DATABASE_URL":
+        return "database_url" in lower and "sqlite" in lower and "fallback" in lower
+    if name == "STRIPE_API_KEY":
+        return (
+            "stripe_api_key" in lower
+            and any(term in lower for term in ("mock payment", "disabled stripe", "stripe mode"))
+            and any(term in lower for term in ("not provided", "without external credentials", "without real credentials"))
+        )
+    if name == "SMTP_PASSWORD":
+        return (
+            "smtp" in lower
+            and any(term in lower for term in ("console/log notification", "console notification", "log notification"))
+            and any(term in lower for term in ("not provided", "without external credentials", "without real credentials"))
+        )
+    return False
+
+
+def _requires_live_credential(lower: str, name: str) -> bool:
+    if name == "STRIPE_API_KEY":
+        return any(term in lower for term in ("real payment", "real stripe", "live payment", "production stripe", "live stripe"))
+    if name == "SMTP_PASSWORD":
+        return any(term in lower for term in ("send real email", "send real emails", "live smtp", "production smtp"))
+    if name == "DATABASE_URL":
+        return any(term in lower for term in ("production database", "live database", "external postgres", "external mysql"))
+    return False
+
+
+def _credential_blocks_completion(lower: str, name: str) -> bool:
+    if _has_credential_fallback(lower, name):
+        return False
+    if name in {"DATABASE_URL", "STRIPE_API_KEY", "SMTP_PASSWORD"}:
+        return _requires_live_credential(lower, name)
+    return name not in {"TELEGRAM_BOT_TOKEN"}
+
+
+def _credential_requirements(text: str, project_mode: str = "mvp") -> list[dict[str, Any]]:
     lower = (text or "").lower()
     credentials = []
     candidates = [
@@ -651,14 +733,22 @@ def _credential_requirements(text: str) -> list[dict[str, Any]]:
         ("ANTHROPIC_API_KEY", lambda value: "anthropic" in value or "claude" in value, "Anthropic API key"),
         ("STRIPE_API_KEY", lambda value: "stripe" in value or "payment" in value, "Stripe API key"),
         ("DISCORD_TOKEN", lambda value: "discord" in value and "bot" in value, "Discord bot token"),
-        ("DATABASE_URL", lambda value: any(token in value for token in ("postgres", "mysql", "database url")), "Database connection string"),
+        ("DATABASE_URL", lambda value: any(token in value for token in ("postgres", "mysql", "database", "database url", "database_url")), "Database connection string"),
         ("SMTP_PASSWORD", _wants_smtp_credentials, "SMTP credentials"),
     ]
     for env_name, matcher, description in candidates:
         if matcher(lower):
-            credentials.append(_credential_record(env_name, description))
+            credentials.append(
+                _credential_record(
+                    env_name,
+                    description,
+                    blocks_completion=_credential_blocks_completion(lower, env_name),
+                    project_mode=project_mode,
+                    text=text,
+                )
+            )
     if any(k in lower for k in ("api key", "apikey", "token", "secret", "oauth")) and not credentials:
-        credentials.append(_credential_record("EXTERNAL_SERVICE_CREDENTIAL", "Credential required by requested external service"))
+        credentials.append(_credential_record("EXTERNAL_SERVICE_CREDENTIAL", "Credential required by requested external service", project_mode=project_mode, text=text))
     return credentials
 
 
@@ -717,6 +807,8 @@ def detect_requirement_gaps(text: str, credentials: list[dict[str, Any]] | None 
             break
 
     for credential in credentials:
+        if not credential.get("blocks_coding", credential.get("blocks_completion", True)):
+            continue
         name = credential.get("name", "EXTERNAL_SERVICE_CREDENTIAL")
         add(
             "missing_credential",
@@ -832,7 +924,14 @@ def detect_project_profiles(project_spec: dict | None = None, project_path: str 
     if any(k in blob for k in ("telegram", "aiogram")) or has_file("bot.py") or any(f.startswith("handlers/") for f in files):
         profiles.append("telegram_bot")
     if any(k in blob for k in ("react", "jsx")) or any(f.endswith((".jsx", ".tsx")) for f in files):
-        profiles.append("react_frontend")
+        if not any(k in blob for k in ("react native", "expo")) or any(f.endswith((".jsx", ".tsx")) for f in files):
+            profiles.append("react_frontend")
+    if any(k in blob for k in ("react native", "expo")) or has_file("app.json") or has_file("app.config.js"):
+        profiles.append("expo_react_native")
+        profiles.append("mobile_application")
+    if "flutter" in blob or has_file("pubspec.yaml"):
+        profiles.append("flutter_mobile")
+        profiles.append("mobile_application")
     if any(k in blob for k in ("vite",)) or has_file("vite.config.js") or has_file("vite.config.ts"):
         profiles.append("vite_frontend")
     if any(k in blob for k in ("node", "express", "npm")) or has_file("package.json"):
@@ -870,13 +969,25 @@ def _safe_read(project_path: str | None, rel: str) -> str:
 
 def build_project_spec(project: dict, existing_path: str | None = None) -> dict[str, Any]:
     source_text = _text(project)
+    project_mode = normalize_project_mode(project.get("project_mode"))
     original = _original_request(project)
     if project.get("recovery_status") in {"native", "fully_recovered"} and not original.strip():
         raise ValueError("recovery_state_error: original request is required for contract migration")
     features = _feature_phrases(source_text)
-    credentials = _credential_requirements(source_text)
+    credentials = _credential_requirements(source_text, project_mode)
     requirement_gaps = detect_requirement_gaps(source_text, credentials)
     profiles = detect_project_profiles(text=source_text, project_path=existing_path)
+    product_decision = product_runtime_decision(source_text, profiles)
+    if not product_decision["compatible_before_coding"]:
+        requirement_gaps.append({
+            "id": f"GAP-{len(requirement_gaps) + 1:03d}",
+            "category": "product_runtime_mismatch",
+            "severity": "blocker",
+            "summary": "Requested product kind and selected implementation runtime are incompatible.",
+            "evidence": f"requested={product_decision['requested_product_kind']} selected={product_decision['selected_product_kind']} runtime={product_decision['selected_ui_runtime']}",
+            "suggested_question": "Confirm whether this should be generated as Expo/React Native, Flutter, or another installable mobile application before coding.",
+            "status": "unresolved",
+        })
 
     technology = []
     lower = source_text.lower()
@@ -918,8 +1029,17 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
     spec = {
         "original_user_request": original,
         "project_goal": project.get("title") or (features[0] if features else "Generated project"),
+        "project_mode": project_mode,
         "project_type": profiles[0],
         "project_profiles": profiles,
+        "requested_product_kind": product_decision["requested_product_kind"],
+        "requested_target_platforms": product_decision["requested_target_platforms"],
+        "selected_product_kind": product_decision["selected_product_kind"],
+        "selected_ui_runtime": product_decision["selected_ui_runtime"],
+        "selected_implementation_framework": product_decision["selected_implementation_framework"],
+        "packaging_target": product_decision["packaging_target"],
+        "mobile_native_installation_mandatory": product_decision["mobile_native_installation_mandatory"],
+        "product_runtime_compatible_before_coding": product_decision["compatible_before_coding"],
         "intended_users": _infer_users(source_text),
         "requirements": _user_requirements(features),
         "required_features": features,
@@ -966,6 +1086,66 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
             for index, (intent, text) in enumerate(units)
         ]
     return spec
+
+
+def product_runtime_decision(text: str, profiles: list[str]) -> dict[str, Any]:
+    lower = (text or "").lower()
+    requested_platforms = []
+    for token, label in (("android", "Android"), ("ios", "iOS"), ("desktop", "desktop"), ("windows", "Windows"), ("web", "web")):
+        if token in lower:
+            requested_platforms.append(label)
+    mobile_mandatory = any(term in lower for term in ("mobile application", "mobile app", "android", "ios", "react native", "expo", "flutter"))
+    if mobile_mandatory and {"Android", "iOS"}.intersection(requested_platforms):
+        requested_kind = "android_ios_mobile_application"
+    elif mobile_mandatory:
+        requested_kind = "mobile_application"
+    elif "desktop" in lower:
+        requested_kind = "desktop_application"
+    elif "web" in lower or "dashboard" in lower or "website" in lower:
+        requested_kind = "web_application"
+    else:
+        requested_kind = "unknown"
+
+    profile_set = set(profiles or [])
+    if "expo_react_native" in profile_set:
+        selected_kind = "cross_platform_mobile_application"
+        runtime = "expo_react_native"
+        framework = "Expo / React Native"
+        packaging = "android_ios_app"
+    elif "flutter_mobile" in profile_set:
+        selected_kind = "cross_platform_mobile_application"
+        runtime = "flutter"
+        framework = "Flutter"
+        packaging = "android_ios_app"
+    elif "react_frontend" in profile_set or "vite_frontend" in profile_set:
+        selected_kind = "web_application"
+        runtime = "browser"
+        framework = "React / Vite"
+        packaging = "web_static_bundle"
+    elif "fastapi" in profile_set or "REST_API" in profile_set:
+        selected_kind = "api_service"
+        runtime = "none"
+        framework = "FastAPI"
+        packaging = "service"
+    else:
+        selected_kind = "unknown"
+        runtime = "unknown"
+        framework = "unknown"
+        packaging = "unknown"
+
+    compatible = True
+    if mobile_mandatory and runtime not in {"expo_react_native", "flutter"}:
+        compatible = False
+    return {
+        "requested_product_kind": requested_kind,
+        "requested_target_platforms": _dedupe(requested_platforms),
+        "selected_product_kind": selected_kind,
+        "selected_ui_runtime": runtime,
+        "selected_implementation_framework": framework,
+        "packaging_target": packaging,
+        "mobile_native_installation_mandatory": mobile_mandatory,
+        "compatible_before_coding": compatible,
+    }
 
 
 def _infer_users(text: str) -> list[str]:

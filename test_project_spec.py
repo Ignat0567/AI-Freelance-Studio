@@ -24,6 +24,7 @@ from project_spec import (
     orphan_mandatory_requirements,
     plan_acceptance_verifier,
     record_acceptance_evidence,
+    product_runtime_decision,
     requirement_dependency_errors,
     requirement_graph,
     requirements_from_features,
@@ -591,6 +592,87 @@ def test_scenario_5_credential_requirement_is_explicit():
 
     assert any(c["name"] == "OPENAI_API_KEY" for c in spec["required_credentials"])
     assert "Credentials are documented safely" in titles
+
+
+def test_credential_fallback_strategy_does_not_block_generation():
+    project = _project(
+        "Credential Fallback MVP",
+        """
+        Build a booking MVP with DATABASE_URL, STRIPE_API_KEY, and SMTP_PASSWORD in .env.example.
+        The app must remain runnable and testable without external credentials.
+        Use SQLite fallback when DATABASE_URL is not provided.
+        Use mock payment provider / disabled Stripe mode when STRIPE_API_KEY is not provided.
+        Use console/log notification provider when SMTP settings are not provided.
+        Tests must mock Stripe, SMTP, and all network calls.
+        """,
+    )
+
+    bundle = ensure_project_spec_bundle(project)
+    credentials = {c["name"]: c for c in bundle["project_spec"]["required_credentials"]}
+    missing_credential_gaps = [
+        gap for gap in bundle["project_spec"]["requirement_gaps"] if gap["category"] == "missing_credential"
+    ]
+
+    assert {"DATABASE_URL", "STRIPE_API_KEY", "SMTP_PASSWORD"} <= set(credentials)
+    assert credentials["DATABASE_URL"]["blocks_completion"] is False
+    assert credentials["STRIPE_API_KEY"]["blocks_completion"] is False
+    assert credentials["SMTP_PASSWORD"]["blocks_completion"] is False
+    assert missing_credential_gaps == []
+
+
+def test_mockable_infrastructure_credentials_do_not_block_manual_generation_by_default():
+    project = _project(
+        "Beauty Booking",
+        "Build a salon booking app with payments, database persistence, appointment reminders, and email notifications.",
+    )
+
+    bundle = ensure_project_spec_bundle(project)
+    credentials = {c["name"]: c for c in bundle["project_spec"]["required_credentials"]}
+    missing_credential_gaps = [
+        gap for gap in bundle["project_spec"]["requirement_gaps"] if gap["category"] == "missing_credential"
+    ]
+
+    assert {"STRIPE_API_KEY", "DATABASE_URL"} <= set(credentials)
+    assert credentials["STRIPE_API_KEY"]["blocks_completion"] is False
+    assert credentials["DATABASE_URL"]["blocks_completion"] is False
+    assert "SMTP_PASSWORD" not in credentials
+    assert missing_credential_gaps == []
+
+
+def test_mobile_native_requirement_cannot_be_satisfied_by_responsive_web_runtime():
+    decision = product_runtime_decision(
+        "Create a cross-platform mobile application for Android and iOS.",
+        ["fastapi", "REST_API", "react_frontend", "vite_frontend"],
+    )
+
+    assert decision["mobile_native_installation_mandatory"] is True
+    assert decision["requested_product_kind"] == "android_ios_mobile_application"
+    assert decision["selected_product_kind"] == "web_application"
+    assert decision["selected_ui_runtime"] == "browser"
+    assert decision["compatible_before_coding"] is False
+
+
+def test_requested_product_kind_and_selected_runtime_must_be_compatible_before_coding():
+    decision = product_runtime_decision(
+        "Create a cross-platform mobile application for Android and iOS using Expo React Native.",
+        ["expo_react_native", "mobile_application", "fastapi"],
+    )
+
+    assert decision["selected_implementation_framework"] == "Expo / React Native"
+    assert decision["packaging_target"] == "android_ios_app"
+    assert decision["compatible_before_coding"] is True
+
+
+def test_incompatible_product_runtime_blocks_before_generation_or_requests_clarification():
+    project = _project("Mobile mismatch", "Create a cross-platform mobile application for Android and iOS.")
+
+    bundle = ensure_project_spec_bundle(project)
+    spec = bundle["project_spec"]
+    gaps = [gap for gap in spec["requirement_gaps"] if gap["category"] == "product_runtime_mismatch"]
+
+    assert spec["mobile_native_installation_mandatory"] is True
+    assert spec["product_runtime_compatible_before_coding"] is False
+    assert gaps and gaps[0]["severity"] == "blocker"
 
 
 def test_requirement_gap_detection_returns_structured_categories():

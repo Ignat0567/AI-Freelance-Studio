@@ -13,7 +13,7 @@ const ACCENT_COLORS = [
   { name: 'White', color: '#f1f5f9' },
 ];
 
-export default function SettingsModal({ activePort, onClose, addLog }) {
+export default function SettingsModal({ activePort, onClose, addLog, embedded = false }) {
   const [settings, setSettings] = useState(null);
   const [activeTab, setActiveTab] = useState('appearance');
   const [loading, setLoading] = useState(true);
@@ -68,6 +68,7 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
   }, [settings]);
 
   useEffect(() => {
+    if (embedded) return undefined;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -76,7 +77,7 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onCloseRef.current();
+        if (onCloseRef.current) onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -105,9 +106,9 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
       document.body.style.overflow = previousOverflow;
       returnFocusRef.current?.focus?.();
     };
-  }, []);
+  }, [embedded]);
 
-  if (loading) return <div className="settings-modal-overlay"><div className="text-xs text-slate-500">Loading settings...</div></div>;
+  if (loading) return <div className={embedded ? "settings-inline-loading" : "settings-modal-overlay"}><div className="text-xs text-slate-500">Loading settings...</div></div>;
 
   const s = settings || {};
   const t = (key) => tr(s.language || 'en', key);
@@ -120,12 +121,12 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
   ];
 
   return (
-    <div className="settings-modal-overlay animate-fade-in" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" className="settings-modal-container bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full max-w-2xl shadow-2xl" style={{ borderColor: 'var(--border)' }}>
+    <div className={embedded ? "settings-inline" : "settings-modal-overlay animate-fade-in"} onMouseDown={(event) => { if (!embedded && event.target === event.currentTarget) onClose?.(); }}>
+      <div ref={dialogRef} role={embedded ? undefined : "dialog"} aria-modal={embedded ? undefined : "true"} aria-labelledby="settings-modal-title" className={embedded ? "settings-inline-container bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full" : "settings-modal-container bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full max-w-2xl shadow-2xl"} style={{ borderColor: 'var(--border)' }}>
 
         <div className="settings-modal-header p-4 border-b border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
           <h3 id="settings-modal-title" className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{t('systemPreferences')}</h3>
-          <button ref={closeButtonRef} onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] font-mono text-sm" aria-label="Close settings">✕</button>
+          {!embedded && <button ref={closeButtonRef} onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] font-mono text-sm" aria-label="Close settings">x</button>}
         </div>
 
         {/* Tabs */}
@@ -337,7 +338,7 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
 
         <div className="settings-modal-footer p-3 border-t border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t('savedAutomatically')}</span>
-          <button
+          {!embedded && <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
             style={{
@@ -346,7 +347,7 @@ export default function SettingsModal({ activePort, onClose, addLog }) {
             }}
           >
             {t('close')}
-          </button>
+          </button>}
         </div>
       </div>
     </div>
@@ -362,16 +363,17 @@ function Section({ label, children }) {
   );
 }
 
-function Toggle({ checked, onChange, label }) {
+function Toggle({ checked, onChange, label, disabled = false }) {
   return (
-    <label className="flex items-center space-x-3 cursor-pointer select-none" style={{ minHeight: 32 }}>
+    <label className="flex items-center space-x-3 cursor-pointer select-none" style={{ minHeight: 32, opacity: disabled ? 0.55 : 1 }}>
       <span
         role="switch"
         aria-checked={checked}
-        tabIndex={0}
-        onClick={(e) => { e.preventDefault(); onChange(!checked); }}
+        aria-disabled={disabled}
+        tabIndex={disabled ? -1 : 0}
+        onClick={(e) => { e.preventDefault(); if (!disabled) onChange(!checked); }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
+          if (!disabled && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault();
             onChange(!checked);
           }
@@ -388,7 +390,7 @@ function Toggle({ checked, onChange, label }) {
           padding: 3,
           backgroundColor: checked ? 'var(--accent)' : 'color-mix(in srgb, var(--text-muted) 28%, transparent)',
           boxShadow: checked ? '0 0 18px var(--accent-bg)' : 'inset 0 0 0 1px var(--border)',
-          cursor: 'pointer',
+          cursor: disabled ? 'not-allowed' : 'pointer',
         }}
       >
         <span
@@ -461,6 +463,7 @@ function AIProviderSettings({ activePort, addLog }) {
         setApiKey('');
         setMessage('Saved. FreelancerStudio agents will use this provider/model unless an agent override is enabled.');
         addLog(`[AI Settings]: Saved ${provider}/${model}.`);
+        window.dispatchEvent(new CustomEvent('freelancerstudio:provider-connections-updated'));
       })
       .catch(err => setMessage(`Save failed: ${err.message}`))
       .finally(() => setBusy(false));
@@ -478,6 +481,7 @@ function AIProviderSettings({ activePort, addLog }) {
       .then(data => {
         setMessage(`${data.status === 'ok' ? 'Connection OK' : 'Connection failed'}: ${data.message}`);
         addLog(`[AI Settings]: ${provider} test ${data.status}.`);
+        window.dispatchEvent(new CustomEvent('freelancerstudio:provider-connections-updated'));
       })
       .catch(err => setMessage(`Test failed: ${err.message}`))
       .finally(() => setBusy(false));
@@ -547,12 +551,13 @@ function AIProviderSettings({ activePort, addLog }) {
   return (
     <div className="space-y-5">
       <OpenCodeConnectionSetup activePort={activePort} addLog={addLog} />
+      <GlobalAIInheritanceSettings activePort={activePort} cfg={cfg} reload={load} addLog={addLog} />
       <ProductJudgeSettings activePort={activePort} addLog={addLog} />
       <div className="rounded-xl p-4 border" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
         <div className="flex items-center justify-between gap-3 mb-3">
           <div>
-            <div className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>AI Provider Settings</div>
-            <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>studio_config.json is the source of truth for FreelancerStudio and OpenCode.</div>
+            <div className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>Direct API Connections</div>
+            <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Uses provider API keys. OpenAI API usage and billing are separate from a ChatGPT subscription.</div>
           </div>
           <div className="text-right text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
             Current: <span style={{ color: 'var(--accent)' }}>{cfg.provider}/{cfg.model}</span>
@@ -597,7 +602,7 @@ function AIProviderSettings({ activePort, addLog }) {
         </div>
 
         <div className="mt-3 rounded-lg px-3 py-2 text-[10px]" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--warning) 25%, transparent)', color: 'var(--warning)' }}>
-          OpenCode reads opencode.json only at startup. Restart OpenCode after applying config changes.
+          Direct API connections are separate from OpenCode browser authentication. Raw API keys are never returned to the frontend.
         </div>
         {message && <div className="mt-3 text-[11px]" style={{ color: message.toLowerCase().includes('failed') ? 'var(--warning)' : 'var(--text-secondary)' }}>{message}</div>}
       </div>
@@ -605,8 +610,8 @@ function AIProviderSettings({ activePort, addLog }) {
       <div className="rounded-xl p-4 border" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
-            <div className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>OpenCode Login</div>
-            <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>FreelancerStudio now requires OpenCode for code writing. If OpenCode is not logged in, generation stops instead of using the old LLM fallback.</div>
+            <div className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>OpenCode Browser Bridge</div>
+            <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>Uses your authenticated OpenCode session. FreelancerStudio does not store your browser password, OAuth token, cookies, or browser storage.</div>
           </div>
           <button onClick={load} disabled={busy} className="px-2.5 py-1 rounded text-[10px] font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Refresh</button>
         </div>
@@ -633,27 +638,152 @@ function AIProviderSettings({ activePort, addLog }) {
           <button onClick={openCodeWebLogin} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>Open OpenCode Login/Web</button>
           <button onClick={openCodeProviderLogin} disabled={busy || provider === 'ollama'} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Start {provider} OAuth Login</button>
         </div>
-        <div className="mt-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>Use the browser window to sign in with Google/OAuth where OpenCode supports it. After login, restart OpenCode and retry generation.</div>
+        <div className="mt-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>OpenCode owns the browser login session. FreelancerStudio stores only bridge metadata, status, and model/capability records.</div>
       </div>
     </div>
   );
 }
 
+function GlobalAIInheritanceSettings({ activePort, cfg, reload, addLog }) {
+  const [globalAI, setGlobalAI] = useState(cfg.global_ai || {});
+  const [connectionId, setConnectionId] = useState(cfg.global_ai?.connection_id || '');
+  const [model, setModel] = useState(cfg.global_ai?.model || '');
+  const [temperature, setTemperature] = useState(cfg.global_ai?.temperature ?? 0.2);
+  const [topP, setTopP] = useState(cfg.global_ai?.top_p ?? '');
+  const [topK, setTopK] = useState(cfg.global_ai?.top_k ?? '');
+  const [maxTokens, setMaxTokens] = useState(cfg.global_ai?.max_tokens ?? '');
+  const [agents, setAgents] = useState({});
+  const [connections, setConnections] = useState(cfg.provider_connections || []);
+  const [modelOptions, setModelOptions] = useState([]);
+  const [loadingConnections, setLoadingConnections] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [applyResult, setApplyResult] = useState(null);
+  const [agentDrafts, setAgentDrafts] = useState({});
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const selected = connections.find(c => c.connection_id === connectionId) || connections[0];
+  const textCapableConnections = connections.filter(c => (c.available_models || []).some(m => m?.capabilities?.text_input !== false));
+  const models = modelOptions.length ? modelOptions : (selected?.available_models || []);
+  const selectedModel = models.find(m => m.id === model);
+  const supportsTopK = selected?.provider ? ['nvidia', 'together', 'ollama'].includes(selected.provider) : false;
+
+  const loadAgents = () => fetch(`http://localhost:${activePort}/api/agents`).then(r => r.json()).then(data => { setAgents(data); setAgentDrafts(Object.fromEntries(Object.entries(data).map(([id, agent]) => [id, { temperature: agent.effective_ai?.temperature ?? '', top_p: agent.effective_ai?.top_p ?? '', top_k: agent.effective_ai?.top_k ?? '', max_tokens: agent.effective_ai?.max_tokens ?? '' }]))); }).catch(() => setAgents({}));
+  const loadGlobal = () => {
+    setLoadingConnections(true);
+    return fetch(`http://localhost:${activePort}/api/config/ai/global`).then(r => r.json()).then(data => {
+      const nextGlobal = data.global_ai || cfg.global_ai || {};
+      const nextConnections = data.connections || cfg.provider_connections || [];
+      const mapped = nextConnections.find(c => c.connection_id === nextGlobal.connection_id) || nextConnections.find(c => c.provider === nextGlobal.provider) || nextConnections[0];
+      setGlobalAI(nextGlobal);
+      setConnections(nextConnections);
+      setConnectionId(mapped?.connection_id || nextGlobal.connection_id || '');
+      setModel(nextGlobal.model || mapped?.available_models?.[0]?.id || '');
+      setTemperature(nextGlobal.temperature ?? 0.2);
+      setTopP(nextGlobal.top_p ?? '');
+      setTopK(nextGlobal.top_k ?? '');
+      setMaxTokens(nextGlobal.max_tokens ?? '');
+      setMessage(mapped ? '' : 'No configured provider connection is available. Save and test a provider below.');
+      return mapped?.connection_id || '';
+    }).then(id => id ? loadModels(id, true) : null).catch(err => setMessage(`Failed to load global AI configuration: ${err.message}`)).finally(() => setLoadingConnections(false));
+  };
+  const loadModels = (id, preserve = false) => {
+    if (!id) { setModelOptions([]); return Promise.resolve(); }
+    setLoadingModels(true);
+    return fetch(`http://localhost:${activePort}/api/provider-connections/${encodeURIComponent(id)}/models`).then(r => r.json()).then(data => {
+      const nextModels = (data.models || []).filter(m => m?.capabilities?.text_input !== false);
+      setModelOptions(nextModels);
+      if (!preserve || !nextModels.some(m => m.id === model)) setModel(prev => (preserve && nextModels.some(m => m.id === prev)) ? prev : nextModels[0]?.id || '');
+    }).catch(err => { setModelOptions([]); setMessage(`Failed to load models: ${err.message}`); }).finally(() => setLoadingModels(false));
+  };
+  useEffect(() => { loadGlobal(); loadAgents(); }, [activePort]);
+
+  const saveGlobal = () => {
+    const conn = connections.find(c => c.connection_id === connectionId) || selected;
+    setBusy(true);
+    fetch(`http://localhost:${activePort}/api/config/ai/global`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connection_id: connectionId, provider: conn?.provider || globalAI.provider || cfg.provider, model, temperature: parseFloat(temperature), top_p: topP === '' ? null : parseFloat(topP), top_k: topK === '' ? null : parseInt(topK, 10), max_tokens: maxTokens === '' ? null : parseInt(maxTokens, 10), enabled: true }) })
+      .then(r => r.json()).then(data => { setGlobalAI(data.global_ai || {}); setMessage(`Global AI configuration saved: ${data.global_ai?.provider}/${data.global_ai?.model}.`); addLog?.(`[AI Settings]: Global model set to ${data.global_ai?.provider}/${data.global_ai?.model}.`); reload(); loadGlobal(); loadAgents(); })
+      .catch(err => setMessage(`Save failed: ${err.message}`)).finally(() => setBusy(false));
+  };
+
+  const applyAll = () => {
+    setBusy(true);
+    fetch(`http://localhost:${activePort}/api/agents/apply-global-inheritance`, { method: 'POST' })
+      .then(r => r.json()).then(data => { setApplyResult(data); const updated = data.updated || []; const skipped = data.skipped || []; setMessage(updated.length ? `Applied global inheritance to ${updated.length} agent(s).` : (skipped.length ? 'No compatible agents were updated. See skipped reasons.' : 'No agents were updated. Save a global connection and model first.')); addLog?.('[AI Settings]: Applied global inheritance to agents.'); loadAgents(); })
+      .catch(err => setMessage(`Apply failed: ${err.message}`)).finally(() => setBusy(false));
+  };
+
+  const updateAgent = (agentId, patch) => {
+    setBusy(true);
+    fetch(`http://localhost:${activePort}/api/agents/${agentId}/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+      .then(r => r.json()).then(() => { setMessage(`${agents[agentId]?.name || agentId} settings saved.`); loadAgents(); }).catch(err => setMessage(`Agent save failed: ${err.message}`)).finally(() => setBusy(false));
+  };
+  const formatList = (items) => (items || []).map(item => typeof item === 'string' ? item : `${item.agent_id} - ${item.reason}`).join('\n');
+  return <section className="provider-setup"><div className="provider-heading"><div><strong>Global AI Configuration</strong><p>Use one Studio provider/model for compatible agents while keeping per-agent generation overrides.</p></div><span className="connection-state">{globalAI.provider || cfg.provider}/{globalAI.model || cfg.model}</span></div><div className="provider-form"><label>Provider connection<select value={connectionId} disabled={busy || loadingConnections} onChange={e => { const next = connections.find(c => c.connection_id === e.target.value); setConnectionId(e.target.value); setModel(next?.available_models?.[0]?.id || ''); loadModels(e.target.value); }}><option value="">{loadingConnections ? 'Loading provider connections...' : textCapableConnections.length ? 'Select provider connection' : 'No tested text-capable connection available'}</option>{textCapableConnections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.display_name || c.name || c.provider}{c.tested_status === 'passed' ? ' - tested' : ' - not tested'}</option>)}</select></label><label>Default model<select value={model} disabled={busy || loadingModels || !connectionId} onChange={e => setModel(e.target.value)}><option value="">{loadingModels ? 'Loading models...' : models.length ? 'Select model' : 'No tested text-capable models are available for this connection'}</option>{models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</select></label><label>Default temperature<input className="ai-settings-field" type="number" min="0" max="2" step="0.05" value={temperature} onChange={e => setTemperature(e.target.value)} /></label><label>Default top_p<input className="ai-settings-field" type="number" min="0" max="1" step="0.05" value={topP ?? ''} placeholder="Not sent" onChange={e => setTopP(e.target.value)} /></label><label>Default top_k<input className="ai-settings-field" type="number" min="1" step="1" value={topK ?? ''} placeholder={supportsTopK ? 'Not sent' : 'Not supported by this provider'} disabled={!supportsTopK} onChange={e => setTopK(e.target.value)} /></label><label>Default max tokens<input className="ai-settings-field" type="number" min="1" step="1" value={maxTokens ?? ''} placeholder="Provider default" onChange={e => setMaxTokens(e.target.value)} /></label></div>{selectedModel?.capabilities?.image_input !== true && <p className="provider-message">Product Judge note: this global model is not eligible for Product Judge because image input is not proven.</p>}<div className="provider-actions"><button type="button" className="primary" onClick={saveGlobal} disabled={busy || !connectionId || !model}>Save global configuration</button><button type="button" onClick={applyAll} disabled={busy || !connectionId || !model}>Apply inheritance to all agents</button><button type="button" onClick={() => { loadGlobal(); loadAgents(); }} disabled={busy}>Refresh preview</button></div>{message && <p className="provider-message" role="status">{message}</p>}{applyResult && <pre className="provider-message whitespace-pre-wrap">{`Applied successfully:\n${formatList(applyResult.updated).split('\n').filter(Boolean).map(x => `- ${agents[x]?.name || x}`).join('\n') || '- none'}\n\nSkipped:\n${(applyResult.skipped || []).map(x => `- ${agents[x.agent_id]?.name || x.agent_id} - ${x.reason}`).join('\n') || '- none'}`}</pre>}<div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">{Object.entries(agents).map(([agentId, agent]) => { const eff = agent.effective_ai || {}; const draft = agentDrafts[agentId] || {}; const inheritedParams = !!eff.use_global_generation_parameters; const isJudge = agentId === 'product_judge'; return <article key={agentId} className="rounded-xl border p-3 space-y-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)' }}><div className="flex items-start justify-between gap-3"><div><strong className="text-xs" style={{ color: 'var(--text-primary)' }}>{agent.name || agentId}</strong><p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{agent.role || agent.display_role || agentId}</p></div><span className="text-[10px] font-bold" style={{ color: eff.capability_status === 'compatible' ? 'var(--success)' : 'var(--warning)' }}>{eff.capability_status || 'unresolved'}</span></div><div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]" style={{ color: 'var(--text-secondary)' }}><span>Provider: <b>{eff.provider || 'Unresolved'}</b></span><span>Model: <b>{eff.model || 'No model selected'}</b></span><span>Temperature: <b>{eff.temperature ?? 'Provider default'}</b></span><span>Source: <b>{eff.configuration_source?.model === 'global' ? 'Global model' : 'Agent model override'} / {eff.configuration_source?.generation_parameters === 'global' ? 'Global parameters' : 'Agent parameters'}</b></span>{isJudge && <span className="md:col-span-2">Product Judge: <b>{eff.capability_validation?.valid ? 'global model eligible' : (eff.capability_validation?.reason || 'Global model is not eligible for Product Judge because image input is not proven.')}</b></span>}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><Toggle checked={!!eff.use_global_connection} onChange={value => updateAgent(agentId, { use_global_connection: value, use_global: value && eff.use_global_model })} label="Use global connection" disabled={busy} /><Toggle checked={!!eff.use_global_model} onChange={value => updateAgent(agentId, { use_global_model: value, use_global: value && eff.use_global_connection })} label="Use global model" disabled={busy} /><Toggle checked={inheritedParams} onChange={value => updateAgent(agentId, { use_global_generation_parameters: value })} label="Use global parameters" disabled={busy} /></div><div className="provider-form"><label>Temperature<input className="ai-settings-field" type="number" min="0" max="2" step="0.05" value={draft.temperature ?? ''} disabled={inheritedParams} placeholder={inheritedParams ? 'Inherited from Global' : 'Agent override'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), temperature: e.target.value } }))} /></label><label>Top_p<input className="ai-settings-field" type="number" min="0" max="1" step="0.05" value={draft.top_p ?? ''} disabled={inheritedParams} placeholder={inheritedParams ? 'Inherited from Global' : 'Not sent'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), top_p: e.target.value } }))} /></label><label>Top_k<input className="ai-settings-field" type="number" min="1" step="1" value={draft.top_k ?? ''} disabled={inheritedParams || !!eff.unsupported_generation_parameters?.top_k} placeholder={eff.unsupported_generation_parameters?.top_k || (inheritedParams ? 'Inherited from Global' : 'Not sent')} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), top_k: e.target.value } }))} /></label><label>Max tokens<input className="ai-settings-field" type="number" min="1" step="1" value={draft.max_tokens ?? ''} disabled={inheritedParams} placeholder={inheritedParams ? 'Inherited from Global' : 'Provider default'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), max_tokens: e.target.value } }))} /></label></div><div className="provider-actions"><button type="button" className="primary" disabled={busy} onClick={() => updateAgent(agentId, { use_global_generation_parameters: inheritedParams, temperature: draft.temperature === '' ? null : parseFloat(draft.temperature), top_p: draft.top_p === '' ? null : parseFloat(draft.top_p), top_k: draft.top_k === '' ? null : parseInt(draft.top_k, 10), max_tokens: draft.max_tokens === '' ? null : parseInt(draft.max_tokens, 10) })}>Save agent settings</button><button type="button" disabled={busy} onClick={() => updateAgent(agentId, { use_global_connection: true, use_global_model: true, use_global_generation_parameters: false, use_global: true })}>Reset to defaults</button></div></article>; })}</div></section>;
+}
+
 function ProductJudgeSettings({ activePort, addLog }) {
-  const [agent, setAgent] = useState(null);
+  const [config, setConfig] = useState(null);
+  const [status, setStatus] = useState(null);
   const [connections, setConnections] = useState([]);
   const [connectionId, setConnectionId] = useState('');
   const [model, setModel] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [useGlobal, setUseGlobal] = useState(false);
+  const [temperature, setTemperature] = useState(0.3);
+  const [topP, setTopP] = useState(0.9);
+  const [topK, setTopK] = useState('');
   const [message, setMessage] = useState('');
-  const load = () => Promise.all([
-    fetch(`http://localhost:${activePort}/api/agents`).then(r => r.json()),
-    fetch(`http://localhost:${activePort}/api/provider-connections`).then(r => r.json()),
-  ]).then(([agents, providerData]) => { const judge = agents.product_judge; setAgent(judge); const valid = (providerData.connections || []).filter(c => c.connection_type === 'opencode_bridge' && c.capabilities?.image_input?.status === 'supported'); setConnections(valid); setConnectionId(judge?.connection_id || valid[0]?.connection_id || ''); setModel(judge?.model || valid[0]?.configured_model || ''); }).catch(() => setMessage('Product Judge settings are unavailable.'));
-  useEffect(() => { load(); }, [activePort]);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => fetch(`http://localhost:${activePort}/api/product-judge/config`)
+    .then(r => r.json())
+    .then(data => {
+      const cfg = data.config || {};
+      const options = data.connections || [];
+      const selectedId = cfg.connection_id || options[0]?.connection_id || '';
+      const selected = options.find(c => c.connection_id === selectedId) || options[0];
+      const models = (selected?.available_models || []).filter(m => m?.capabilities?.image_input === true);
+      setConfig(cfg);
+      setStatus(data.status || null);
+      setConnections(options);
+      setConnectionId(selected?.connection_id || selectedId);
+      setModel(models.some(m => m.id === cfg.model) ? cfg.model : models[0]?.id || '');
+      setEnabled(cfg.enabled !== false);
+      setUseGlobal(!!cfg.use_global);
+      setTemperature(cfg.temperature ?? 0.3);
+      setTopP(cfg.top_p ?? 0.9);
+      setTopK(cfg.top_k ?? '');
+    })
+    .catch(() => setMessage('Product Judge settings are unavailable.'));
+
+  useEffect(() => {
+    load();
+    const refresh = () => load();
+    window.addEventListener('freelancerstudio:provider-connections-updated', refresh);
+    return () => window.removeEventListener('freelancerstudio:provider-connections-updated', refresh);
+  }, [activePort]);
+
   const selected = connections.find(c => c.connection_id === connectionId);
-  const save = async () => { if (!selected) { setMessage('A saved OpenCode connection with proven image support is required.'); return; } const response = await fetch(`http://localhost:${activePort}/api/agents/product_judge/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: agent?.enabled !== false, use_global: false, provider: 'opencode_bridge', connection_id: connectionId, model, temperature: agent?.temperature ?? 0.3, top_p: agent?.top_p ?? 0.9, top_k: agent?.top_k ?? null }) }); const data = await response.json(); if (data.status === 'success') { setMessage('Product Judge assignment saved.'); addLog?.('[Product Judge]: OpenCode vision connection assigned.'); load(); } else setMessage(data.detail || 'Save failed.'); };
-  const independence = agent?.active_provider === 'opencode_bridge' && model ? 'same_provider_different_model or same_model_separate_role' : 'Calculated from current creator and judge identities after save.';
-  return <section className="provider-setup product-judge-settings"><div className="provider-heading"><div><strong>Product Judge</strong><p>Independent Product Reviewer. Read-only, evidence-bound vision review.</p></div><span className="connection-state">{selected ? 'Ready' : 'Unavailable'}</span></div><div className="provider-form"><label>Provider connection<select value={connectionId} onChange={e => { const next = connections.find(c => c.connection_id === e.target.value); setConnectionId(e.target.value); setModel(next?.configured_model || ''); }}><option value="">Select proven vision connection</option>{connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.name}</option>)}</select></label><label>Model<select value={model} onChange={e => setModel(e.target.value)}><option value={selected?.configured_model || model}>{selected?.configured_model || model || 'No model available'}</option></select></label></div><div className="judge-details"><span>Vision: <b>{selected ? 'Proven' : 'Unavailable'}</b></span><span>Independence: <b>{independence}</b></span></div><button type="button" className="primary" onClick={save} disabled={!selected}>Save Product Judge</button>{message && <p className="provider-message" role="status">{message}</p>}</section>;
+  const models = (selected?.available_models || []).filter(m => m?.capabilities?.image_input === true);
+  const hasTestedVisionConnection = connections.some(c => c.tested_status === 'passed' && (c.available_models || []).some(m => m?.capabilities?.image_input === true));
+  const readableStatus = status?.available ? status.reason : `Unavailable - ${status?.reason || 'no tested vision connection'}`;
+  const save = async () => {
+    if (!selected || !model) { setMessage('No tested image-capable provider connection is available.'); return; }
+    setBusy(true);
+    const response = await fetch(`http://localhost:${activePort}/api/product-judge/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, use_global: useGlobal, connection_id: connectionId, model, temperature: parseFloat(temperature), top_p: topP === '' ? null : parseFloat(topP), top_k: topK === '' ? null : parseInt(topK, 10) }) });
+    const data = await response.json();
+    if (data.status === 'success') { setMessage(data.readiness?.available ? 'Product Judge saved and available.' : `Saved, but unavailable: ${data.readiness?.reason || 'not ready'}`); addLog?.(`[Product Judge]: ${data.readiness?.status || 'saved'} ${model}.`); load(); } else setMessage(data.detail || 'Save failed.');
+    setBusy(false);
+  };
+  const test = async () => {
+    setBusy(true);
+    const response = await fetch(`http://localhost:${activePort}/api/product-judge/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, use_global: useGlobal, connection_id: connectionId, model, temperature: parseFloat(temperature), top_p: topP === '' ? null : parseFloat(topP), top_k: topK === '' ? null : parseInt(topK, 10) }) });
+    const data = await response.json();
+    setStatus(data);
+    setMessage(data.available ? `Ready: ${data.reason}` : `Not ready: ${data.reason || data.message}`);
+    setBusy(false);
+  };
+  return <section className="provider-setup product-judge-settings"><div className="provider-heading"><div><strong>Product Judge</strong><p>Independent Product Reviewer. Read-only, evidence-bound vision review.</p></div><span className="connection-state">{status?.available ? 'Available' : 'Unavailable'}</span></div><p className="provider-message" role="status">{readableStatus}</p>{!hasTestedVisionConnection && <div className="judge-details"><span>No tested image-capable provider connection is available.</span><button type="button" onClick={load}>Refresh connections</button><span>{connections.length ? 'Select a connection, then test provider below if needed.' : 'Configure provider and Test provider below.'}</span></div>}<div className="provider-form"><label>Provider connection<select value={connectionId} disabled={busy} onChange={e => { const next = connections.find(c => c.connection_id === e.target.value); const imageModels = (next?.available_models || []).filter(m => m?.capabilities?.image_input === true); setConnectionId(e.target.value); setModel(imageModels[0]?.id || ''); }}><option value="">{connections.length ? 'Select provider connection' : 'No provider connection saved'}</option>{connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.display_name || c.name || c.provider}{c.tested_status === 'passed' ? ' - tested' : ' - not tested'}</option>)}</select></label><label>Model<select value={model} disabled={busy} onChange={e => setModel(e.target.value)}><option value="">{models.length ? 'Select image-capable model' : 'No image-capable model available'}</option>{models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</select></label><label>Enabled<select value={enabled ? 'yes' : 'no'} onChange={e => setEnabled(e.target.value === 'yes')}><option value="yes">Enabled</option><option value="no">Disabled</option></select></label><label>Use global provider<select value={useGlobal ? 'yes' : 'no'} onChange={e => setUseGlobal(e.target.value === 'yes')}><option value="no">No</option><option value="yes">Yes, if image-capable</option></select></label><label>Temperature<input type="number" min="0" max="2" step="0.1" value={temperature} onChange={e => setTemperature(e.target.value)} /></label><label>Top-p<input type="number" min="0" max="1" step="0.05" value={topP ?? ''} onChange={e => setTopP(e.target.value)} /></label><label>Top-k<input type="number" min="1" step="1" value={topK ?? ''} onChange={e => setTopK(e.target.value)} /></label></div><div className="judge-details"><span>Vision: <b>{selected && model ? 'Image-capable model selected' : 'Unavailable'}</b></span><span>Independence: <b>{status?.independence_level || config?.independence_level || 'unavailable'}</b></span></div><div className="provider-actions"><button type="button" className="primary" onClick={save} disabled={!selected || !model || busy}>Save Product Judge</button><button type="button" onClick={test} disabled={!selected || !model || busy}>Test Product Judge</button><button type="button" onClick={load} disabled={busy}>Refresh connections</button></div>{message && <p className="provider-message" role="status">{message}</p>}</section>;
 }
 
 function GitHubConfig({ activePort, addLog }) {

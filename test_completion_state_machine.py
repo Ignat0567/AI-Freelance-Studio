@@ -81,6 +81,16 @@ def test_transition_examples_valid_and_invalid():
     assert not main._set_project_status(q, "completed")
 
 
+def test_meeting_can_surface_pre_generation_blockers():
+    p = _project("meeting")
+    assert main._set_project_status(p, "needs_credentials")
+    assert p["status"] == "needs_credentials"
+
+    q = _project("meeting")
+    assert main._set_project_status(q, "needs_human_input")
+    assert q["status"] == "needs_human_input"
+
+
 def test_critical_ambiguity_blocks_before_coding_with_human_input_state():
     p = _project("planning")
     p["project_spec"] = {

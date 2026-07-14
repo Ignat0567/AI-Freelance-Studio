@@ -65,7 +65,7 @@ def ask_studio_ai_with_history(
 ) -> str:
     try:
         provider_lower = provider.lower()
-        if provider_lower == "opencode_bridge":
+        if provider_lower in {"opencode_bridge", "opencode"}:
             config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio_config.json")
             connections = []
             try:
@@ -73,7 +73,7 @@ def ask_studio_ai_with_history(
                     connections = json.load(source).get("_provider_connections", [])
             except (OSError, ValueError, AttributeError):
                 pass
-            connection_data = next((item for item in connections if isinstance(item, dict) and item.get("connection_type") == "opencode_bridge" and item.get("enabled", True) and (not model_name or item.get("configured_model") == model_name)), None)
+            connection_data = next((item for item in connections if isinstance(item, dict) and item.get("connection_type") in {"opencode_bridge", "opencode_oauth_bridge"} and item.get("enabled", True) and (not model_name or item.get("configured_model") == model_name or any(isinstance(m, dict) and m.get("id") == model_name for m in item.get("available_models", [])))), None)
             if not connection_data:
                 return "OpenCode bridge is not configured for this model. Add and test a local OpenCode connection in AI Providers."
             from opencode_provider import OpenCodeBridgeConnection

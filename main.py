@@ -14,7 +14,7 @@ import glob
 import subprocess
 import urllib.request
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, UploadFile, File as FastAPIFile, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import threading as _threading
 import project_state
+from repair_scope import SUPPORTED_LOCK_FILES, walk_repairable_files
 import opencode_provider as opencode_provider_module
 from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
 
@@ -95,6 +96,7 @@ record_acceptance_evidence = project_spec_module.record_acceptance_evidence
 ensure_acceptance_evidence_history = project_spec_module.ensure_acceptance_evidence_history
 append_agent_review_issues = project_spec_module.append_agent_review_issues
 build_product_judge_input = project_spec_module.build_product_judge_input
+normalize_project_mode = project_spec_module.normalize_project_mode
 Issue = project_spec_module.Issue
 run_final_delivery_audit = delivery_audit_module.run_final_delivery_audit
 write_delivery_report = delivery_audit_module.write_delivery_report
@@ -126,7 +128,7 @@ def _backend_health_available() -> tuple[bool, str]:
 
 
 AI_PROVIDER_MODELS = {
-    "openai": ["gpt-5.5", "gpt-5", "gpt-4.1"],
+    "openai": ["gpt-4o", "gpt-4.1", "gpt-5", "gpt-5.5"],
     "nvidia": ["meta/llama-3.3-70b-instruct"],
     "anthropic": ["claude-sonnet-4-20250514"],
     "google": ["gemini-2.0-flash-001"],
@@ -135,6 +137,29 @@ AI_PROVIDER_MODELS = {
     "deepseek": ["deepseek-chat"],
     "together": ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"],
     "ollama": ["codellama", "llama3.1", "mistral"],
+}
+
+MODEL_CAPABILITY_OVERRIDES = {
+    "openai": {
+        "gpt-4o": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
+        "gpt-4.1": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
+        "gpt-5": {"text_input": True, "image_input": None, "structured_output": True, "streaming": True, "tool_use": True},
+        "gpt-5.5": {"text_input": True, "image_input": None, "structured_output": True, "streaming": True, "tool_use": True},
+    },
+    "anthropic": {
+        "claude-sonnet-4-20250514": {"text_input": True, "image_input": True, "structured_output": False, "streaming": True, "tool_use": True},
+    },
+}
+
+PRODUCT_JUDGE_STATUS_REASONS = {
+    "not_configured": "no provider connection selected",
+    "provider_not_tested": "selected provider connection has not passed a test",
+    "no_vision_model": "selected model does not support images",
+    "credential_missing": "credential is missing",
+    "connection_failed": "selected provider connection test failed",
+    "configured": "configured but not enabled",
+    "available": "ready",
+    "temporarily_unavailable": "provider is temporarily unavailable",
 }
 
 
@@ -219,9 +244,45 @@ class AISettingsPayload(BaseModel):
     api_key: str = ""
 
 
+class GlobalAIConfigPayload(BaseModel):
+    connection_id: str = ""
+    connection_type: str = ""
+    provider: str = ""
+    model: str = ""
+    temperature: float = 0.2
+    top_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
+    enabled: bool = True
+
+
+class AgentAIConfigPayload(BaseModel):
+    use_global_connection: bool | None = None
+    use_global_model: bool | None = None
+    use_global_generation_parameters: bool | None = None
+    connection_id: str | None = None
+    connection_type: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
+
+
 class ProviderTestPayload(BaseModel):
     provider: str = ""
     api_key: str = ""
+
+
+class ProductJudgeConfigPayload(BaseModel):
+    enabled: bool = True
+    connection_id: str = ""
+    model: str = ""
+    use_global: bool = False
+    temperature: float = 0.3
+    top_p: float | None = 0.9
+    top_k: int | None = None
 
 
 class OpenCodeConnectionPayload(BaseModel):
@@ -268,6 +329,7 @@ class ManualProjectPayload(BaseModel):
     description: str = ""
     initial_description: str = ""
     budget: str = "?"
+    project_mode: str = "mvp"
 
 
 class ProjectApprovePayload(BaseModel):
@@ -284,6 +346,7 @@ class ProjectClaimPayload(BaseModel):
     description: str = ""
     budget: str = "?"
     url: str = ""
+    project_mode: str = "mvp"
 
 
 active_projects: Dict[str, Dict[str, Any]] = {}
@@ -298,6 +361,7 @@ PROJECT_TASKS.update(_persisted_tasks)
 
 def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
     spec = state.get("project_spec", {}) if isinstance(state.get("project_spec"), dict) else {}
+    project_mode = normalize_project_mode(state.get("project_mode") or spec.get("project_mode"))
     original_request = str(state.get("original_request") or spec.get("original_user_request") or state.get("problem_description") or state.get("description") or "")
     project = {
         "project_id": state["project_id"],
@@ -309,6 +373,7 @@ def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
         "_phase": state.get("pipeline_stage", ""),
         "original_request": original_request,
         "description": original_request,
+        "project_mode": project_mode,
         "project_spec": spec,
         "project_profiles": state.get("effective_project_profile", []),
         "product_runtime_profile": state.get("product_runtime_profile", {}),
@@ -527,7 +592,76 @@ def _ai_settings_response(data: dict | None = None) -> dict:
 
 @app.get("/api/config/ai")
 def get_ai_settings():
-    return _ai_settings_response()
+    data = load_studio_keys()
+    response = _ai_settings_response(data)
+    response["global_ai"] = _load_global_ai_config(data)
+    response["provider_connections"] = _frontend_provider_connections(data)
+    return response
+
+
+@app.get("/api/config/ai/global")
+def get_global_ai_config():
+    data = load_studio_keys()
+    return {"global_ai": _load_global_ai_config(data), "connections": _frontend_provider_connections(data)}
+
+
+@app.post("/api/config/ai/global")
+def save_global_ai_config(payload: GlobalAIConfigPayload):
+    provider = (payload.provider or "").strip().lower()
+    connection = _connection_for_id(payload.connection_id) if payload.connection_id else {}
+    if connection:
+        provider = str(connection.get("provider") or provider)
+    if provider not in AI_PROVIDER_MODELS and provider not in {"opencode", "opencode_bridge"}:
+        raise HTTPException(400, "Unsupported provider")
+    model = (payload.model or "").strip()
+    if not model:
+        raise HTTPException(400, "Model is required")
+    config = _save_global_ai_config({
+        "connection_id": payload.connection_id or _provider_connection_id(provider),
+        "connection_type": payload.connection_type or connection.get("connection_type") or _canonical_connection_type("api_provider", provider),
+        "provider": provider,
+        "model": model,
+        "temperature": payload.temperature,
+        "top_p": payload.top_p,
+        "top_k": payload.top_k,
+        "max_tokens": payload.max_tokens,
+        "enabled": payload.enabled,
+    })
+    return {"status": "saved", "global_ai": config, "connections": _frontend_provider_connections()}
+
+
+@app.get("/api/agents/effective-ai")
+def get_effective_agent_ai_configs():
+    return {agent_id: resolve_effective_agent_ai_config(agent_id) for agent_id in _all_agent_ids()}
+
+
+@app.get("/api/agents/{agent_id}/effective-ai")
+def get_effective_agent_ai_config(agent_id: str):
+    if agent_id not in _all_agent_ids():
+        raise HTTPException(404, "Agent not found")
+    return resolve_effective_agent_ai_config(agent_id)
+
+
+@app.post("/api/agents/apply-global-inheritance")
+def apply_global_inheritance_to_agents():
+    skipped = []
+    updated = []
+    global_cfg = _load_global_ai_config()
+    connection = _connection_for_id(str(global_cfg.get("connection_id") or "")) or _general_provider_connection(load_studio_keys(), str(global_cfg.get("provider") or ""), str(global_cfg.get("model") or ""))
+    for agent_id in _all_agent_ids():
+        validation = _validate_agent_capabilities(agent_id, connection, str(global_cfg.get("model") or ""))
+        if not validation.get("valid"):
+            skipped.append({"agent_id": agent_id, "reason": validation.get("reason")})
+            continue
+        current = agent_configs.get(agent_id, {})
+        current["use_global_connection"] = True
+        current["use_global_model"] = True
+        current["use_global_generation_parameters"] = False
+        current["use_global"] = True
+        agent_configs[agent_id] = current
+        updated.append(agent_id)
+    save_agent_configs(agent_configs)
+    return {"status": "success", "updated": updated, "skipped": skipped, "effective": {agent_id: resolve_effective_agent_ai_config(agent_id) for agent_id in _all_agent_ids()}}
 
 
 def _load_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
@@ -536,10 +670,335 @@ def _load_provider_connections(data: dict | None = None) -> list[dict[str, Any]]
     return [item for item in connections if isinstance(item, dict)] if isinstance(connections, list) else []
 
 
+def _model_capabilities(provider: str, model: str) -> dict[str, Any]:
+    caps = MODEL_CAPABILITY_OVERRIDES.get((provider or "").lower(), {}).get(model)
+    if caps is None:
+        provider_caps = ai_utils.provider_capabilities(provider or "")
+        image_input = True if provider_caps.get("image_input") and model in MODEL_CAPABILITY_OVERRIDES.get((provider or "").lower(), {}) else None
+        caps = {"text_input": True, "image_input": image_input, "structured_output": None, "streaming": None, "tool_use": None}
+    return dict(caps)
+
+
+def _models_with_capabilities(provider: str, models: list[str] | None = None) -> list[dict[str, Any]]:
+    return [{"id": model, "capabilities": _model_capabilities(provider, model)} for model in (models or AI_PROVIDER_MODELS.get(provider, []))]
+
+
+def _parameter_support(provider: str, model: str = "") -> dict[str, bool]:
+    provider_caps = ai_utils.provider_capabilities(provider or "")
+    return {
+        "temperature": True,
+        "top_p": bool(provider_caps.get("top_p")),
+        "top_k": bool(provider_caps.get("top_k")),
+        "max_tokens": True,
+    }
+
+
+def _filter_supported_generation(provider: str, model: str, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    support = _parameter_support(provider, model)
+    sendable = {}
+    unsupported = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if support.get(key, False):
+            sendable[key] = value
+        else:
+            unsupported[key] = "Not supported by this model/provider"
+    return sendable, unsupported
+
+
+def _provider_credential_exists(data: dict, provider: str) -> bool:
+    return provider == "ollama" or bool(data.get(_provider_key_name(provider)) or data.get(f"{provider}_api_key"))
+
+
+def _provider_connection_id(provider: str) -> str:
+    return f"provider-{provider}"
+
+
+def _canonical_connection_type(value: str, provider: str = "") -> str:
+    raw = str(value or "").strip().lower()
+    provider = str(provider or "").strip().lower()
+    if raw in {"opencode_bridge", "opencode_oauth_bridge"}:
+        return "opencode_oauth_bridge"
+    if raw in {"openai_api", "api_provider"} and provider == "openai":
+        return "openai_api"
+    if raw in {"api_provider", "other_provider_api"}:
+        return "other_provider_api"
+    if raw == "local_model" or provider == "ollama":
+        return "local_model"
+    return raw or ("openai_api" if provider == "openai" else "other_provider_api")
+
+
+def _general_provider_connection(data: dict, provider: str, model: str = "", tested: bool | None = None, test_result: dict | None = None) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    available_models = _models_with_capabilities(provider)
+    has_credential = _provider_credential_exists(data, provider)
+    status = "configured" if has_credential else "credential_missing"
+    if tested is True:
+        status = "tested" if has_credential else "credential_missing"
+    elif tested is False:
+        status = "test_failed" if has_credential else "credential_missing"
+    connection_type = _canonical_connection_type("api_provider", provider)
+    return {
+        "connection_id": _provider_connection_id(provider),
+        "display_name": f"{provider.upper()} API key",
+        "name": f"{provider.upper()} API key",
+        "provider": provider,
+        "connection_type": connection_type,
+        "credential_reference": _provider_key_name(provider),
+        "configured_status": status,
+        "tested_status": "passed" if tested is True else "failed" if tested is False else "not_tested",
+        "last_test_result": test_result or {},
+        "available_models": available_models,
+        "capability_metadata": {item["id"]: item["capabilities"] for item in available_models},
+        "configured_model": model or (AI_PROVIDER_MODELS.get(provider, [""])[0] if AI_PROVIDER_MODELS.get(provider) else ""),
+        "updated_at": now,
+        "stores_authentication": False,
+        "configured": has_credential,
+        "authenticated": has_credential,
+        "tested": tested is True,
+        "last_test_status": "passed" if tested is True else "failed" if tested is False else "not_tested",
+    }
+
+
+def _upsert_provider_connection(data: dict, connection: dict[str, Any]) -> None:
+    connections = _load_provider_connections(data)
+    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection.get("connection_id")), None)
+    if existing is None:
+        connections.append(connection)
+    else:
+        merged = {**connections[existing], **connection}
+        connections[existing] = merged
+    data["_provider_connections"] = connections
+
+
+def _ensure_provider_connection_records(data: dict) -> bool:
+    changed = False
+    connections = _load_provider_connections(data)
+    for item in connections:
+        if not isinstance(item, dict):
+            continue
+        canonical = _canonical_connection_type(str(item.get("connection_type") or ""), str(item.get("provider") or ""))
+        if item.get("connection_type") != canonical:
+            item["connection_type"] = canonical
+            changed = True
+    existing_ids = {item.get("connection_id") for item in connections}
+    system = _get_saved_system_settings(data)
+    candidate_providers = {str(system.get("global_provider") or "").lower()}
+    for provider in AI_PROVIDER_MODELS:
+        if provider == "ollama" and system.get("global_provider") != "ollama":
+            continue
+        if provider != "ollama" and _provider_credential_exists(data, provider):
+            candidate_providers.add(provider)
+    for provider in sorted(item for item in candidate_providers if item in AI_PROVIDER_MODELS):
+        connection_id = _provider_connection_id(provider)
+        if connection_id in existing_ids:
+            continue
+        model = system.get("global_model", "") if system.get("global_provider") == provider else ""
+        connections.append(_general_provider_connection(data, provider, model))
+        existing_ids.add(connection_id)
+        changed = True
+    if changed:
+        data["_provider_connections"] = connections
+    return changed
+
+
+def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
+    safe = {key: value for key, value in connection.items() if key not in {"api_key", "token", "secret", "password"}}
+    safe["connection_type"] = _canonical_connection_type(str(safe.get("connection_type") or ""), str(safe.get("provider") or ""))
+    if safe.get("connection_type") == "opencode_oauth_bridge":
+        configured = safe.get("configured_model") or ""
+        raw_models = safe.get("available_models") if isinstance(safe.get("available_models"), list) else []
+        bridge_capabilities = safe.get("capabilities", {}) if isinstance(safe.get("capabilities"), dict) else {}
+        model_capabilities = {
+            "text_input": bridge_capabilities.get("text_input", {}).get("status") == "supported",
+            "image_input": bridge_capabilities.get("image_input", {}).get("status") == "supported",
+            "structured_output": None,
+            "streaming": False,
+            "tool_use": None,
+        }
+        models = []
+        for item in raw_models:
+            if isinstance(item, dict):
+                item_id = str(item.get("id") or "")
+                capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else model_capabilities
+                if item_id:
+                    models.append({**item, "id": item_id, "capabilities": {**model_capabilities, **capabilities}})
+            elif item:
+                item_id = str(item)
+                models.append({"id": item_id, "capabilities": model_capabilities, "provider": item_id.split("/", 1)[0] if "/" in item_id else "opencode", "source_connection": safe.get("connection_id", "")})
+        if not models and configured:
+            models = [{"id": configured, "capabilities": model_capabilities, "provider": configured.split("/", 1)[0] if "/" in configured else "opencode", "source_connection": safe.get("connection_id", "")}]
+        safe["provider"] = "opencode_bridge"
+        safe["display_name"] = safe.get("display_name") or safe.get("name") or "OpenCode"
+        safe["tested_status"] = "passed" if model_capabilities["text_input"] else "not_tested"
+        safe["configured_status"] = "tested" if safe["tested_status"] == "passed" else "configured"
+        safe["available_models"] = models
+        safe["capability_metadata"] = {item["id"]: item["capabilities"] for item in safe["available_models"]}
+        safe["last_test_result"] = {"status": "ok" if safe["tested_status"] == "passed" else "not_tested", "message": safe.get("last_checked_at", "")}
+        safe["updated_at"] = safe.get("last_checked_at", "")
+        safe["stores_authentication"] = False
+        safe["authentication_owner"] = "OpenCode"
+        safe["configured"] = True
+        safe["authenticated"] = safe["tested_status"] == "passed"
+        safe["tested"] = safe["tested_status"] == "passed"
+        safe["last_test_status"] = safe["tested_status"]
+    return safe
+
+
+def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
+    source = data if data is not None else load_studio_keys()
+    changed = _ensure_provider_connection_records(source)
+    if data is None and changed:
+        save_studio_keys(source)
+    return [_sanitize_provider_connection(item) for item in _load_provider_connections(source)]
+
+
+def _default_global_ai_config(data: dict | None = None) -> dict[str, Any]:
+    source = data if data is not None else load_studio_keys()
+    system = _get_saved_system_settings(source)
+    provider = str(system.get("global_provider") or "nvidia").lower()
+    model = str(system.get("global_model") or (AI_PROVIDER_MODELS.get(provider, [""])[0] if AI_PROVIDER_MODELS.get(provider) else ""))
+    return {
+        "connection_id": _provider_connection_id(provider),
+        "connection_type": _canonical_connection_type("api_provider", provider),
+        "provider": provider,
+        "model": model,
+        "temperature": 0.2,
+        "top_p": None,
+        "top_k": None,
+        "max_tokens": None,
+        "enabled": True,
+        "updated_at": "",
+    }
+
+
+def _load_global_ai_config(data: dict | None = None) -> dict[str, Any]:
+    source = data if data is not None else load_studio_keys()
+    saved = source.get("_global_ai", {}) if isinstance(source.get("_global_ai"), dict) else {}
+    return {**_default_global_ai_config(source), **saved}
+
+
+def _save_global_ai_config(config: dict[str, Any]) -> dict[str, Any]:
+    data = load_studio_keys()
+    current = _load_global_ai_config(data)
+    current.update({key: value for key, value in config.items() if key in {"connection_id", "connection_type", "provider", "model", "temperature", "top_p", "top_k", "max_tokens", "enabled"}})
+    current["updated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    data["_global_ai"] = current
+    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
+    system["global_provider"] = current["provider"]
+    system["global_model"] = current["model"]
+    data["_system"] = system
+    SYSTEM_SETTINGS["global_provider"] = current["provider"]
+    SYSTEM_SETTINGS["global_model"] = current["model"]
+    if current.get("connection_type") != "opencode_oauth_bridge":
+        _upsert_provider_connection(data, _general_provider_connection(data, current["provider"], current["model"]))
+    save_studio_keys(data)
+    return current
+
+
+def _vision_models_for_connection(connection: dict[str, Any]) -> list[dict[str, Any]]:
+    return [item for item in connection.get("available_models", []) if isinstance(item, dict) and item.get("capabilities", {}).get("image_input") is True]
+
+
+def _connection_for_id(connection_id: str, data: dict | None = None) -> dict[str, Any]:
+    return next((item for item in _frontend_provider_connections(data) if item.get("connection_id") == connection_id), {})
+
+
+def _identity_for_product_judge(connection: dict[str, Any], model: str, use_global: bool = False) -> tuple[str, str]:
+    if use_global:
+        return SYSTEM_SETTINGS["global_provider"], SYSTEM_SETTINGS["global_model"]
+    provider = str(connection.get("provider") or "")
+    if provider == "opencode_bridge" and "/" in model:
+        return model.split("/", 1)[0], model
+    return provider, model
+
+
+def _product_judge_independence(provider: str, model: str) -> str:
+    implementation_provider, implementation_model = get_agent_provider_model("elena")
+    if not provider or not model:
+        return "unavailable"
+    if provider != implementation_provider:
+        return "different_provider"
+    if model != implementation_model:
+        return "same_provider_different_model"
+    return "same_model_separate_role"
+
+
+def _product_judge_status(config: dict[str, Any] | None = None, data: dict | None = None) -> dict[str, Any]:
+    source = data if data is not None else load_studio_keys()
+    cfg = config if config is not None else {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
+    if not cfg.get("enabled", True):
+        return {"status": "configured", "available": False, "reason": "Product Judge is disabled", "independence_level": "unavailable"}
+    connection = {}
+    model = str(cfg.get("model") or "")
+    if cfg.get("use_global"):
+        global_cfg = _load_global_ai_config(source)
+        provider = str(global_cfg.get("provider") or SYSTEM_SETTINGS["global_provider"])
+        connection = _connection_for_id(str(global_cfg.get("connection_id") or _provider_connection_id(provider)), source)
+        model = model or str(global_cfg.get("model") or SYSTEM_SETTINGS["global_model"])
+    else:
+        connection = _connection_for_id(str(cfg.get("connection_id") or ""), source)
+    if not connection:
+        return {"status": "not_configured", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["not_configured"], "independence_level": "unavailable"}
+    provider, identity_model = _identity_for_product_judge(connection, model, bool(cfg.get("use_global")))
+    independence = _product_judge_independence(provider, identity_model)
+    if connection.get("configured_status") == "credential_missing":
+        return {"status": "credential_missing", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["credential_missing"], "connection": connection, "independence_level": independence}
+    if connection.get("tested_status") == "failed":
+        return {"status": "connection_failed", "available": False, "reason": connection.get("last_test_result", {}).get("message") or PRODUCT_JUDGE_STATUS_REASONS["connection_failed"], "connection": connection, "independence_level": independence}
+    if connection.get("tested_status") != "passed":
+        return {"status": "provider_not_tested", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["provider_not_tested"], "connection": connection, "independence_level": independence}
+    capability = connection.get("capability_metadata", {}).get(model, {})
+    if capability.get("image_input") is not True:
+        return {"status": "no_vision_model", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["no_vision_model"], "connection": connection, "independence_level": independence}
+    return {"status": "available", "available": True, "reason": f"Available - {provider} / {model}", "connection": connection, "model": model, "provider": provider, "independence_level": independence}
+
+
 @app.get("/api/provider-connections")
 def list_provider_connections():
-    """Connection settings intentionally exclude OpenCode credentials and browser state."""
-    return {"providers": PROVIDER_REGISTRY, "connections": _load_provider_connections()}
+    """Connection settings intentionally exclude raw credentials and browser state."""
+    return {"providers": PROVIDER_REGISTRY, "connections": _frontend_provider_connections()}
+
+
+@app.get("/api/provider-connections/vision")
+def list_vision_provider_connections():
+    connections = [item for item in _frontend_provider_connections() if item.get("tested_status") == "passed" and _vision_models_for_connection(item)]
+    return {"connections": connections}
+
+
+@app.get("/api/provider-connections/{connection_id}/models")
+def list_provider_connection_models(connection_id: str, image_input: bool = False):
+    connection = _connection_for_id(connection_id)
+    if not connection:
+        raise HTTPException(404, "Provider connection not found")
+    models = _vision_models_for_connection(connection) if image_input else connection.get("available_models", [])
+    return {"connection_id": connection_id, "models": models}
+
+
+@app.post("/api/provider-connections/{connection_id}/models/refresh")
+def refresh_provider_connection_models(connection_id: str):
+    data = load_studio_keys()
+    connections = _load_provider_connections(data)
+    index = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection_id), None)
+    if index is None:
+        raise HTTPException(404, "Provider connection not found")
+    connection = connections[index]
+    ctype = _canonical_connection_type(str(connection.get("connection_type") or ""), str(connection.get("provider") or ""))
+    if ctype == "opencode_oauth_bridge":
+        oc = OpenCodeBridgeConnection.from_dict(connection)
+        models = oc.available_models()
+        connection["available_models"] = models
+        connection["capability_metadata"] = {item["id"]: item.get("capabilities", {}) for item in models if isinstance(item, dict) and item.get("id")}
+    else:
+        provider = str(connection.get("provider") or "").lower()
+        connection.update(_general_provider_connection(data, provider, connection.get("configured_model", "")))
+    connection["connection_type"] = ctype
+    connection["models_refreshed_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    connections[index] = connection
+    data["_provider_connections"] = connections
+    save_studio_keys(data)
+    return {"status": "refreshed", "connection": _sanitize_provider_connection(connection)}
 
 
 @app.post("/api/provider-connections/opencode")
@@ -556,6 +1015,7 @@ def save_opencode_connection(payload: OpenCodeConnectionPayload):
     data = load_studio_keys()
     connections = _load_provider_connections(data)
     connections.append(connection.to_dict())
+    connections[-1]["connection_type"] = "opencode_oauth_bridge"
     data["_provider_connections"] = connections
     save_studio_keys(data)
     return {"status": "saved", "connection": connection.to_dict(), "message": "OpenCode authentication remains owned by OpenCode; no token was requested or stored."}
@@ -602,12 +1062,21 @@ def test_provider_connection(connection_id: str):
     index = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection_id), None)
     if index is None:
         raise HTTPException(404, "Provider connection not found")
+    if connections[index].get("connection_type") == "api_provider":
+        provider = str(connections[index].get("provider") or "").lower()
+        key = data.get(_provider_key_name(provider)) or data.get(f"{provider}_api_key") or ""
+        ok, message = _test_provider_key(provider, key)
+        connection = _general_provider_connection(data, provider, connections[index].get("configured_model", ""), ok, {"status": "ok" if ok else "error", "message": message})
+        connections[index] = connection
+        data["_provider_connections"] = connections
+        save_studio_keys(data)
+        return {"status": "ok" if ok else "error", "connection": _sanitize_provider_connection(connection), "message": message}
     connection = OpenCodeBridgeConnection.from_dict(connections[index])
     result = connection.test_connection(include_vision=True)
     connections[index] = connection.to_dict()
     data["_provider_connections"] = connections
     save_studio_keys(data)
-    return {"status": "ok" if result["health_status"] == "available_authenticated" else "error", "connection": connections[index], **result}
+    return {"status": "ok" if result["health_status"] == "available_authenticated" else "error", "connection": _sanitize_provider_connection(connections[index]), **result}
 
 
 @app.post("/api/config/ai")
@@ -625,6 +1094,10 @@ def save_ai_settings(payload: AISettingsPayload):
     SYSTEM_SETTINGS["global_model"] = model
     if payload.api_key and payload.api_key.strip():
         data[_provider_key_name(provider)] = payload.api_key.strip()
+    _upsert_provider_connection(data, _general_provider_connection(data, provider, model))
+    global_ai = _load_global_ai_config(data)
+    global_ai.update({"connection_id": _provider_connection_id(provider), "provider": provider, "model": model, "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")})
+    data["_global_ai"] = global_ai
     save_studio_keys(data)
     return {"status": "saved", **_ai_settings_response(data)}
 
@@ -639,6 +1112,9 @@ def delete_ai_provider_key(provider: str):
     for key_name in (_provider_key_name(provider), f"{provider}_api_key"):
         existed = key_name in data or existed
         data.pop(key_name, None)
+    connection = _connection_for_id(_provider_connection_id(provider), data)
+    if connection:
+        _upsert_provider_connection(data, _general_provider_connection(data, provider, connection.get("configured_model", ""), None, {"status": "credential_missing", "message": "Credential deleted"}))
     save_studio_keys(data)
     return {"status": "deleted", "provider": provider, "existed": existed, **_ai_settings_response(data)}
 
@@ -684,7 +1160,12 @@ def test_ai_provider(payload: ProviderTestPayload):
         raise HTTPException(400, "Unsupported provider")
     key = payload.api_key.strip() if payload.api_key else (data.get(_provider_key_name(provider)) or data.get(f"{provider}_api_key") or "")
     ok, message = _test_provider_key(provider, key)
-    return {"status": "ok" if ok else "error", "provider": provider, "key_saved": bool(key), "message": message}
+    if payload.api_key and payload.api_key.strip() and ok:
+        data[_provider_key_name(provider)] = payload.api_key.strip()
+    current_model = system.get("global_model") if system.get("global_provider") == provider else ""
+    _upsert_provider_connection(data, _general_provider_connection(data, provider, current_model, ok, {"status": "ok" if ok else "error", "message": message}))
+    save_studio_keys(data)
+    return {"status": "ok" if ok else "error", "provider": provider, "key_saved": bool(key), "message": message, "connections": _frontend_provider_connections(data)}
 
 
 @app.post("/api/config/ai/apply-opencode")
@@ -931,7 +1412,7 @@ PIPELINE_UI_STAGE_ORDER = ["planning", "designing", "testing", "coding", "review
 
 _ALLOWED_STATE_TRANSITIONS = {
     "created": {"meeting", "planning", "cancelled", "needs_human_input", "needs_credentials"},
-    "meeting": {"planning", "cancelled", "blocked", "failed"},
+    "meeting": {"planning", "cancelled", "blocked", "failed", "needs_credentials", "needs_human_input"},
     "planning": {"awaiting_input", "designing", "cancelled", "failed", "blocked", "needs_human_input", "needs_credentials"},
     "awaiting_input": {"planning", "designing", "cancelled", "needs_human_input"},
     "designing": {"testing", "cancelled", "failed", "blocked"},
@@ -1446,15 +1927,8 @@ def get_fast_agent_prompt(agent_id: str) -> str:
     )
 
 def get_agent_provider_model(agent_id: str) -> tuple:
-    agent = agent_configs.get(agent_id, {})
-    default = DEFAULT_AGENTS.get(agent_id, {})
-    if agent.get("use_global") is False:
-        provider = agent.get("provider", default.get("provider", SYSTEM_SETTINGS["global_provider"]))
-        model = agent.get("model", default.get("model", SYSTEM_SETTINGS["global_model"]))
-    else:
-        provider = SYSTEM_SETTINGS["global_provider"]
-        model = SYSTEM_SETTINGS["global_model"]
-    return provider, model
+    effective = resolve_effective_agent_ai_config(agent_id)
+    return effective["provider"], effective["model"]
 
 DEFAULT_SYSTEM_SETTINGS: Dict[str, Any] = {
     "global_provider": "nvidia",
@@ -1476,6 +1950,122 @@ DEFAULT_SYSTEM_SETTINGS: Dict[str, Any] = {
 SYSTEM_SETTINGS: Dict[str, Any] = _get_saved_system_settings()
 
 
+def _agent_default_config(agent_id: str) -> dict[str, Any]:
+    if agent_id in DEFAULT_AGENTS:
+        return DEFAULT_AGENTS[agent_id]
+    return agent_configs.get("_custom_agents", {}).get(agent_id, {})
+
+
+def _agent_required_capabilities(agent_id: str) -> dict[str, bool]:
+    if agent_id == "product_judge":
+        return {"text_input": True, "image_input": True}
+    return {"text_input": True}
+
+
+def _validate_agent_capabilities(agent_id: str, connection: dict[str, Any], model: str) -> dict[str, Any]:
+    metadata = connection.get("capability_metadata", {}) if isinstance(connection, dict) else {}
+    available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
+    model_in_connection = not available_model_ids or model in available_model_ids
+    capabilities = metadata.get(model) if isinstance(metadata.get(model), dict) else _model_capabilities(str(connection.get("provider") or ""), model)
+    missing = []
+    unknown = []
+    for name, required in _agent_required_capabilities(agent_id).items():
+        if not required:
+            continue
+        value = capabilities.get(name)
+        if value is False:
+            missing.append(name)
+        elif value is not True:
+            unknown.append(name)
+    valid = model_in_connection and not missing and not unknown
+    reason = "compatible" if valid else f"Missing capability: {', '.join(missing)}" if missing else f"Unknown capability: {', '.join(unknown)}"
+    if not model_in_connection:
+        reason = "Model is not available on the selected connection."
+    if agent_id == "product_judge":
+        opencode_bridge_tested = connection.get("connection_type") == "opencode_oauth_bridge" and connection.get("capabilities", {}).get("text_input", {}).get("status") == "supported"
+        if connection.get("tested_status") != "passed" and not opencode_bridge_tested:
+            valid = False
+            reason = "Global model is not eligible for Product Judge."
+        elif not valid:
+            reason = "Global model is not eligible for Product Judge."
+    return {"valid": valid, "required": _agent_required_capabilities(agent_id), "capabilities": capabilities, "missing": missing, "unknown": unknown, "model_in_connection": model_in_connection, "reason": reason}
+
+
+def resolve_effective_agent_ai_config(agent_id: str) -> dict[str, Any]:
+    data = load_studio_keys()
+    _ensure_provider_connection_records(data)
+    global_cfg = _load_global_ai_config(data)
+    agent = agent_configs.get(agent_id, {})
+    default = _agent_default_config(agent_id)
+    legacy_use_global = agent.get("use_global", default.get("use_global", True)) is not False
+    use_global_connection = bool(agent.get("use_global_connection", legacy_use_global))
+    use_global_model = bool(agent.get("use_global_model", legacy_use_global))
+    use_global_generation = bool(agent.get("use_global_generation_parameters", False))
+    connection_id = global_cfg.get("connection_id", "") if use_global_connection else str(agent.get("connection_id") or "")
+    provider = str(global_cfg.get("provider") or SYSTEM_SETTINGS["global_provider"]) if use_global_connection else str(agent.get("provider") or default.get("provider") or SYSTEM_SETTINGS["global_provider"])
+    if not connection_id:
+        connection_id = _provider_connection_id(provider)
+    connection = _connection_for_id(connection_id, data)
+    if not connection and provider:
+        connection = _general_provider_connection(data, provider, agent.get("model") or default.get("model") or global_cfg.get("model", ""))
+    model = str(global_cfg.get("model") or SYSTEM_SETTINGS["global_model"]) if use_global_model else str(agent.get("model") or default.get("model") or global_cfg.get("model") or SYSTEM_SETTINGS["global_model"])
+    available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
+    stale_model = bool(available_model_ids and model not in available_model_ids)
+    if use_global_generation:
+        generation = {key: global_cfg.get(key) for key in ("temperature", "top_p", "top_k", "max_tokens")}
+        generation_source = "global"
+    else:
+        generation = {
+            "temperature": agent.get("temperature", default.get("temperature", global_cfg.get("temperature", 0.2))),
+            "top_p": agent.get("top_p", default.get("top_p", global_cfg.get("top_p"))),
+            "top_k": agent.get("top_k", default.get("top_k", global_cfg.get("top_k"))),
+            "max_tokens": agent.get("max_tokens", default.get("max_tokens", global_cfg.get("max_tokens"))),
+        }
+        generation_source = "agent"
+    sendable, unsupported = _filter_supported_generation(provider, model, generation)
+    validation = _validate_agent_capabilities(agent_id, connection, model)
+    return {
+        "agent_id": agent_id,
+        "connection_id": connection_id,
+        "connection_type": connection.get("connection_type", _canonical_connection_type("api_provider", provider)),
+        "provider": provider,
+        "model": model,
+        "stale_model": stale_model,
+        "connection_display_name": connection.get("display_name") or connection.get("name") or provider,
+        "temperature": generation.get("temperature"),
+        "top_p": generation.get("top_p"),
+        "top_k": generation.get("top_k"),
+        "max_tokens": generation.get("max_tokens"),
+        "generation_parameters": generation,
+        "sendable_generation_parameters": sendable,
+        "unsupported_generation_parameters": unsupported,
+        "use_global_connection": use_global_connection,
+        "use_global_model": use_global_model,
+        "use_global_generation_parameters": use_global_generation,
+        "inherited_fields": {
+            "connection": use_global_connection,
+            "model": use_global_model,
+            "generation_parameters": use_global_generation,
+        },
+        "overridden_fields": {
+            "connection": not use_global_connection,
+            "model": not use_global_model,
+            "generation_parameters": not use_global_generation,
+        },
+        "configuration_source": {
+            "connection": "global" if use_global_connection else "agent",
+            "model": "global" if use_global_model else "agent",
+            "generation_parameters": generation_source,
+        },
+        "capability_validation": validation,
+        "capability_status": "compatible" if validation.get("valid") else "incompatible",
+    }
+
+
+def agent_generation_kwargs(agent_id: str) -> dict[str, Any]:
+    return resolve_effective_agent_ai_config(agent_id)["sendable_generation_parameters"]
+
+
 def load_agent_configs() -> Dict[str, Dict[str, Any]]:
     data = load_studio_keys()
     return data.get("_agent_configs", {})
@@ -1493,18 +2083,24 @@ agent_configs = load_agent_configs()
 def _configured_product_judge_runtime() -> dict[str, Any]:
     """Resolve a read-only judge identity, preferring an independently configured vision model."""
     cfg = {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
+    effective = resolve_effective_agent_ai_config("product_judge")
     implementation_provider, implementation_model = get_agent_provider_model("elena")
     provider = ""
     model = ""
     connection = {}
-    if str(cfg.get("provider") or "") == "opencode_bridge":
+    status = _product_judge_status(cfg)
+    configured_connection = _connection_for_id(str(cfg.get("connection_id") or ""))
+    if configured_connection and configured_connection.get("connection_type") == "api_provider":
+        provider = str(configured_connection.get("provider") or "")
+        model = str(cfg.get("model") or configured_connection.get("configured_model") or "")
+    elif str(cfg.get("provider") or "") == "opencode_bridge":
         connection_id = str(cfg.get("connection_id") or "")
         connection = next((item for item in _load_provider_connections() if item.get("connection_id") == connection_id and item.get("connection_type") == "opencode_bridge"), {})
         provider = "opencode_bridge" if connection else ""
         model = str(cfg.get("model") or connection.get("configured_model") or "")
-    elif cfg.get("use_global"):
-        provider = SYSTEM_SETTINGS["global_provider"]
-        model = SYSTEM_SETTINGS["global_model"]
+    elif cfg.get("use_global") or cfg.get("use_global_model") or cfg.get("use_global_connection"):
+        provider = effective["provider"]
+        model = effective["model"]
     elif cfg.get("provider") and cfg.get("model"):
         provider = str(cfg["provider"])
         model = str(cfg["model"])
@@ -1525,14 +2121,17 @@ def _configured_product_judge_runtime() -> dict[str, Any]:
         "enabled": bool(cfg.get("enabled", True)),
         "provider": provider,
         "model": model,
-        "temperature": cfg.get("temperature", 0.3),
-        "top_p": cfg.get("top_p", 0.9),
-        "top_k": cfg.get("top_k"),
+        "temperature": effective.get("temperature", cfg.get("temperature", 0.3)),
+        "top_p": effective.get("top_p", cfg.get("top_p", 0.9)),
+        "top_k": effective.get("top_k", cfg.get("top_k")),
         "connection": connection,
         "connection_id": connection.get("connection_id", ""),
         "effective_image_input": bridge_effective_capabilities(OpenCodeBridgeConnection.from_dict(connection)).get("image_input", False) if connection else False,
         "use_global": bool(cfg.get("use_global")),
         "implementation_identity": {"agent_id": "elena", "provider": implementation_provider, "model": implementation_model},
+        "readiness_status": status.get("status"),
+        "readiness_reason": status.get("reason"),
+        "independence_level": status.get("independence_level", "unavailable"),
     }
 
 
@@ -1567,13 +2166,23 @@ def get_agents():
     result = {}
     for agent_id, agent in DEFAULT_AGENTS.items():
         cfg = agent_configs.get(agent_id, {})
+        effective = resolve_effective_agent_ai_config(agent_id)
         entry = {**agent, "id": agent_id}
         entry.update(AGENT_STAGE_METADATA.get(agent_id, {}))
         entry["enabled"] = cfg.get("enabled", agent.get("enabled", True))
         entry["top_p"] = cfg.get("top_p", agent.get("top_p"))
         entry["top_k"] = cfg.get("top_k", agent.get("top_k"))
+        entry["max_tokens"] = cfg.get("max_tokens", agent.get("max_tokens"))
+        entry["use_global_connection"] = effective["use_global_connection"]
+        entry["use_global_model"] = effective["use_global_model"]
+        entry["use_global_generation_parameters"] = effective["use_global_generation_parameters"]
+        entry["effective_ai"] = effective
         if agent_id == "product_judge":
             entry["connection_id"] = cfg.get("connection_id", "")
+            readiness = _product_judge_status({**agent, **cfg})
+            entry["product_judge_status"] = readiness["status"]
+            entry["product_judge_reason"] = readiness["reason"]
+            entry["independence_level"] = readiness.get("independence_level", "unavailable")
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
         if cfg.get("save_path"):
@@ -1583,21 +2192,27 @@ def get_agents():
             entry["model"] = cfg.get("model", agent["model"])
             entry["temperature"] = cfg.get("temperature", agent["temperature"])
             entry["use_global"] = False
-            entry["active_provider"] = entry["provider"]
-            entry["active_model"] = entry["model"]
+            entry["active_provider"] = effective["provider"]
+            entry["active_model"] = effective["model"]
         else:
             entry["use_global"] = True
-            entry["active_provider"] = SYSTEM_SETTINGS["global_provider"]
-            entry["active_model"] = SYSTEM_SETTINGS["global_model"]
+            entry["active_provider"] = effective["provider"]
+            entry["active_model"] = effective["model"]
         result[agent_id] = entry
     for cid, cagent in agent_configs.get("_custom_agents", {}).items():
         cfg = agent_configs.get(cid, {})
+        effective = resolve_effective_agent_ai_config(cid)
         entry = {**cagent, "id": cid, "builtin": False}
         entry.setdefault("stage", cagent.get("stage", "custom"))
         entry.setdefault("display_role", cagent.get("role", "Custom Agent"))
         entry["enabled"] = cfg.get("enabled", cagent.get("enabled", True))
         entry["top_p"] = cfg.get("top_p", cagent.get("top_p"))
         entry["top_k"] = cfg.get("top_k", cagent.get("top_k"))
+        entry["max_tokens"] = cfg.get("max_tokens", cagent.get("max_tokens"))
+        entry["use_global_connection"] = effective["use_global_connection"]
+        entry["use_global_model"] = effective["use_global_model"]
+        entry["use_global_generation_parameters"] = effective["use_global_generation_parameters"]
+        entry["effective_ai"] = effective
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
         if cfg.get("save_path"):
@@ -1607,12 +2222,12 @@ def get_agents():
             entry["model"] = cfg.get("model", cagent.get("model", SYSTEM_SETTINGS["global_model"]))
             entry["temperature"] = cfg.get("temperature", cagent.get("temperature", 0.2))
             entry["use_global"] = False
-            entry["active_provider"] = entry["provider"]
-            entry["active_model"] = entry["model"]
+            entry["active_provider"] = effective["provider"]
+            entry["active_model"] = effective["model"]
         else:
             entry["use_global"] = True
-            entry["active_provider"] = SYSTEM_SETTINGS["global_provider"]
-            entry["active_model"] = SYSTEM_SETTINGS["global_model"]
+            entry["active_provider"] = effective["provider"]
+            entry["active_model"] = effective["model"]
         result[cid] = entry
     return result
 
@@ -1645,13 +2260,77 @@ def update_agent_config(agent_id: str, payload: Dict[str, Any]):
     if agent_id not in _all_agent_ids():
         raise HTTPException(status_code=404, detail="Agent not found")
     current = agent_configs.get(agent_id, {})
-    allowed_keys = ("provider", "model", "temperature", "top_p", "top_k", "use_global", "enabled", "custom_prompt", "save_path", "connection_id")
+    allowed_keys = ("provider", "model", "temperature", "top_p", "top_k", "max_tokens", "use_global", "use_global_connection", "use_global_model", "use_global_generation_parameters", "enabled", "custom_prompt", "save_path", "connection_id")
     for key in allowed_keys:
         if key in payload:
             current[key] = payload[key]
     agent_configs[agent_id] = current
     save_agent_configs(agent_configs)
     return {"status": "success", "agent_id": agent_id}
+
+
+@app.get("/api/product-judge/config")
+def get_product_judge_config():
+    cfg = {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
+    status = _product_judge_status(cfg)
+    connections = [item for item in _frontend_provider_connections() if item.get("enabled", True) and _vision_models_for_connection(item)]
+    return {
+        "config": {
+            "enabled": bool(cfg.get("enabled", True)),
+            "connection_id": cfg.get("connection_id", ""),
+            "model": cfg.get("model", ""),
+            "use_global": bool(cfg.get("use_global", False)),
+            "temperature": cfg.get("temperature", 0.3),
+            "top_p": cfg.get("top_p", 0.9),
+            "top_k": cfg.get("top_k"),
+            "last_successful_readiness": cfg.get("last_successful_readiness", {}),
+            "independence_level": cfg.get("independence_level") or status.get("independence_level", "unavailable"),
+        },
+        "status": status,
+        "connections": connections,
+    }
+
+
+@app.post("/api/product-judge/config")
+def save_product_judge_config(payload: ProductJudgeConfigPayload):
+    data = load_studio_keys()
+    global_cfg = _load_global_ai_config(data)
+    connection = _connection_for_id(payload.connection_id, data) if not payload.use_global else _connection_for_id(str(global_cfg.get("connection_id") or _provider_connection_id(_get_saved_system_settings(data).get("global_provider", ""))), data)
+    provider, identity_model = _identity_for_product_judge(connection, payload.model, payload.use_global) if connection else ("", "")
+    independence = _product_judge_independence(provider, identity_model)
+    current = agent_configs.get("product_judge", {})
+    current.update({
+        "enabled": payload.enabled,
+        "use_global": payload.use_global,
+        "provider": connection.get("provider", "") if connection else "",
+        "connection_id": connection.get("connection_id", payload.connection_id) if connection else payload.connection_id,
+        "model": payload.model,
+        "temperature": payload.temperature,
+        "top_p": payload.top_p,
+        "top_k": payload.top_k,
+        "independence_level": independence,
+    })
+    status = _product_judge_status(current, data)
+    if status.get("available"):
+        current["last_successful_readiness"] = {"status": status["status"], "reason": status["reason"], "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}
+    agent_configs["product_judge"] = current
+    save_agent_configs(agent_configs)
+    return {"status": "success", "config": current, "readiness": status}
+
+
+@app.post("/api/product-judge/test")
+def test_product_judge_readiness(payload: ProductJudgeConfigPayload | None = None):
+    cfg = {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
+    if payload is not None:
+        cfg.update(payload.model_dump() if hasattr(payload, "model_dump") else payload.dict())
+    status = _product_judge_status(cfg)
+    if status.get("available"):
+        status["test_result"] = "ready"
+        status["message"] = "Credential reference exists, connection is tested, selected model exists, and image input is supported."
+    else:
+        status["test_result"] = "not_ready"
+        status["message"] = status.get("reason") or "Product Judge is not ready."
+    return status
 
 
 class CreateAgentPayload(BaseModel):
@@ -1793,19 +2472,36 @@ def agent_chat(agent_id: str, payload: AgentChatPayload):
         prompt += "\n\n=== CURRENT PROJECT CONTEXT ===\n" + project_context
         prompt += "\n\nYou are working with a team of AI specialists on this project. Reference the work of other team members (Alex's plans, Elena's designs, Codex's code) when relevant. Answer the user's question based on the actual project state."
 
-    provider = payload.provider or get_agent_provider_model(agent_id)[0]
-    model = payload.model_name or get_agent_provider_model(agent_id)[1]
-    agent_data = agent_configs.get(agent_id, {})
-    temperature = min(agent_data.get("temperature", meta.get("temperature", 0.2)), 0.2) if payload.fast_mode else agent_data.get("temperature", meta.get("temperature", 0.2))
+    effective_ai = resolve_effective_agent_ai_config(agent_id)
+    provider = payload.provider or effective_ai["provider"]
+    model = payload.model_name or effective_ai["model"]
+    generation = dict(effective_ai["sendable_generation_parameters"])
+    temperature = generation.get("temperature", meta.get("temperature", 0.2))
+    temperature = min(temperature, 0.2) if payload.fast_mode else temperature
     response = ask_studio_ai_with_history(
         provider=provider,
         model_name=model,
         system_prompt=prompt,
         chat_history=compact_history + [{"role": "user", "content": payload.message}],
         temperature=temperature,
-        max_tokens=768 if payload.fast_mode else 2048,
+        max_tokens=768 if payload.fast_mode else generation.get("max_tokens", 2048),
+        top_p=generation.get("top_p"),
+        top_k=generation.get("top_k"),
     )
-    return {"agent_id": agent_id, "agent_name": meta.get("name", agent_id), "reply": response, "fast_mode": payload.fast_mode, "context_used": bool(project_context)}
+    invocation = {
+        "agent_id": agent_id,
+        "effective_connection_id": effective_ai.get("connection_id"),
+        "connection_type": effective_ai.get("connection_type"),
+        "provider": provider,
+        "model": model,
+        "generation_parameters": generation,
+        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "success": not str(response).lower().startswith(("opencode bridge error", "error:", "ai error")),
+    }
+    if payload.project_id and payload.project_id in active_projects:
+        active_projects[payload.project_id].setdefault("agent_invocations", []).append(invocation)
+        _save_projects_state()
+    return {"agent_id": agent_id, "agent_name": meta.get("name", agent_id), "reply": response, "fast_mode": payload.fast_mode, "context_used": bool(project_context), "invocation": invocation}
 
 
 @app.get("/api/jobs/search")
@@ -1884,6 +2580,7 @@ def create_manual_project(payload: ManualProjectPayload):
     project_id = str(uuid.uuid4())
     title = payload.title or payload.jobTitle or "Untitled Project"
     desc = payload.initial_description or payload.description or ""
+    project_mode = normalize_project_mode(payload.project_mode)
     project = {
         "project_id": project_id,
         "id": project_id,
@@ -1891,6 +2588,7 @@ def create_manual_project(payload: ManualProjectPayload):
         "title": title,
         "jobTitle": title,
         "description": desc,
+        "project_mode": project_mode,
         "budget": payload.budget or "?",
         "status": "created",
         "chat_history": [],
@@ -2498,10 +3196,11 @@ def _post_process_code(target_path, log_func=None, project_type="simple"):
                 pass
 
     # Fix template name in code if referenced file doesn't exist
-    for root, _dirs, files in os.walk(target_path):
-        for fname in files:
+    for _rel, fpath_obj in walk_repairable_files(target_path):
+        fname = os.path.basename(str(fpath_obj))
+        if True:
             if fname.endswith(".py"):
-                fpath = os.path.join(root, fname)
+                fpath = str(fpath_obj)
                 try:
                     with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                         raw = f.read()
@@ -2529,10 +3228,11 @@ def _post_process_code(target_path, log_func=None, project_type="simple"):
 
     # Add __init__.py for package directories (directories with .py files)
     package_dirs = set()
-    for root, _dirs, files in os.walk(target_path):
-        for fname in files:
+    for _rel, fpath_obj in walk_repairable_files(target_path):
+        fname = os.path.basename(str(fpath_obj))
+        if True:
             if fname.endswith(".py") and fname != "__init__.py":
-                package_dirs.add(root)
+                package_dirs.add(os.path.dirname(str(fpath_obj)))
     for d in package_dirs:
         init = os.path.join(d, "__init__.py")
         if not os.path.exists(init):
@@ -2551,10 +3251,11 @@ def _post_process_code(target_path, log_func=None, project_type="simple"):
         if "package.json" in files
     )
     if project_type in ("react", "fullstack") and has_separate_frontend:
-        for root, _dirs, files in os.walk(target_path):
-            for fname in files:
+        for _rel, fpath_obj in walk_repairable_files(target_path):
+            fname = os.path.basename(str(fpath_obj))
+            if True:
                 if fname.endswith(".py"):
-                    fpath = os.path.join(root, fname)
+                    fpath = str(fpath_obj)
                     try:
                         with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                             raw = f.read()
@@ -2577,9 +3278,10 @@ def _post_process_code(target_path, log_func=None, project_type="simple"):
                         except Exception:
                             pass
 
-    for root, _dirs, files in os.walk(target_path):
-        for fname in files:
-            fpath = os.path.join(root, fname)
+    for _rel, fpath_obj in walk_repairable_files(target_path):
+        fname = os.path.basename(str(fpath_obj))
+        fpath = str(fpath_obj)
+        if True:
             try:
                 with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                     raw = f.read()
@@ -2739,10 +3441,11 @@ def _post_process_code(target_path, log_func=None, project_type="simple"):
             with open(pkg_json, "r", encoding="utf-8") as f:
                 pkg = json.loads(f.read())
             imported_packages = set()
-            for _root, _dirs, files in os.walk(target_path):
-                for fn in files:
+            for _rel, js_path_obj in walk_repairable_files(target_path):
+                fn = os.path.basename(str(js_path_obj))
+                if True:
                     if fn.endswith((".jsx", ".js")) and fn != "package.json":
-                        fpath = os.path.join(_root, fn)
+                        fpath = str(js_path_obj)
                         with open(fpath, "r", encoding="utf-8", errors="replace") as sf:
                             content = sf.read()
                         for m in re.finditer(r"""from\s+['"](@[\w-]+/[\w-]+|[\w-]+)['"]""", content):
@@ -2766,18 +3469,20 @@ def _post_process_code(target_path, log_func=None, project_type="simple"):
 
     # Clean up unnecessary files (React/Node artifacts, setup.py, docker-compose)
     is_react_project = project_type in ("react", "fullstack", "history_story", "landing_page")
-    junk_files = {"package.json", "package-lock.json", "postcss.config.js", "tailwind.config.js",
+    junk_files = {"package.json", "postcss.config.js", "tailwind.config.js",
                   "setup.py", "setup.cfg", "docker-compose.yml", "docker-compose.yaml",
                   "vite.config.js", "vite.config.ts", ".babelrc", "tsconfig.json"}
+    junk_files -= SUPPORTED_LOCK_FILES
     # For React projects, keep frontend build files
     if is_react_project:
         junk_files -= {"package.json", "postcss.config.js", "tailwind.config.js", "vite.config.js", "vite.config.ts"}
     if project_type == "telegram_bot":
         junk_files -= {"docker-compose.yml", "docker-compose.yaml"}
-    for root, _dirs, files in os.walk(target_path):
-        for fname in files:
+    for _rel, fpath_obj in walk_repairable_files(target_path):
+        fname = os.path.basename(str(fpath_obj))
+        if True:
             if fname in junk_files:
-                fpath = os.path.join(root, fname)
+                fpath = str(fpath_obj)
                 try:
                     os.remove(fpath)
                     log(f"[PostProcess]: Removed junk file: {fname}")
@@ -4518,6 +5223,15 @@ def restart_project_pipeline(project_id: str, background_tasks: BackgroundTasks)
     project.pop("needs_user_input", None)
     project.pop("manual_steps", None)
     project.pop("qa_errors", None)
+    project.pop("needs_credentials", None)
+    project.pop("blocking_requirement_gaps", None)
+    project.pop("requirement_assumptions", None)
+    project.pop("project_spec", None)
+    project.pop("project_profiles", None)
+    project.pop("acceptance_criteria", None)
+    project.pop("qa_plan", None)
+    project.pop("acceptance_evidence", None)
+    project.pop("acceptance_evidence_history", None)
     project.pop("product_judge_input", None)
     project.pop("product_judge_report", None)
     project.pop("product_judge_errors", None)
@@ -4781,6 +5495,7 @@ def claim_project(payload: ProjectClaimPayload, background_tasks: BackgroundTask
         "title": title,
         "jobTitle": title,
         "description": payload.description or "",
+        "project_mode": normalize_project_mode(payload.project_mode),
         "budget": payload.budget or "?",
         "url": payload.url or "",
         "status": "planning",

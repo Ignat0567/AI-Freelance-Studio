@@ -505,6 +505,86 @@ _add({
 })
 
 
+def _check_expo_cli():
+    path = _executable_path("npx")
+    if not path:
+        return False, "npx not found", "", None
+    ok, out, err = _run(["npx", "expo", "--version"], timeout=60)
+    if ok:
+        ver = _parse_version(out)
+        return True, out.strip(), path, ver
+    return False, err or out, path, None
+
+
+def _install_expo_cli():
+    return False, "Expo runs through npx. Install Node.js/npm, then use: npx create-expo-app or npm install -g expo-cli"
+
+
+_add({
+    "id": "expo_cli",
+    "name": "Expo / React Native",
+    "description": "Mobile app toolchain for React Native and Expo Android/iOS projects",
+    "required": False,
+    "min_version": None,
+    "can_auto_install": False,
+    "check": _check_expo_cli,
+    "install": _install_expo_cli,
+})
+
+
+def _check_android_sdk():
+    adb = _executable_path("adb")
+    emulator = _executable_path("emulator")
+    android_home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+    if adb or emulator or android_home:
+        return True, "Android SDK detected", adb or emulator or android_home, None
+    return False, "Android SDK not found", "", None
+
+
+def _install_android_sdk():
+    return False, "Install Android Studio and configure ANDROID_HOME/ANDROID_SDK_ROOT: https://developer.android.com/studio"
+
+
+_add({
+    "id": "android_sdk",
+    "name": "Android SDK / Emulator",
+    "description": "Optional native Android emulator/runtime for generated mobile apps",
+    "required": False,
+    "min_version": None,
+    "can_auto_install": False,
+    "check": _check_android_sdk,
+    "install": _install_android_sdk,
+})
+
+
+def _check_ios_simulator():
+    if not IS_MAC:
+        return False, "iOS Simulator requires macOS and Xcode", "", None
+    path = _executable_path("xcrun")
+    if not path:
+        return False, "xcrun not found", "", None
+    ok, out, err = _run(["xcrun", "simctl", "list", "devices"], timeout=30)
+    if ok:
+        return True, "iOS Simulator available", path, None
+    return False, err or out, path, None
+
+
+def _install_ios_simulator():
+    return False, "Install Xcode from the Mac App Store, then open Xcode once to install simulator components."
+
+
+_add({
+    "id": "ios_simulator",
+    "name": "iOS Simulator",
+    "description": "Optional native iPhone/iPad simulator for Expo or React Native projects on macOS",
+    "required": False,
+    "min_version": None,
+    "can_auto_install": False,
+    "check": _check_ios_simulator,
+    "install": _install_ios_simulator,
+})
+
+
 # ─── Public API ────────────────────────────────────────────────────────
 
 

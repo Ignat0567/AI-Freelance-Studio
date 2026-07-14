@@ -51,6 +51,20 @@ function App() {
     const [isQuestionOpen, setIsQuestionOpen] = useState(false);
     const [isLogPanelOpen, setIsLogPanelOpen] = useState(true);
     const [language, setLanguage] = useState('en');
+
+    const clearActiveProjectState = () => {
+        setActiveProject(null);
+        setChatHistory([]);
+        setIsChatOpen(false);
+        setIsFileBrowserOpen(false);
+        setActiveAgentChat(null);
+        try {
+            const saved = JSON.parse(localStorage.getItem('studio_session') || '{}');
+            delete saved.activeProject;
+            delete saved.chatHistory;
+            localStorage.setItem('studio_session', JSON.stringify(saved));
+        } catch { }
+    };
     const [autonomousMode, setAutonomousMode] = useState(true);
 
     const activePort = window.BACKEND_PORT || 8080;
@@ -95,13 +109,22 @@ function App() {
             })
             .catch(err => console.error('[API]:', err));
 
-        fetch(`http://localhost:${activePort}/api/projects/active/current`)
-            .then(r => r.json())
-            .then(data => {
-                if (data.project) {
-                    setActiveProject(data.project);
-                    setChatHistory(data.project.chat_history || []);
+        Promise.all([
+            fetch(`http://localhost:${activePort}/api/projects/active/current`).then(r => r.json()).catch(() => ({})),
+            fetch(`http://localhost:${activePort}/api/projects/all`).then(r => r.json()).catch(() => ({ projects: [] })),
+        ])
+            .then(([current, all]) => {
+                const projects = all.projects || [];
+                setAllProjects(projects);
+                const currentProject = current.project;
+                if (!currentProject) return;
+                if (!projects.some(project => project.project_id === currentProject.project_id)) {
+                    clearActiveProjectState();
+                    addLog(`[Projects]: Cleared stale active project "${currentProject.title || currentProject.project_id}".`);
+                    return;
                 }
+                setActiveProject(currentProject);
+                setChatHistory(currentProject.chat_history || []);
             })
             .catch(err => console.error('[API]:', err));
 
@@ -137,12 +160,25 @@ function App() {
             const saved = localStorage.getItem('studio_session');
             if (saved) {
                 const data = JSON.parse(saved);
-                if (data.activeProject) setActiveProject(data.activeProject);
+                if (data.activeProject) {
+                    fetch(`http://localhost:${activePort}/api/projects/all`)
+                        .then(r => r.json())
+                        .then(projectData => {
+                            const projects = projectData.projects || [];
+                            setAllProjects(projects);
+                            if (projects.some(project => project.project_id === data.activeProject.project_id)) {
+                                setActiveProject(data.activeProject);
+                            } else {
+                                clearActiveProjectState();
+                            }
+                        })
+                        .catch(() => clearActiveProjectState());
+                }
                 if (data.chatHistory) setChatHistory(data.chatHistory);
                 if (data.studioLogs) setLogs(data.studioLogs);
             }
         } catch { }
-    }, []);
+    }, [activePort]);
 
     useEffect(() => {
         if (activeProject) {
@@ -288,16 +324,16 @@ function App() {
             .catch(err => console.error('[API Error Claim]:', err));
     };
 
-    const handleCreateManualProject = (title, description) => {
+    const handleCreateManualProject = (title, description, projectMode = 'mvp') => {
         setIsNewProjectOpen(false);
         fetch(`http://localhost:${activePort}/api/projects/manual`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, initial_description: description })
+            body: JSON.stringify({ title, initial_description: description, project_mode: projectMode })
         })
             .then(r => r.json())
             .then(data => {
-                setActiveProject({ project_id: data.project_id, status: data.status, title });
+                setActiveProject({ project_id: data.project_id, status: data.status, title, project_mode: data.project_mode });
                 setChatHistory(data.chat_history);
                 setIsChatOpen(true);
                 addLog(`[Manual]: Created project "${title}". Chatting with Maya.`);
@@ -504,6 +540,52 @@ function App() {
             .catch(err => addLog(`[System]: Resume failed - ${err.message}`));
     };
 
+    const loadAllProjects = () => {
+        return fetch(`http://localhost:${activePort}/api/projects/all`)
+            .then(r => r.json())
+            .then(data => {
+                const projects = data.projects || [];
+                setAllProjects(projects);
+                if (activeProject?.project_id && !projects.some(project => project.project_id === activeProject.project_id)) {
+                    clearActiveProjectState();
+                    addLog(`[Projects]: Cleared stale active project "${activeProject.title || activeProject.project_id}".`);
+                }
+                return projects;
+            })
+            .catch(() => {
+                addLog('[Projects]: Unable to load projects.');
+                return [];
+            });
+    };
+
+    const handleDeleteProjectFromComputer = (project) => {
+        if (!project) return;
+        if (!confirm(`Delete "${project.title}" from computer? This removes project files and the project record.`)) return;
+        fetch(`http://localhost:${activePort}/api/projects/${project.project_id}`, { method: 'DELETE' })
+            .then(r => r.json())
+            .then(() => {
+                setAllProjects(s => s.filter(x => x.project_id !== project.project_id));
+                setCompletedProjects(s => s.filter(x => x.project_id !== project.project_id));
+                if (activeProject?.project_id === project.project_id) setActiveProject(null);
+                addLog(`[Projects]: Deleted from computer: "${project.title}"`);
+            })
+            .catch(err => addLog(`[Projects]: Delete failed - ${err.message}`));
+    };
+
+    const handleRemoveProjectFromList = (project) => {
+        if (!project) return;
+        if (!confirm(`Remove "${project.title}" from project list? Files will stay on computer.`)) return;
+        fetch(`http://localhost:${activePort}/api/projects/${project.project_id}/list`, { method: 'DELETE' })
+            .then(r => r.json())
+            .then(() => {
+                setAllProjects(s => s.filter(x => x.project_id !== project.project_id));
+                setCompletedProjects(s => s.filter(x => x.project_id !== project.project_id));
+                if (activeProject?.project_id === project.project_id) setActiveProject(null);
+                addLog(`[Projects]: Removed from list: "${project.title}"`);
+            })
+            .catch(err => addLog(`[Projects]: Remove failed - ${err.message}`));
+    };
+
     const activeStageInfo = getActiveStageInfo();
     const displayedAgents = Object.values(agentList).length ? Object.values(agentList) : Object.values(fallbackAgents);
     const isGenerating = activeProject && !['created', 'completed', 'failed', 'failed_qa', 'blocked', 'needs_credentials', 'cancelled', 'awaiting_input', 'needs_user_input'].includes(activeProject.status);
@@ -521,24 +603,26 @@ function App() {
                 autonomousMode={autonomousMode}
                 onAutonomousMode={setAutonomousMode}
                 onNewProject={() => setIsNewProjectOpen(true)}
-                onSettings={() => setIsSettingsOpen(true)}
-                onProjects={() => {
-                    fetch(`http://localhost:${activePort}/api/projects/all`).then(r => r.json()).then(data => { setAllProjects(data.projects || []); setIsProjectsListOpen(true); }).catch(() => addLog('[Projects]: Unable to load projects.'));
-                }}
+                settingsContent={<SettingsModal activePort={activePort} embedded addLog={addLog} />}
+                infoContent={<InfoModal activePort={activePort} embedded addLog={addLog} />}
+                projects={allProjects}
+                onProjects={loadAllProjects}
+                onDeleteProject={handleDeleteProjectFromComputer}
+                onRemoveProjectFromList={handleRemoveProjectFromList}
                 onFiles={() => activeProject ? setIsFileBrowserOpen(true) : addLog('[Files]: No active project.')}
                 onPush={() => handlePushToGitHub(activePort, activeProject)}
                 onExport={() => handleExport(activePort, activeProject)}
                 onOpenEditor={(editor) => handleOpenEditor(activePort, activeProject, editor)}
                 onOpenCode={() => fetch(`http://localhost:${activePort}/api/opencode/web`, { method: 'POST' }).then(r => r.json()).then(data => { if (data.url) window.open(data.url, '_blank', 'noopener,noreferrer'); addLog(`[OpenCode]: ${data.message || data.status}`); }).catch(error => addLog(`[OpenCode]: ${error.message}`))}
                 onAgentChat={setActiveAgentChat}
-                onPipeline={() => activeProject ? setIsPipelineDetailOpen(true) : addLog('[Pipeline]: No active project.')}
+                pipelineMetadata={pipelineMetadata}
+                onPipeline={() => activeProject ? null : addLog('[Pipeline]: No active project.')}
                 onOpenBriefing={() => activeProject ? setIsChatOpen(true) : addLog('[Chat]: No active project.')}
                 onStopGeneration={handleStopGeneration}
                 onRetry={() => activeProject ? handleRestart() : addLog('[System]: No active project.')}
                 onResume={() => activeProject ? handleResume(activeProject) : addLog('[System]: No active project.')}
                 onContinueDone={() => handleQARetry(activePort, activeProject)}
                 onKeyManager={() => setIsKeyManagerOpen(true)}
-                onInfo={() => setIsInfoOpen(true)}
                 isGenerating={Boolean(isGenerating)}
             />
 
@@ -547,9 +631,7 @@ function App() {
             {isChatOpen && activeProject && <ProjectChat activePort={activePort} projectId={activeProject.project_id} chatHistory={chatHistory} onUpdateHistory={setChatHistory} onApprove={handleApproveSpec} onClose={() => setIsChatOpen(false)} />}
             {isKeyManagerOpen && <KeyManagerModal activePort={activePort} onClose={() => setIsKeyManagerOpen(false)} addLog={addLog} />}
             {activeAgentChat && activeAgentChat === 'goldie' ? <GoldieChat activePort={activePort} onClose={() => setActiveAgentChat(null)} addLog={addLog} project={activeProject} /> : activeAgentChat && <AgentChat agentId={activeAgentChat} activePort={activePort} onClose={() => setActiveAgentChat(null)} addLog={addLog} project={activeProject} />}
-            {isSettingsOpen && <SettingsModal activePort={activePort} onClose={() => setIsSettingsOpen(false)} addLog={addLog} />}
             {isFileBrowserOpen && activeProject && <FileBrowserModal activePort={activePort} projectId={activeProject.project_id} projectTitle={activeProject.title} onClose={() => setIsFileBrowserOpen(false)} addLog={addLog} />}
-            {isInfoOpen && <InfoModal activePort={activePort} onClose={() => setIsInfoOpen(false)} addLog={addLog} />}
             {isPipelineDetailOpen && activeProject && <PipelineDetailModal project={activeProject} agentStatuses={agentStatuses} agents={agentList} pipelineMetadata={pipelineMetadata} onClose={() => setIsPipelineDetailOpen(false)} />}
             {isQuestionOpen && activeProject && <QuestionAnswerModal activePort={activePort} projectId={activeProject.project_id} onClose={() => setIsQuestionOpen(false)} />}
         </>

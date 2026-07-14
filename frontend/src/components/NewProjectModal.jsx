@@ -3,11 +3,12 @@ import React, { useState } from 'react';
 export default function NewProjectModal({ onCreate, onClose }) {
     const [title, setTitle] = useState('');
     const [desc, setDesc] = useState('');
+    const [mode, setMode] = useState('mvp');
 
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!title.trim() || !desc.trim()) return;
-        onCreate(title, desc);
+        onCreate(title, desc, mode);
     };
 
     return (
@@ -44,6 +45,20 @@ export default function NewProjectModal({ onCreate, onClose }) {
                             placeholder="Describe what the application should do in detail..."
                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 text-slate-300 placeholder-slate-700 resize-none"
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-[10px] text-slate-500 uppercase font-semibold mb-1">Project Mode</label>
+                        <select
+                            value={mode}
+                            onChange={(e) => setMode(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 text-slate-300"
+                        >
+                            <option value="prototype">Prototype - fast validation with local/mocked integrations</option>
+                            <option value="manual">Manual - continue while selected setup/verification is manual</option>
+                            <option value="mvp">MVP - usable minimum product with verified core flows</option>
+                        </select>
+                        <p className="mt-1 text-[10px] text-slate-500">Default is MVP. The selected mode becomes part of the project contract.</p>
                     </div>
 
                     {/* FORM ACTIONS */}

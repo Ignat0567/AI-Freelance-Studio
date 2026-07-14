@@ -7,7 +7,7 @@ const COLORS = {
   muted: '#64748b',
 };
 
-export default function InfoModal({ activePort, onClose, addLog }) {
+export default function InfoModal({ activePort, onClose, addLog, embedded = false }) {
   const [components, setComponents] = useState([]);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -59,14 +59,14 @@ export default function InfoModal({ activePort, onClose, addLog }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
-      <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
+    <div className={embedded ? "info-inline" : "fixed inset-0 z-50 flex items-center justify-center p-4"} style={embedded ? undefined : { backgroundColor: 'rgba(0,0,0,0.6)' }}>
+      <div className={embedded ? "info-inline-container w-full flex flex-col rounded-xl overflow-hidden" : "w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl overflow-hidden"} style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
         <div className="flex justify-between items-center px-5 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-          <h2 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>ℹ️ About AI FreelancerStudio</h2>
-          <button onClick={onClose} className="text-lg leading-none" style={{ color: 'var(--text-muted)' }}>✕</button>
+          <h2 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Info</h2>
+          {!embedded && <button onClick={onClose} className="text-lg leading-none" style={{ color: 'var(--text-muted)' }}>x</button>}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="info-inline-body flex-1 overflow-y-auto p-5 space-y-4">
           <div className="rounded-xl p-4 space-y-3" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
             <div>
               <h3 className="text-sm font-bold mb-1" style={{ color: 'var(--text-primary)' }}>AI FreelancerStudio v1.0</h3>
@@ -112,7 +112,7 @@ export default function InfoModal({ activePort, onClose, addLog }) {
               className="px-4 py-2 rounded-lg text-xs font-bold transition-all"
               style={{ backgroundColor: 'var(--accent)', color: '#fff', opacity: checking ? 0.6 : 1 }}
             >
-              {checking ? '🔄 Checking...' : '🔍 Check All Components'}
+              {checking ? 'Checking...' : 'Check All Components'}
             </button>
           </div>}
 
@@ -129,7 +129,7 @@ export default function InfoModal({ activePort, onClose, addLog }) {
                     {r.version && <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{r.version}</span>}
                   </div>
                   <p className="mb-1" style={{ color: 'var(--text-dim)' }}>{r.description}</p>
-                  {r.path && <p className="font-mono" style={{ color: 'var(--text-muted)' }}>📂 {r.path}</p>}
+                  {r.path && <p className="font-mono" style={{ color: 'var(--text-muted)' }}>{r.path}</p>}
                   {r.installed && !r.up_to_date && r.min_version && (
                     <p className="mt-1" style={{ color: COLORS.warn }}>Update needed: minimum {r.min_version}</p>
                   )}
@@ -146,7 +146,7 @@ export default function InfoModal({ activePort, onClose, addLog }) {
                           opacity: installing === r.id ? 0.6 : 1,
                         }}
                       >
-                        {installing === r.id ? '⏳' : r.can_auto_install ? '⚡ Auto Install' : '📋 Info'}
+                         {installing === r.id ? 'Installing...' : r.can_auto_install ? 'Auto Install' : 'Info'}
                       </button>
                     )}
                   </div>
@@ -173,13 +173,13 @@ export default function InfoModal({ activePort, onClose, addLog }) {
           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
             AI FreelancerStudio | Local workspace application
           </span>
-          <button
+          {!embedded && <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg text-xs font-medium"
             style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
           >
             Close
-          </button>
+          </button>}
         </div>
       </div>
     </div>
