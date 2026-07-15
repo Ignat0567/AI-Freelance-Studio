@@ -13,12 +13,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quality_profiles import evidence_level_satisfies, normalize_evidence_level
+
 from repair_scope import EXCLUDED_REPAIR_DIRS, EXCLUDED_REPAIR_EXTENSIONS, walk_repairable_files
+from quality_profiles import ensure_quality_settings
+from feature_matrix import ensure_feature_matrix, feature_matrix_path, load_feature_matrix, persist_feature_matrix, update_matrix_from_evidence
 
 
 STATE_DIR_NAME = ".freelancerstudio"
 STATE_FILE_NAME = "project_state.json"
 LEDGER_FILE_NAME = "evidence_ledger.json"
+FEATURE_MATRIX_FILE_NAME = "feature_matrix.json"
 RECOVERY_FILE_NAME = "recovery_report.json"
 AUDIT_RUNS_DIR_NAME = "audit_runs"
 STATE_SCHEMA_VERSION = 1
@@ -48,6 +53,10 @@ def state_path(root: str) -> str:
 
 def ledger_path(root: str) -> str:
     return os.path.join(studio_dir(root), LEDGER_FILE_NAME)
+
+
+def matrix_path(root: str) -> str:
+    return feature_matrix_path(root)
 
 
 def recovery_path(root: str) -> str:
@@ -132,11 +141,15 @@ def persist_project_state(project: dict[str, Any], root: str | None = None) -> d
         previous, _ = read_json(state_path(root))
         now = utc_now()
         previous = previous or {}
+        quality_settings = ensure_quality_settings(project, previous.get("quality_settings") if isinstance(previous.get("quality_settings"), dict) else None)
+        feature_matrix = ensure_feature_matrix(project, root)
         payload = {
             "schema_version": STATE_SCHEMA_VERSION,
             "project_id": str(project.get("project_id") or project.get("id") or Path(root).name),
             "project_name": str(project.get("title") or project.get("jobTitle") or Path(root).name),
-            "project_mode": str(project.get("project_mode") or project.get("project_spec", {}).get("project_mode") or previous.get("project_mode") or "mvp"),
+            "project_mode": str(project.get("project_mode") or project.get("project_spec", {}).get("project_mode") or previous.get("project_mode") or quality_settings.get("quality_profile") or "strict_mvp"),
+            "quality_profile": quality_settings.get("quality_profile", "strict_mvp"),
+            "quality_settings": _redact(quality_settings),
             "project_path": os.path.abspath(root),
             "original_request": _redact(str(project.get("original_request") or project.get("description") or project.get("project_spec", {}).get("original_user_request") or "")),
             "created_at": previous.get("created_at", now),
@@ -151,8 +164,14 @@ def persist_project_state(project: dict[str, Any], root: str | None = None) -> d
             "audit_finding_history": _redact(project.get("audit_finding_history", previous.get("audit_finding_history", []))),
             "effective_project_profile": _redact(project.get("project_profiles", [])),
             "product_runtime_profile": _redact(project.get("product_runtime_profile", {})),
+            "architecture_review": _redact(project.get("architecture_review", previous.get("architecture_review", {}))),
+            "target_verification_status": _redact(project.get("target_verification_status", previous.get("target_verification_status", {}))),
             "latest_project_snapshot": project_snapshot_fingerprint(root),
             "latest_evidence_snapshot": project.get("latest_evidence_snapshot", previous.get("latest_evidence_snapshot", "")),
+            "feature_matrix_summary": _redact(feature_matrix.get("summary", {})),
+            "quality_matrix_summary": _redact(feature_matrix.get("quality_matrix_summary", {})),
+            "quality_matrices": _redact(feature_matrix.get("quality_matrices", {})),
+            "latest_feature_matrix_path": matrix_path(root),
             "latest_final_audit_status": (project.get("final_delivery_report") or {}).get("status", previous.get("latest_final_audit_status", "")),
             "latest_delivery_report_path": os.path.join(root, "DELIVERY_REPORT.json"),
             "gates": {key: bool(project.get(key, False)) for key in ("_generation_finished", "_qa_passed", "_final_audit_passed", "_product_judge_passed")},
@@ -254,13 +273,15 @@ def append_evidence_record(project: dict[str, Any], criterion: dict[str, Any], e
             "project_snapshot_fingerprint": project_snapshot_fingerprint(root),
             "verifier_type": evidence.get("verifier_type", evidence.get("method", "")),
             "adapter_type": ((evidence.get("collected_evidence") or {}).get("runtime_ui_adapter") or {}).get("adapter_type", ""),
-            "evidence_level": "direct" if evidence.get("status") not in ("not_verified", "pending") else "unverified",
+            "evidence_level": normalize_evidence_level(evidence.get("achieved_evidence_level") or evidence.get("evidence_level")) or ("direct" if evidence.get("status") not in ("not_verified", "pending") else "unverified"),
+            "required_evidence_level": normalize_evidence_level(evidence.get("required_evidence_level")),
+            "achieved_evidence_level": normalize_evidence_level(evidence.get("achieved_evidence_level") or evidence.get("evidence_level")),
             "verdict": evidence.get("verdict", evidence.get("status", "not_verified")),
             "status": evidence.get("status", "not_verified"),
             "classification": evidence.get("classification", ""),
             "assertions": _redact(evidence.get("assertions", [])),
             "failure_reason": _redact(evidence.get("failure_reason", "")),
-            "tooling_status": evidence.get("failure_kind", ""),
+            "tooling_status": evidence.get("tooling_status", evidence.get("failure_kind", "")),
             "artifact_references": _artifact_references(root, evidence),
             "evidence_snapshot_fingerprint": canonical_fingerprint(evidence),
             "evidence": _redact(evidence),
@@ -277,6 +298,7 @@ def append_evidence_record(project: dict[str, Any], criterion: dict[str, Any], e
         atomic_write_json(ledger_path(root), ledger)
         project["latest_evidence_snapshot"] = record["project_snapshot_fingerprint"]
         persist_project_state(project, root)
+        update_matrix_from_evidence(project, criterion, evidence, root)
         return record
 
 
@@ -348,20 +370,33 @@ def replay_final_audit(root: str) -> dict[str, Any]:
     ledger, ledger_error = load_evidence_ledger(root)
     if ledger is None:
         return {"status": "not_reproducible", "reason": ledger_error, "criteria": [], "project_path": os.path.abspath(root)}
+    staleness = report_staleness(root)
+    if not staleness.get("stale") and isinstance(staleness.get("report"), dict):
+        replayed = dict(staleness["report"])
+        replayed["replay"] = True
+        replayed["durable_replay"] = "delivery_report_snapshot_matches_current_project_and_ledger"
+        return replayed
     criteria = []
     valid = stale = missing = 0
     for criterion in state.get("acceptance_criteria", []):
         record, reason = latest_valid_evidence(root, criterion, ledger)
         if record:
             status = str(record.get("status") or "not_verified")
+            required_level = normalize_evidence_level(criterion.get("required_evidence_level") or record.get("required_evidence_level"))
+            achieved_level = normalize_evidence_level(record.get("achieved_evidence_level") or record.get("evidence_level"))
+            if status in {"passed", "pass"} and required_level and not evidence_level_satisfies(achieved_level, required_level):
+                status = "not_verified"
+                reason = f"required {required_level}, achieved {achieved_level or 'none'} only"
             valid += 1
         else:
             status = "not_verified"
+            required_level = normalize_evidence_level(criterion.get("required_evidence_level"))
+            achieved_level = ""
             if ledger.get("history", {}).get(str(criterion.get("id") or "")):
                 stale += 1
             else:
                 missing += 1
-        criteria.append({"id": criterion.get("id"), "status": status, "reason": reason if not record else ""})
+        criteria.append({"id": criterion.get("id"), "status": status, "required_evidence_level": required_level, "achieved_evidence_level": achieved_level, "reason": reason if (not record or status == "not_verified") else ""})
     mandatory = [item for item in criteria if next((c for c in state.get("acceptance_criteria", []) if c.get("id") == item["id"]), {}).get("priority") in ("high", "critical")]
     issues = [issue for issue in state.get("issues", []) if isinstance(issue, dict) and issue.get("status", "open") == "open" and issue.get("severity") in ("critical", "high")]
     passed = bool(mandatory) and all(item["status"] == "passed" for item in mandatory) and not issues and bool(state.get("gates", {}).get("_qa_passed"))
@@ -376,7 +411,7 @@ def replay_final_audit(root: str) -> dict[str, Any]:
         "stale_evidence_count": stale,
         "missing_evidence_count": missing,
         "open_blocking_issue_ids": [issue.get("id") for issue in issues],
-        "report_staleness": report_staleness(root),
+        "report_staleness": staleness,
     }
 
 
@@ -397,13 +432,16 @@ def recover_legacy_project(root: str, persist: bool = False) -> dict[str, Any]:
         "target_path": root,
         "status": "recovery_required",
         "_phase": "",
-        "project_spec": {"project_type": report.get("project_type", "generic"), "project_profiles": report.get("detected_profiles", [])},
+        "project_spec": {"project_type": report.get("project_type", "generic"), "project_profiles": report.get("detected_profiles", []), "project_mode": "strict_mvp"},
+        "quality_profile": "strict_mvp",
         "project_profiles": report.get("detected_profiles", []),
         "acceptance_criteria": criteria,
         "acceptance_criteria_source": "legacy_delivery_report_definitions",
         "issues": [],
         "recovery_status": "legacy_project",
     }
+    project["quality_settings"] = ensure_quality_settings(project)
+    project["quality_settings"]["migration_notice"] = "Legacy project without quality_profile was conservatively recovered as strict_mvp; historical state is preserved."
     staleness = report_staleness(root)
     recovery = {
         "recovery_status": "legacy_project",
@@ -425,6 +463,7 @@ def recover_legacy_project(root: str, persist: bool = False) -> dict[str, Any]:
     recovery["metadata_sources"] = [item for item in recovery["metadata_sources"] if item]
     if persist:
         persist_project_state(project, root)
+        persist_feature_matrix(root, project.get("feature_matrix") or ensure_feature_matrix(project, root))
         ledger, _ = load_evidence_ledger(root)
         atomic_write_json(ledger_path(root), ledger or _empty_ledger(root))
         atomic_write_json(recovery_path(root), recovery)
@@ -440,6 +479,9 @@ def discover_projects(generated_root: str) -> list[dict[str, Any]]:
             continue
         state, error = load_project_state(str(entry))
         if state:
+            matrix, _ = load_feature_matrix(str(entry))
+            if matrix:
+                state["feature_matrix"] = matrix
             discovered.append({"classification": "fully_recovered", "project": state})
         elif error == "missing":
             legacy = recover_legacy_project(str(entry), persist=False)

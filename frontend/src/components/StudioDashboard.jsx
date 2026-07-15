@@ -4,6 +4,7 @@ import { PipelineDetailContent } from './PipelineDetailModal.jsx';
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'OV' },
   { id: 'projects', label: 'Projects', icon: 'PR' },
+  { id: 'features', label: 'Features', icon: 'FC' },
   { id: 'pipeline', label: 'Pipeline', icon: 'PL' },
   { id: 'mobile', label: 'Mobile Preview', icon: 'MB' },
   { id: 'team', label: 'AI Team', icon: 'AI' },
@@ -35,7 +36,7 @@ function statusTone(status) {
   if (['completed', 'passed', 'done'].includes(status)) return 'success';
   if (['working', 'running', 'in_progress', 'planning', 'building', 'qa'].includes(status)) return 'active';
   if (['failed', 'failed_qa', 'blocked', 'needs_credentials', 'error'].includes(status)) return 'danger';
-  if (['awaiting_input', 'needs_user_input', 'created', 'cancelled'].includes(status)) return 'warning';
+  if (['awaiting_input', 'needs_user_input', 'created', 'cancelled', 'not_verified', 'incomplete'].includes(status)) return 'warning';
   return 'idle';
 }
 
@@ -199,7 +200,7 @@ export default function StudioDashboard({
               <span>{pretty(project?._phase || project?.stage || project?.pipeline_stage || project?.status, 'No stage')}</span>
               <i aria-hidden="true" />
               <span className={`fs-status ${statusTone(project?.status)}`}>{pretty(project?.status, 'Idle')}</span>
-              {project?.project_mode && <><i aria-hidden="true" /><span>Mode: {pretty(project.project_mode)}</span></>}
+              {(project?.quality_profile || project?.project_mode) && <><i aria-hidden="true" /><span>Quality: {pretty(project.quality_profile || project.project_mode)}</span></>}
             </div>
           </div>
           <div className="fs-header-actions">
@@ -231,13 +232,14 @@ export default function StudioDashboard({
             )}
             {activeView === 'team' && <AgentActivity agents={agentEntries} statuses={statuses} onAgentChat={onAgentChat} expanded />}
             {activeView === 'projects' && <ProjectListPanel projects={projects} onRefresh={onProjects} onResume={onResume} onDeleteProject={onDeleteProject} onRemoveProjectFromList={onRemoveProjectFromList} />}
+            {activeView === 'features' && <FeatureCompletenessPanel project={project} />}
             {activeView === 'pipeline' && <section className="fs-panel fs-pipeline-detail-page"><div className="fs-panel-title"><div><span>Pipeline</span><strong>{project?.title || 'No active project'}</strong></div></div>{project ? <PipelineDetailContent project={project} agentStatuses={statuses} agents={agents} pipelineMetadata={pipelineMetadata} inline /> : <p className="fs-empty">No active project.</p>}</section>}
-            {activeView === 'mobile' && <MobilePreviewPanel project={project} />}
+            {activeView === 'mobile' && <MobilePreviewPanel activePort={activePort} project={project} />}
             {activeView === 'issues' && <AttentionPanel issues={openIssues} project={project} onRetry={onRetry} onContinueDone={onContinueDone} expanded />}
             {activeView === 'logs' && <LogPanel logs={logs} />}
             {activeView === 'settings' && <section className="fs-panel fs-settings-page">{settingsContent}</section>}
             {activeView === 'info' && <section className="fs-panel fs-info-page">{infoContent}</section>}
-            {activeView !== 'overview' && !['team', 'projects', 'pipeline', 'mobile', 'issues', 'logs', 'settings', 'info'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
+            {activeView !== 'overview' && !['team', 'projects', 'features', 'pipeline', 'mobile', 'issues', 'logs', 'settings', 'info'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
             <div className="fs-workspace-bottom-sentinel" data-testid="workspace-bottom-sentinel" aria-hidden="true" />
           </main>
 
@@ -261,7 +263,115 @@ export default function StudioDashboard({
   );
 }
 
+function FeatureCompletenessPanel({ project }) {
+  const [openId, setOpenId] = useState('');
+  const matrix = project?.feature_matrix || project?.final_delivery_report?.feature_matrix || {};
+  const features = Array.isArray(matrix.features) ? matrix.features : [];
+  const summary = matrix.summary || {};
+  const report = project?.final_delivery_report || {};
+  const maturity = report.final_maturity_status || {};
+  const policy = report.completion_policy || {};
+  const targetStatuses = report.target_verification_status || project?.target_verification_status || {};
+  const limitations = Array.isArray(report.known_limitations) ? report.known_limitations : [];
+  const architecture = report.architecture_report || project?.architecture_review || {};
+  const security = report.security_findings || {};
+  const evidence = report.achieved_evidence_levels || {};
+  const qualityMatrices = matrix.quality_matrices || project?.final_delivery_report?.feature_matrix_report?.quality_matrices || {};
+  const qualitySummary = matrix.quality_matrix_summary || project?.final_delivery_report?.feature_matrix_report?.quality_matrix_summary || {};
+  const label = value => pretty(value, 'not required');
+  const targetRows = Object.entries(targetStatuses).map(([target, record]) => ({ target, ...(record || {}) }));
+  const blockerReasons = [
+    ...(Array.isArray(policy.blockers) ? policy.blockers : []),
+    ...features.flatMap(feature => Array.isArray(feature.blocking_reasons) ? feature.blocking_reasons.map(reason => `${feature.feature_name || feature.feature_id}: ${reason}`) : []),
+  ];
+  const renderMatrixSection = (title, rows = []) => (
+    <section className="fs-panel fs-feature-matrix-page">
+      <div className="fs-panel-title"><div><span>{title}</span><strong>{rows.length ? `${rows.length} checks` : 'No checks required'}</strong></div></div>
+      <div className="fs-project-list">
+        {rows.length ? rows.slice(0, 20).map(row => (
+          <article className="fs-project-row" key={row.id || `${title}-${row.kind}`}>
+            <div>
+              <strong>{row.feature_name || row.kind || 'Quality check'}</strong>
+              <span>{row.required ? 'Required' : 'Optional'} - {label(row.status)} - {row.expected_coverage || row.kind}</span>
+              {row.achieved_coverage && <span>Achieved: {String(row.achieved_coverage)}</span>}
+            </div>
+          </article>
+        )) : <p className="fs-empty">No {title.toLowerCase()} gaps for this project.</p>}
+      </div>
+    </section>
+  );
+  if (!project) return <section className="fs-panel"><p className="fs-empty">No active project.</p></section>;
+  return (
+    <>
+      <section className="fs-panel fs-quality-summary-page">
+        <div className="fs-panel-title"><div><span>Maturity Status</span><strong>{pretty(maturity.status || report.final_status || project.status, 'No audit yet')}</strong></div></div>
+        <div className="fs-compact-facts">
+          <span>Current milestone: <b>{pretty(report.milestone_status || maturity.status || project.status, 'Unavailable').toUpperCase()}</b></span>
+          <span>Target acceptance: <b>{pretty(project?.quality_profile || report.quality_profile, 'Strict MVP').toUpperCase()} - {policy.accepted ? 'ACCEPTED' : 'BLOCKED'}</b></span>
+          <span>Final label: <b>{maturity.acceptance_label || (policy.accepted ? 'ACCEPTED' : 'MVP ACCEPTANCE INCOMPLETE')}</b></span>
+        </div>
+        <div className="fs-project-list">
+          {blockerReasons.length ? blockerReasons.slice(0, 10).map(reason => <article className="fs-project-row" key={reason}><div><strong>Reason</strong><span>{String(reason).replace(/_/g, ' ')}</span></div></article>) : <p className="fs-empty">No blocking acceptance reasons reported.</p>}
+        </div>
+      </section>
+
+      <section className="fs-panel fs-feature-matrix-page">
+        <div className="fs-panel-title"><div><span>Feature Completeness</span><strong>{features.length ? `${features.length} features` : 'Matrix unavailable'}</strong></div></div>
+        <div className="fs-compact-facts">
+          <span>Mandatory: <b>{summary.total_mandatory ?? 0}</b></span>
+          <span>Complete: <b>{summary.fully_complete ?? 0}</b></span>
+          <span>Incomplete: <b>{summary.incomplete ?? 0}</b></span>
+          <span>Failed: <b>{summary.failed ?? 0}</b></span>
+          <span>Matrix gaps: <b>{qualitySummary.blocking_gaps?.length ?? 0}</b></span>
+        </div>
+        <div className="fs-quality-table" role="table" aria-label="Feature matrix">
+          <div className="fs-quality-row header" role="row"><span>Feature</span><span>Mandatory</span><span>Backend</span><span>Customer UI</span><span>Management UI</span><span>Tests</span><span>E2E</span><span>Platform</span><span>Status</span><span>Details</span></div>
+          {features.length ? features.map(feature => {
+            const dims = feature.dimensions || {};
+            const open = openId === feature.feature_id;
+            return (
+              <React.Fragment key={feature.feature_id}>
+                <div className="fs-quality-row" role="row">
+                  <span>{feature.feature_name || 'Unnamed feature'}</span><span>{feature.mandatory ? 'Yes' : 'No'}</span><span>{label(dims.backend)}</span><span>{label(dims.customer_ui)}</span><span>{label(dims.manager_ui)}</span><span>{label(dims.automated_tests)}</span><span>{label(dims.e2e)}</span><span>{label(dims.native_runtime || dims.packaged_artifact)}</span><span>{label(feature.evidence_status)}</span><span><button type="button" onClick={() => setOpenId(open ? '' : feature.feature_id)}>{open ? 'Hide' : 'Drill down'}</button></span>
+                </div>
+                {open && <div className="fs-quality-drilldown">
+                  <div>Requirements: {feature.description || 'No description'}</div>
+                  <div>Exact blocking reasons: {feature.blocking_reasons?.length ? feature.blocking_reasons.join(', ') : 'none'}</div>
+                  <div>Evidence: {(feature.evidence || []).length ? JSON.stringify(feature.evidence) : 'No durable evidence records linked yet.'}</div>
+                  <div>Claims: {(feature.claims || []).length ? JSON.stringify(feature.claims) : 'No implementation claims linked.'}</div>
+                </div>}
+              </React.Fragment>
+            );
+          }) : <p className="fs-empty">Feature matrix has not been generated for this project yet.</p>}
+        </div>
+      </section>
+
+      <section className="fs-panel fs-target-status-page">
+        <div className="fs-panel-title"><div><span>Target Verification</span><strong>{targetRows.length ? `${targetRows.length} targets` : 'No target evidence'}</strong></div></div>
+        <div className="fs-project-list">
+          {targetRows.length ? targetRows.map(row => <article className="fs-project-row" key={row.target}><div><strong>{pretty(row.target_type || row.target)} - {row.verdict === 'passed' ? 'Passed' : 'Not verified'}</strong><span>Required: {row.required_evidence_level || 'none'} | Achieved: {row.achieved_evidence_level || 'none'} | {row.reason || 'No reason reported'}</span></div></article>) : <p className="fs-empty">No target verification records are available.</p>}
+        </div>
+      </section>
+
+      <section className="fs-panel fs-evidence-page">
+        <div className="fs-panel-title"><div><span>Evidence</span><strong>Achieved evidence levels</strong></div></div>
+        <div className="fs-pipeline-agent-logs"><div>{JSON.stringify(evidence, null, 2)}</div></div>
+      </section>
+
+      {renderMatrixSection('RBAC Matrix', qualityMatrices.rbac || [])}
+      {renderMatrixSection('Test Matrix', qualityMatrices.critical_scenarios || [])}
+      {renderMatrixSection('Security', qualityMatrices.security || [])}
+      {renderMatrixSection('Persistence', qualityMatrices.persistence || [])}
+      <section className="fs-panel fs-architecture-page"><div className="fs-panel-title"><div><span>Architecture</span><strong>{pretty(architecture.status, 'not reviewed')}</strong></div></div><div className="fs-pipeline-agent-logs"><div>{JSON.stringify(architecture.blocking_findings || architecture.findings || [], null, 2)}</div></div></section>
+      <section className="fs-panel fs-security-page"><div className="fs-panel-title"><div><span>Security</span><strong>{security.secret_scan?.status || 'not reviewed'}</strong></div></div><div className="fs-pipeline-agent-logs"><div>{JSON.stringify(security, null, 2)}</div></div></section>
+      <section className="fs-panel fs-limitations-page"><div className="fs-panel-title"><div><span>Limitations</span><strong>{limitations.length ? `${limitations.length} known` : 'None reported'}</strong></div></div><div className="fs-project-list">{limitations.length ? limitations.map((item, index) => <article className="fs-project-row" key={index}><div><strong>{item.source || 'limitation'}</strong><span>{item.limitation || JSON.stringify(item)}</span></div></article>) : <p className="fs-empty">No known limitations reported.</p>}</div></section>
+    </>
+  );
+}
+
 function ProjectOverview({ project, primaryAction, isGenerating, onStopGeneration, onNewProject }) {
+  const badges = project?.final_delivery_report?.maturity_badges || project?.final_delivery_report?.final_maturity_status?.badges || {};
+  const badgeOrder = ['build', 'runtime', 'core_e2e', 'platform_verification', 'strict_mvp', 'production_readiness'];
   return (
     <section className="fs-hero">
       <div>
@@ -271,8 +381,14 @@ function ProjectOverview({ project, primaryAction, isGenerating, onStopGeneratio
         <div className="fs-meta-row">
           <span>Stage: <b>{pretty(project?._phase || project?.stage || project?.status, 'Idle')}</b></span>
           <span>State: <b>{pretty(project?.status, 'No active project')}</b></span>
-          <span>Mode: <b>{pretty(project?.project_mode, 'MVP')}</b></span>
+          <span>Quality: <b>{pretty(project?.quality_profile || project?.project_mode, 'Strict MVP')}</b></span>
           {project?.project_id && <span>ID: <b>{project.project_id}</b></span>}
+        </div>
+        <div className="fs-meta-row" aria-label="Evidence maturity badges">
+          {badgeOrder.map(key => {
+            const badge = badges[key] || {};
+            return <span key={key} className={`fs-status ${statusTone(badge.status)}`}>{badge.label || pretty(key)}: <b>{pretty(badge.status, 'not verified')}</b></span>;
+          })}
         </div>
       </div>
       <div className="fs-hero-actions">
@@ -430,7 +546,7 @@ function isEmbeddablePreviewUrl(value) {
   }
 }
 
-function MobilePreviewPanel({ project }) {
+function MobilePreviewPanel({ activePort, project }) {
   const [deviceId, setDeviceId] = useState('iphone16pro');
   const initialUrl = project?.preview_url || project?.local_preview_url || '';
   const [previewUrl, setPreviewUrl] = useState(initialUrl);
@@ -443,6 +559,7 @@ function MobilePreviewPanel({ project }) {
       <div className="fs-panel-title">
         <div><span>Mobile Preview</span><strong>{project?.title || 'No active project'}</strong></div>
       </div>
+      <AndroidDevicesSection activePort={activePort} project={project} />
       <div className="fs-mobile-preview-layout">
         <div className="fs-mobile-controls">
           <label>Device
@@ -463,6 +580,137 @@ function MobilePreviewPanel({ project }) {
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+function AndroidDevicesSection({ activePort }) {
+  const [status, setStatus] = useState(null);
+  const [selectedSerial, setSelectedSerial] = useState('');
+  const [selectedAvd, setSelectedAvd] = useState('');
+  const [packageId, setPackageId] = useState('');
+  const [apkPath, setApkPath] = useState('');
+  const [recordSeconds, setRecordSeconds] = useState(10);
+  const [logcat, setLogcat] = useState('');
+  const [message, setMessage] = useState('Loading Android devices...');
+  const [busy, setBusy] = useState(false);
+  const endpoint = path => `http://localhost:${activePort}${path}`;
+  const devices = status?.devices || [];
+  const selected = devices.find(device => device.serial === selectedSerial) || devices[0];
+
+  const loadStatus = () => {
+    setBusy(true);
+    fetch(endpoint('/api/android/status'))
+      .then(r => r.json())
+      .then(data => {
+        setStatus(data);
+        setSelectedSerial(current => current || data.devices?.[0]?.serial || '');
+        setSelectedAvd(current => current || data.avds?.[0] || '');
+        setMessage('Android device list refreshed.');
+      })
+      .catch(error => setMessage(`Android status failed: ${error.message}`))
+      .finally(() => setBusy(false));
+  };
+
+  useEffect(() => { loadStatus(); }, [activePort]);
+
+  const post = (path, body = {}, after) => {
+    setBusy(true);
+    fetch(endpoint(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(async r => {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.detail || 'Android command failed');
+        setMessage(data.status ? `${data.status}: ${path}` : `Completed: ${path}`);
+        if (data.logcat) setLogcat(data.logcat);
+        if (after) after(data);
+        return data;
+      })
+      .then(() => loadStatus())
+      .catch(error => setMessage(error.message))
+      .finally(() => setBusy(false));
+  };
+
+  const selectedPayload = () => ({ serial: selectedSerial || selected?.serial || '' });
+  const packagePayload = () => ({ ...selectedPayload(), package_id: packageId.trim() });
+  const sdkMissing = status && !status.sdk?.found;
+  const adbMissing = status && !status.adb?.found;
+  const emulatorMissing = status && !status.emulator?.found;
+  const scrcpyMissing = status && !status.scrcpy?.found;
+
+  return (
+    <section className="fs-android-panel">
+      <div className="fs-panel-title">
+        <div><span>Android Devices</span><strong>{selected?.serial || 'No device selected'}</strong></div>
+        <button type="button" onClick={loadStatus} disabled={busy}>Refresh</button>
+      </div>
+      <div className="fs-android-grid">
+        <div className="fs-android-card">
+          <h3>Toolchain</h3>
+          <div className="fs-compact-facts vertical">
+            <span>SDK: <b>{status?.sdk?.found ? status.sdk.path : 'Not found'}</b></span>
+            <span>adb: <b>{status?.adb?.found ? status.adb.path : 'Not found'}</b></span>
+            <span>emulator: <b>{status?.emulator?.found ? status.emulator.path : 'Not found'}</b></span>
+            <span>scrcpy: <b>{status?.scrcpy?.found ? status.scrcpy.path : 'Unavailable'}</b></span>
+          </div>
+          {sdkMissing && <p className="fs-empty">Android SDK not found. Expected location includes %LOCALAPPDATA%\Android\Sdk.</p>}
+          {adbMissing && <p className="fs-empty">adb unavailable. Install Android platform-tools or set Android SDK location for this session.</p>}
+          {emulatorMissing && <p className="fs-empty">Emulator executable unavailable. Existing physical devices can still be used when adb is available.</p>}
+          {scrcpyMissing && <p className="fs-empty">scrcpy unavailable. Install scrcpy to open live device mirrors in a separate window.</p>}
+        </div>
+        <div className="fs-android-card">
+          <h3>AVDs</h3>
+          <label>Available AVD
+            <select value={selectedAvd} onChange={event => setSelectedAvd(event.target.value)}>
+              {(status?.avds || []).map(avd => <option key={avd} value={avd}>{avd}</option>)}
+            </select>
+          </label>
+          {status?.avds?.length ? <button type="button" onClick={() => post('/api/android/avd/start', { avd_name: selectedAvd })} disabled={busy || !selectedAvd}>Start AVD / Open Emulator</button> : <p className="fs-empty">No AVD available. Studio will not create or delete AVDs automatically.</p>}
+        </div>
+        <div className="fs-android-card wide">
+          <h3>Connected Devices</h3>
+          <label>Device
+            <select value={selectedSerial} onChange={event => setSelectedSerial(event.target.value)}>
+              {devices.map(device => <option key={device.serial} value={device.serial}>{device.serial} - {pretty(device.status)}</option>)}
+            </select>
+          </label>
+          {selected ? <div className="fs-device-summary">
+            <span className={`fs-status ${statusTone(selected.status === 'device' ? 'passed' : selected.status === 'booting' ? 'running' : 'failed')}`}>{pretty(selected.status)}</span>
+            <span>Android {selected.android_version || 'unknown'} / API {selected.api_level || 'unknown'}</span>
+            <span>{selected.resolution || 'resolution unavailable'}</span>
+          </div> : <p className="fs-empty">No device connected. Connect a physical device or start an existing AVD.</p>}
+          {selected?.status === 'offline' && <p className="fs-empty">Device offline. Reconnect or restart adb/device.</p>}
+          {selected?.status === 'unauthorized' && <p className="fs-empty">Device unauthorized. Approve USB debugging on the device.</p>}
+          <div className="fs-android-actions">
+            <button type="button" onClick={() => post('/api/android/scrcpy/open', selectedPayload())} disabled={busy || !selected || scrcpyMissing}>Open scrcpy</button>
+            <button type="button" onClick={() => post('/api/android/screenshot', selectedPayload())} disabled={busy || !selected}>Screenshot</button>
+            <button type="button" onClick={() => post('/api/android/record', { ...selectedPayload(), seconds: recordSeconds })} disabled={busy || !selected}>Record</button>
+            <button type="button" onClick={() => post('/api/android/emulator/stop', selectedPayload())} disabled={busy || !selected?.serial?.startsWith('emulator-')}>Stop Emulator</button>
+          </div>
+          <label>Record seconds
+            <input type="number" min="1" max="180" value={recordSeconds} onChange={event => setRecordSeconds(event.target.value)} />
+          </label>
+        </div>
+        <div className="fs-android-card wide">
+          <h3>App Controls</h3>
+          <label>Package ID
+            <input value={packageId} onChange={event => setPackageId(event.target.value)} placeholder="com.example.app" />
+          </label>
+          <label>APK path
+            <input value={apkPath} onChange={event => setApkPath(event.target.value)} placeholder="C:\\path\\to\\app.apk" />
+          </label>
+          <div className="fs-android-actions">
+            <button type="button" onClick={() => post('/api/android/apk/install', { ...selectedPayload(), apk_path: apkPath })} disabled={busy || !selected || !apkPath}>Install APK</button>
+            <button type="button" onClick={() => post('/api/android/app/uninstall', packagePayload())} disabled={busy || !selected || !packageId}>Uninstall</button>
+            <button type="button" onClick={() => post('/api/android/app/launch', packagePayload())} disabled={busy || !selected || !packageId}>Launch</button>
+            <button type="button" onClick={() => post('/api/android/app/stop', packagePayload())} disabled={busy || !selected || !packageId}>Stop App</button>
+            <button type="button" onClick={() => post('/api/android/app/clear-data', packagePayload())} disabled={busy || !selected || !packageId}>Clear Data</button>
+            <button type="button" onClick={() => post('/api/android/app/package-info', packagePayload(), data => setMessage(`${data.package_id}: ${data.version_name || 'version unknown'}`))} disabled={busy || !selected || !packageId}>Package Info</button>
+            <button type="button" onClick={() => post('/api/android/logcat', { ...packagePayload(), lines: 500 })} disabled={busy || !selected}>Open Filtered Logcat</button>
+          </div>
+        </div>
+      </div>
+      <div className="fs-android-message">{message}</div>
+      {logcat && <details className="fs-android-log" open><summary>Filtered logcat</summary><pre>{logcat}</pre></details>}
     </section>
   );
 }

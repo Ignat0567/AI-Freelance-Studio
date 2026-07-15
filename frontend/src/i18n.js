@@ -7,7 +7,7 @@ export const TRANSLATIONS = {
     stage: 'Stage', push: 'Push', export: 'Export', files: 'Files', showFolder: 'Show Folder',
     appearance: 'Appearance', general: 'General', studio: 'Studio', theme: 'Theme', accentColor: 'Accent Color', animationSpeed: 'Animation Speed', fontSize: 'Font Size', language: 'Language', notifications: 'Notifications', enableNotifications: 'Enable notifications', autoSave: 'Auto Save', autoSaveProject: 'Auto-save project state', savedAutomatically: 'Settings saved automatically',
     defaultBudget: 'Default Budget', pollingInterval: 'Polling Interval', logDetail: 'Log Detail Level', globalProvider: 'Global AI Provider', globalModel: 'Global AI Model', githubIntegration: 'GitHub Integration', editorIntegration: 'Editor Integration',
-    activateStudio: 'Activate AI Freelance Studio', configureTokens: 'Configure API tokens for AI agents and job search.', deleteKey: 'Delete key', savedPermanently: 'Saved permanently', customProviders: 'Custom AI Providers', activateSave: 'Activate & Save Configuration', resetConfiguration: 'Reset Configuration', closeWindow: 'Close this window',
+    activateStudio: 'Activate AI Freelance Studio', configureTokens: 'Configure API tokens for AI agents and job search.', deleteKey: 'Delete key', savedPermanently: 'Configured externally', customProviders: 'Custom AI Providers', activateSave: 'Activate & Save Configuration', resetConfiguration: 'Reset Configuration', closeWindow: 'Close this window',
   },
   ru: {
     appTitle: 'AI FREELANCE STUDIO v1.0', jobs: 'Заказы', accounts: 'Аккаунты', projects: 'Проекты', configureStaff: 'Настроить AI-команду',
@@ -17,7 +17,7 @@ export const TRANSLATIONS = {
     stage: 'Стадия', push: 'Push', export: 'Экспорт', files: 'Файлы', showFolder: 'Показать папку',
     appearance: 'Внешний вид', general: 'Общие', studio: 'Студия', theme: 'Тема', accentColor: 'Акцентный цвет', animationSpeed: 'Скорость анимации', fontSize: 'Размер шрифта', language: 'Язык', notifications: 'Уведомления', enableNotifications: 'Включить уведомления', autoSave: 'Автосохранение', autoSaveProject: 'Автосохранять состояние проекта', savedAutomatically: 'Настройки сохраняются автоматически',
     defaultBudget: 'Бюджет по умолчанию', pollingInterval: 'Интервал обновления', logDetail: 'Детализация лога', globalProvider: 'Глобальный AI-провайдер', globalModel: 'Глобальная AI-модель', githubIntegration: 'Интеграция GitHub', editorIntegration: 'Интеграция редактора',
-    activateStudio: 'Активация AI Freelance Studio', configureTokens: 'Настройте API-токены для AI-агентов и поиска заказов.', deleteKey: 'Удалить ключ', savedPermanently: 'Сохранён постоянно', customProviders: 'Свои AI-провайдеры', activateSave: 'Активировать и сохранить', resetConfiguration: 'Сбросить конфигурацию', closeWindow: 'Закрыть это окно',
+    activateStudio: 'Активация AI Freelance Studio', configureTokens: 'Настройте API-токены для AI-агентов и поиска заказов.', deleteKey: 'Удалить ключ', savedPermanently: 'Настроен вне Studio', customProviders: 'Свои AI-провайдеры', activateSave: 'Активировать и сохранить', resetConfiguration: 'Сбросить конфигурацию', closeWindow: 'Закрыть это окно',
   },
   de: {
     appTitle: 'AI FREELANCE STUDIO v1.0', jobs: 'Aufträge', accounts: 'Konten', projects: 'Projekte', configureStaff: 'AI-Team konfigurieren',
@@ -27,7 +27,7 @@ export const TRANSLATIONS = {
     stage: 'Phase', push: 'Push', export: 'Export', files: 'Dateien', showFolder: 'Ordner anzeigen',
     appearance: 'Darstellung', general: 'Allgemein', studio: 'Studio', theme: 'Design', accentColor: 'Akzentfarbe', animationSpeed: 'Animationsgeschwindigkeit', fontSize: 'Schriftgröße', language: 'Sprache', notifications: 'Benachrichtigungen', enableNotifications: 'Benachrichtigungen aktivieren', autoSave: 'Automatisch speichern', autoSaveProject: 'Projektstatus automatisch speichern', savedAutomatically: 'Einstellungen werden automatisch gespeichert',
     defaultBudget: 'Standardbudget', pollingInterval: 'Aktualisierungsintervall', logDetail: 'Log-Detailgrad', globalProvider: 'Globaler AI-Anbieter', globalModel: 'Globales AI-Modell', githubIntegration: 'GitHub-Integration', editorIntegration: 'Editor-Integration',
-    activateStudio: 'AI Freelance Studio aktivieren', configureTokens: 'API-Tokens für AI-Agenten und Auftragssuche konfigurieren.', deleteKey: 'Schlüssel löschen', savedPermanently: 'Dauerhaft gespeichert', customProviders: 'Eigene AI-Anbieter', activateSave: 'Aktivieren und speichern', resetConfiguration: 'Konfiguration zurücksetzen', closeWindow: 'Dieses Fenster schließen',
+    activateStudio: 'AI Freelance Studio aktivieren', configureTokens: 'API-Tokens für AI-Agenten und Auftragssuche konfigurieren.', deleteKey: 'Schlüssel löschen', savedPermanently: 'Extern konfiguriert', customProviders: 'Eigene AI-Anbieter', activateSave: 'Aktivieren und speichern', resetConfiguration: 'Konfiguration zurücksetzen', closeWindow: 'Dieses Fenster schließen',
   },
 };
 

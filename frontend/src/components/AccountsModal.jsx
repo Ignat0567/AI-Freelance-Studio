@@ -137,7 +137,7 @@ export default function AccountsModal({ activePort, onClose, addLog }) {
             </button>
           </div>
           <p className="text-[9px] mt-1" style={{ color: 'var(--text-muted)' }}>
-            Note: API keys and OAuth tokens are stored locally in studio_config.json. Add keys via Settings → API Keys for providers.
+            Note: API keys are not saved in Studio settings. Set the matching provider environment variable to persist a key. FreelancerStudio does not store OAuth tokens.
           </p>
         </div>
 

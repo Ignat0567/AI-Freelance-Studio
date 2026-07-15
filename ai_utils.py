@@ -2,6 +2,8 @@ import os
 import json
 import subprocess
 import sys
+import config_storage
+import secret_store
 
 PROVIDERS_URLS = {
     "nvidia": "https://integrate.api.nvidia.com/v1",
@@ -33,20 +35,10 @@ _ANTHROPIC_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_a
 
 def get_api_key(provider: str) -> str:
     provider_lower = provider.lower()
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio_config.json")
-    saved_keys = {}
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                saved_keys = json.load(f)
-        except Exception:
-            pass
+    saved_keys = config_storage.load_studio_keys()
     if provider_lower == "ollama":
         return "ollama"
-    key = saved_keys.get(f"{provider_lower}_key", "")
-    if not key:
-        key = saved_keys.get(f"{provider_lower}_api_key", "")
-    return key or ""
+    return secret_store.get_secret(f"{provider_lower}_key", saved_keys)
 
 
 def provider_capabilities(provider: str) -> dict:
@@ -66,12 +58,10 @@ def ask_studio_ai_with_history(
     try:
         provider_lower = provider.lower()
         if provider_lower in {"opencode_bridge", "opencode"}:
-            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio_config.json")
             connections = []
             try:
-                with open(config_path, "r", encoding="utf-8") as source:
-                    connections = json.load(source).get("_provider_connections", [])
-            except (OSError, ValueError, AttributeError):
+                connections = config_storage.load_studio_keys().get("_provider_connections", [])
+            except AttributeError:
                 pass
             connection_data = next((item for item in connections if isinstance(item, dict) and item.get("connection_type") in {"opencode_bridge", "opencode_oauth_bridge"} and item.get("enabled", True) and (not model_name or item.get("configured_model") == model_name or any(isinstance(m, dict) and m.get("id") == model_name for m in item.get("available_models", [])))), None)
             if not connection_data:

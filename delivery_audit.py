@@ -20,9 +20,12 @@ from typing import Any
 from project_spec import Issue, acceptance_evidence_is_direct, detect_project_profiles, ensure_acceptance_evidence_history, normalize_acceptance_evidence, plan_acceptance_verifier, record_acceptance_evidence
 from product_judge import combined_subjective_verdict, is_subjective_product_quality, run_product_judge
 from project_state import append_evidence_record, atomic_write_json, latest_valid_evidence, persist_audit_run, persist_project_state, project_snapshot_fingerprint, replay_final_audit
+from quality_profiles import LEVEL_1_STRUCTURAL, LEVEL_2_BUILD, LEVEL_3_RUNTIME, LEVEL_4_INTERACTION, LEVEL_5_E2E, LEVEL_6_NATIVE_RUNTIME, LEVEL_7_PACKAGED_ARTIFACT, LEVEL_8_INSTALLED_APPLICATION, ensure_quality_settings, evaluate_quality_completion, evidence_level_satisfies, evidence_maturity_badges, milestone_from_checks, normalize_evidence_level, target_check_name, target_required_evidence_level
+from feature_matrix import ensure_feature_matrix, feature_matrix_report, matrix_blocks_completion
+from architecture_policy import analyze_architecture
 
 
-IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", "__pycache__"}
+IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", "__pycache__", "local_backups", ".opencode_backups"}
 IGNORED_EXTS = {".pyc", ".db", ".sqlite", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".glb"}
 SECRET_PATTERNS = [
     r"\b\d{7,}:[A-Za-z0-9_-]{20,}\b",
@@ -1163,6 +1166,20 @@ def _targeted_evidence(
     if isinstance(criterion.get("semantic_verifier_plan"), dict):
         collected.setdefault("semantic_verifier_plan", criterion["semantic_verifier_plan"])
     collected.update(_criterion_evidence_context(criterion, project, root, classification))
+    required_level = normalize_evidence_level(criterion.get("required_evidence_level") or _required_ui_evidence_level(method))
+    achieved_level = normalize_evidence_level(extra.pop("achieved_evidence_level", ""))
+    if not achieved_level:
+        if status in ("not_verified", "pending"):
+            achieved_level = ""
+        elif method in ("browser_usability", "primary_ui_actions", "responsive_ui", "product_ui_quality"):
+            achieved_level = LEVEL_4_INTERACTION
+        elif method in ("workflow_e2e", "business_flow_e2e"):
+            achieved_level = LEVEL_5_E2E
+        else:
+            achieved_level = LEVEL_3_RUNTIME
+    if status == "passed" and required_level and not evidence_level_satisfies(achieved_level, required_level):
+        status = "not_verified"
+        failure_reason = failure_reason or f"required {required_level}, achieved {achieved_level or 'none'} only"
     evidence = _registry_evidence(
         method,
         status,
@@ -1175,6 +1192,8 @@ def _targeted_evidence(
         classification=classification,
         criterion_id=criterion.get("id", ""),
         verdict=status if status in ("passed", "failed", "blocked") else "not_executed",
+        required_evidence_level=required_level,
+        achieved_evidence_level=achieved_level,
         **extra,
     )
     return evidence
@@ -1571,12 +1590,14 @@ class ProductRuntimeEvidenceAdapter:
 
 def _required_ui_evidence_level(verifier_type: str) -> str:
     if verifier_type in ("browser_usability", "primary_ui_actions"):
-        return "LEVEL_3_REAL_INTERACTION"
+        return LEVEL_4_INTERACTION
     if verifier_type in ("responsive_ui", "product_ui_quality"):
-        return "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE"
+        return LEVEL_4_INTERACTION
+    if verifier_type in ("workflow_e2e", "business_flow_e2e"):
+        return LEVEL_5_E2E
     if verifier_type.startswith("packaged") or verifier_type in ("installer_installation", "installed_app_launch"):
-        return "LEVEL_5_PACKAGED_DELIVERY"
-    return "LEVEL_2_REAL_UI_RUNTIME"
+        return LEVEL_8_INSTALLED_APPLICATION if verifier_type == "installed_app_launch" else LEVEL_7_PACKAGED_ARTIFACT
+    return LEVEL_3_RUNTIME
 
 
 class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
@@ -1598,7 +1619,7 @@ class BrowserWebEvidenceAdapter(ProductRuntimeEvidenceAdapter):
                 "device_scale_factor": 1,
                 "reason": "Playwright controls isolated Chromium viewport sizes, not the user's physical display",
             },
-            "evidence_levels": ["LEVEL_1_STRUCTURAL", "LEVEL_2_REAL_RUNTIME", "LEVEL_3_REAL_INTERACTION", "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE"],
+            "evidence_levels": [LEVEL_1_STRUCTURAL, LEVEL_3_RUNTIME, LEVEL_4_INTERACTION],
         }
         if not capability.get("real_browser_verification_available"):
             collected["executed_viewports"] = []
@@ -2015,8 +2036,8 @@ def execute_product_ui_evidence(criterion: dict[str, Any], project: dict, root: 
 def _browser_required_unsupported_evidence(criterion: dict[str, Any], project: dict, root: str, verifier_type: str, collected: dict[str, Any] | None = None) -> dict[str, Any]:
     browser = _browser_automation_support()
     level1 = dict(collected or {})
-    level1["ui_evidence_level"] = "LEVEL_1_HTTP_HTML_STRUCTURAL_EVIDENCE"
-    level1["real_browser_evidence"] = {"level": "LEVEL_2_REAL_BROWSER_EVIDENCE", **browser}
+    level1["ui_evidence_level"] = LEVEL_1_STRUCTURAL
+    level1["real_browser_evidence"] = {"level": LEVEL_3_RUNTIME, **browser}
     return _targeted_evidence(
         criterion,
         project,
@@ -4949,6 +4970,12 @@ def _evaluate_acceptance(project: dict, root: str, qa_result: dict | None, check
                 criterion["status"] = "not_verified"
             else:
                 latest_status = _evidence_status(persisted)
+                required_level = normalize_evidence_level(criterion.get("required_evidence_level") or persisted.get("required_evidence_level"))
+                achieved_level = normalize_evidence_level(persisted.get("achieved_evidence_level") or persisted.get("evidence_level"))
+                if latest_status in ("pass", "passed") and required_level and not evidence_level_satisfies(achieved_level, required_level):
+                    latest_status = "not_verified"
+                    evidence = dict(evidence)
+                    evidence["failure_reason"] = f"required {required_level}, achieved {achieved_level or 'none'} only"
                 if latest_status in ("pass", "passed"):
                     criterion["status"] = "passed"
                 elif latest_status in ("fail", "failed"):
@@ -4973,11 +5000,232 @@ def _open_blocking_issues(project: dict) -> list[dict[str, Any]]:
     return blocking
 
 
+def _add_target_requirement_checks(checks: list[dict[str, Any]], project: dict, runtime: dict[str, Any]) -> None:
+    settings = ensure_quality_settings(project)
+    target_requirements = settings.get("target_requirements", {}) if isinstance(settings.get("target_requirements"), dict) else {}
+    profile = str(settings.get("quality_profile") or "strict_mvp")
+    target_statuses: dict[str, Any] = {}
+    for target, requirement in sorted(target_requirements.items()):
+        if requirement == "not_applicable":
+            continue
+        status_record = _target_status_record(project, target, requirement, runtime, profile)
+        status_record["requirement"] = requirement
+        status_record["source"] = "quality_profile_target_gate"
+        target_statuses[target] = status_record
+        _add(checks, target_check_name(target), status_record["verdict"], status_record)
+    project["target_verification_status"] = target_statuses
+
+
+def _add_profile_gate_checks(checks: list[dict[str, Any]], project: dict) -> None:
+    settings = ensure_quality_settings(project)
+    profile = settings.get("quality_profile")
+    security = project.get("security_baseline", {}) if isinstance(project.get("security_baseline"), dict) else {}
+    packaged = project.get("packaged_artifacts", []) if isinstance(project.get("packaged_artifacts"), list) else []
+    if profile in {"production_candidate", "production"}:
+        _add(checks, "expanded_security_baseline", "passed" if security.get("expanded_status") == "passed" or security.get("status") == "passed" else "failed", security or {"reason": "Expanded security baseline evidence missing"})
+        _add(checks, "packaged_artifact", "passed" if packaged else "failed", {"packaged_artifacts": packaged})
+    if profile == "production":
+        ops = project.get("operations_evidence", {}) if isinstance(project.get("operations_evidence"), dict) else {}
+        for gate in ("production_deployment", "operational_monitoring", "backup_recovery", "secrets_management", "performance_validation", "release_artifact_validation", "approved_audits"):
+            _add(checks, gate, "passed" if ops.get(gate) == "passed" else "failed", {"operations_evidence": ops.get(gate, "missing")})
+
+
+def _artifact_refs_from_values(values: Any) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    items = values if isinstance(values, list) else [values] if values else []
+    for item in items:
+        if isinstance(item, dict):
+            ref = {key: item.get(key) for key in ("path", "sha256", "artifact_type", "target") if item.get(key)}
+            if ref:
+                refs.append(ref)
+        elif isinstance(item, str):
+            refs.append({"path": item})
+    return refs
+
+
+def _explicit_target_status(project: dict, target: str) -> dict[str, Any] | None:
+    statuses = project.get("target_verification_status") if isinstance(project.get("target_verification_status"), dict) else {}
+    status = statuses.get(target)
+    return status if isinstance(status, dict) else None
+
+
+def _target_status_record(project: dict, target: str, requirement: str, runtime: dict[str, Any], profile: str) -> dict[str, Any]:
+    required_level = target_required_evidence_level(profile, target)
+    explicit = _explicit_target_status(project, target)
+    if explicit:
+        achieved_level = normalize_evidence_level(explicit.get("achieved_evidence_level"))
+        verdict = str(explicit.get("verdict") or "not_verified")
+        reason = str(explicit.get("reason") or "")
+        if verdict == "passed" and not evidence_level_satisfies(achieved_level, required_level):
+            verdict = "not_verified"
+            reason = f"required {required_level}, achieved {achieved_level or 'none'} only"
+        return {
+            "target_type": explicit.get("target_type") or target,
+            "required_evidence_level": required_level,
+            "achieved_evidence_level": achieved_level,
+            "verdict": verdict,
+            "tooling_status": explicit.get("tooling_status", ""),
+            "artifact_references": explicit.get("artifact_references", []),
+            "reason": reason,
+        }
+
+    runtime_ok = runtime.get("status") == "passed"
+    profiles = {str(item).lower() for item in project.get("project_profiles") or project.get("project_spec", {}).get("project_profiles", [])}
+    achieved_level = ""
+    tooling_status = "missing"
+    artifacts: list[dict[str, Any]] = []
+    reason = "no evidence collected for target"
+
+    if target in {"backend", "api_service"}:
+        if runtime_ok and ("fastapi" in profiles or "rest_api" in profiles or target == "backend"):
+            achieved_level = LEVEL_3_RUNTIME
+            tooling_status = "runtime_smoke_passed"
+            reason = "backend runtime process started and responded"
+        else:
+            reason = "backend runtime was not verified"
+    elif target == "web":
+        if runtime_ok:
+            achieved_level = LEVEL_3_RUNTIME
+            tooling_status = "browser_runtime_available"
+            reason = "web runtime available; does not prove native or interaction targets"
+        else:
+            reason = "web browser runtime was not verified"
+    elif target == "manager_web":
+        manager = project.get("manager_interaction_evidence") if isinstance(project.get("manager_interaction_evidence"), dict) else {}
+        achieved_level = normalize_evidence_level(manager.get("achieved_evidence_level"))
+        if manager.get("status") == "passed" and not achieved_level:
+            achieved_level = LEVEL_4_INTERACTION
+        elif runtime_ok and not achieved_level:
+            achieved_level = LEVEL_3_RUNTIME
+        tooling_status = str(manager.get("tooling_status") or ("runtime_only" if runtime_ok else "missing"))
+        reason = str(manager.get("reason") or ("HTTP/browser runtime only; authenticated manager interaction not verified" if achieved_level == LEVEL_3_RUNTIME else "manager interaction evidence missing"))
+    elif target == "telegram_bot":
+        if runtime_ok and "telegram_bot" in profiles:
+            achieved_level = LEVEL_3_RUNTIME
+            tooling_status = "bot_runtime_passed"
+            reason = "telegram bot runtime started"
+        else:
+            reason = "telegram bot runtime was not verified"
+    elif target in {"android", "ios", "desktop_windows", "desktop_macos", "desktop_linux"}:
+        native = project.get("native_runtime_evidence", {}) if isinstance(project.get("native_runtime_evidence"), dict) else {}
+        value = native.get(target)
+        if isinstance(value, dict):
+            achieved_level = normalize_evidence_level(value.get("achieved_evidence_level"))
+            tooling_status = str(value.get("tooling_status") or value.get("status") or "")
+            artifacts = _artifact_refs_from_values(value.get("artifact_references") or value.get("artifacts"))
+            reason = str(value.get("reason") or "")
+        elif value == "passed":
+            achieved_level = LEVEL_6_NATIVE_RUNTIME
+            tooling_status = "native_runtime_passed"
+            reason = f"{target} native runtime evidence passed"
+        if not achieved_level:
+            build = project.get("native_build_evidence", {}) if isinstance(project.get("native_build_evidence"), dict) else {}
+            build_value = build.get(target)
+            if build_value:
+                achieved_level = LEVEL_2_BUILD
+                tooling_status = "native_build_only"
+                artifacts = _artifact_refs_from_values(build_value)
+                reason = f"required {required_level}, achieved {LEVEL_2_BUILD} only"
+            else:
+                reason = f"{target} native runtime evidence missing"
+    elif target == "packaged_installer":
+        packaged = project.get("packaged_artifacts", []) if isinstance(project.get("packaged_artifacts"), list) else []
+        installed = project.get("installed_application_evidence", {}) if isinstance(project.get("installed_application_evidence"), dict) else {}
+        if installed.get("status") == "passed":
+            achieved_level = LEVEL_8_INSTALLED_APPLICATION
+            tooling_status = "installed_and_launched"
+            reason = "packaged artifact installed and launched"
+        elif packaged:
+            achieved_level = LEVEL_7_PACKAGED_ARTIFACT
+            tooling_status = "artifact_built"
+            reason = "packaged artifact built; installation launch not verified"
+        artifacts = _artifact_refs_from_values(packaged)
+
+    verdict = "passed" if evidence_level_satisfies(achieved_level, required_level) else "not_verified"
+    if requirement == "optional" and verdict != "passed":
+        verdict = "optional_missing"
+    if verdict == "not_verified" and achieved_level:
+        reason = f"required {required_level}, achieved {achieved_level} only"
+    return {
+        "target_type": target,
+        "required_evidence_level": required_level,
+        "achieved_evidence_level": achieved_level,
+        "verdict": verdict,
+        "tooling_status": tooling_status,
+        "artifact_references": artifacts,
+        "reason": reason,
+    }
+
+
+def _implementation_claims(project: dict[str, Any], feature_matrix: dict[str, Any]) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    for claim in project.get("implementation_claims", []) if isinstance(project.get("implementation_claims"), list) else []:
+        claims.append({"source": "implementation_summary", "claim": claim, "verification_status": "informational_only"})
+    for feature in feature_matrix.get("features", []) if isinstance(feature_matrix.get("features"), list) else []:
+        for claim in feature.get("claims", []) if isinstance(feature.get("claims"), list) else []:
+            claims.append({"source": claim.get("agent", "agent"), "feature_id": feature.get("feature_id"), "feature_name": feature.get("feature_name"), "claim": claim.get("claim"), "verification_status": "informational_only"})
+    return claims
+
+
+def _capability_sections(project: dict[str, Any], feature_matrix: dict[str, Any], target_statuses: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    verified: list[dict[str, Any]] = []
+    unverified: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for criterion in project.get("acceptance_criteria", []) if isinstance(project.get("acceptance_criteria"), list) else []:
+        item = {"type": "acceptance_criterion", "id": criterion.get("id"), "title": criterion.get("title"), "status": criterion.get("status"), "required_evidence_level": criterion.get("required_evidence_level")}
+        if criterion.get("status") == "passed":
+            verified.append(item)
+        elif criterion.get("status") == "failed":
+            failed.append(item)
+        else:
+            unverified.append(item)
+    for feature in feature_matrix.get("features", []) if isinstance(feature_matrix.get("features"), list) else []:
+        item = {"type": "feature", "id": feature.get("feature_id"), "title": feature.get("feature_name"), "mandatory": feature.get("mandatory"), "status": feature.get("evidence_status"), "blocking_reasons": feature.get("blocking_reasons", [])}
+        if feature.get("evidence_status") == "passed":
+            verified.append(item)
+        elif feature.get("evidence_status") == "failed":
+            failed.append(item)
+        else:
+            unverified.append(item)
+    for target, record in sorted(target_statuses.items()):
+        item = {"type": "target", "id": target, "title": target, "status": record.get("verdict"), "required_evidence_level": record.get("required_evidence_level"), "achieved_evidence_level": record.get("achieved_evidence_level"), "reason": record.get("reason")}
+        if record.get("verdict") == "passed":
+            verified.append(item)
+        elif record.get("verdict") == "failed":
+            failed.append(item)
+        elif record.get("requirement") == "required":
+            unverified.append(item)
+    return verified, unverified, failed
+
+
+def _known_limitations(spec: dict[str, Any], credential_state: list[dict[str, Any]], policy: dict[str, Any] | None = None, checks: list[dict[str, Any]] | None = None, target_statuses: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    limitations: list[dict[str, Any]] = []
+    for item in _credential_limitations(spec, credential_state):
+        limitations.append({"source": "credentials", "limitation": item})
+    for blocker in (policy or {}).get("blockers", []):
+        limitations.append({"source": "completion_policy", "limitation": blocker})
+    for check in checks or []:
+        if check.get("status") in {"failed", "blocked"}:
+            limitations.append({"source": f"check:{check.get('name')}", "limitation": check.get("name"), "evidence": check.get("evidence")})
+    for target, record in (target_statuses or {}).items():
+        if record.get("requirement") == "required" and record.get("verdict") != "passed":
+            limitations.append({"source": "target_verification", "limitation": f"{target}: {record.get('reason') or record.get('verdict')}", "required_evidence_level": record.get("required_evidence_level"), "achieved_evidence_level": record.get("achieved_evidence_level")})
+    seen = set()
+    unique = []
+    for item in limitations:
+        key = json.dumps(item, sort_keys=True, default=str)
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
 def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     spec = project.get("project_spec", {})
     profiles = _effective_project_profiles(project, root)
     spec = project.get("project_spec", {})
+    quality_settings = ensure_quality_settings(project)
 
     required_files = _mandatory_delivery_files(project)
     missing = [rel for rel in required_files if not os.path.exists(os.path.join(root, rel))]
@@ -5005,6 +5253,11 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
 
     runtime = _runtime_smoke(project, root)
     _add(checks, "runtime_smoke", "passed" if runtime.get("status") == "passed" else "failed", runtime)
+    architecture_report = analyze_architecture(project, root, quality_settings.get("quality_profile"), quality_settings.get("architecture_policy") if isinstance(quality_settings.get("architecture_policy"), dict) else None)
+    project["architecture_review"] = architecture_report
+    _add(checks, "architecture_review", "passed" if architecture_report.get("status") == "passed" else "failed", architecture_report)
+    _add_target_requirement_checks(checks, project, runtime)
+    _add_profile_gate_checks(checks, project)
 
     active_ops = []
     if project.get("_qa_active"):
@@ -5027,6 +5280,30 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
     ac_ok, failed_criteria = _evaluate_acceptance(project, root, qa_result, checks)
     _add(checks, "acceptance_criteria", "passed" if ac_ok else "failed", {"failed_mandatory": [c.get("id") for c in failed_criteria]})
 
+    feature_matrix = ensure_feature_matrix(project, root)
+    matrix_blocks, matrix_blockers = matrix_blocks_completion(feature_matrix, quality_settings.get("quality_profile", "strict_mvp"))
+    _add(
+        checks,
+        "feature_completeness_matrix",
+        "failed" if matrix_blocks else "passed",
+        {"blocking_features": matrix_blockers, "summary": feature_matrix.get("summary", {})},
+    )
+    quality_matrix_gaps = feature_matrix.get("quality_matrix_summary", {}).get("blocking_gaps", []) if isinstance(feature_matrix.get("quality_matrix_summary"), dict) else []
+    if quality_settings.get("quality_profile") == "prototype":
+        quality_matrix_gaps = [gap for gap in quality_matrix_gaps if ":failed" in str(gap) or ":blocked" in str(gap)]
+    _add(
+        checks,
+        "mandatory_test_matrices",
+        "failed" if quality_matrix_gaps else "passed",
+        {
+            "blocking_gaps": quality_matrix_gaps,
+            "summary": feature_matrix.get("quality_matrix_summary", {}),
+            "matrices": feature_matrix.get("quality_matrices", {}),
+            "bugcatcher_report": feature_matrix.get("bugcatcher_report", {}),
+            "sentinel_report": feature_matrix.get("sentinel_report", {}),
+        },
+    )
+
     credential_state = normalize_credential_state(project, root, qa_result)
     credentials_still_required = [credential for credential in credential_state if credential.get("required") and credential.get("blocks_completion") and not credential.get("configured")]
     optional_credentials_missing = [credential for credential in credential_state if not credential.get("required") and not credential.get("configured")]
@@ -5044,10 +5321,19 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
         },
     )
 
+    policy = evaluate_quality_completion(project, checks, blocked_by_credentials=blocked_by_credentials)
+    final_status = policy["final_status"]
+    milestone_status = milestone_from_checks(checks, final_status)
+    target_statuses = project.get("target_verification_status") if isinstance(project.get("target_verification_status"), dict) else {}
+    report_final_status = final_status if policy.get("accepted") else milestone_status
+    verified_capabilities, unverified_capabilities, failed_capabilities = _capability_sections(project, feature_matrix, target_statuses)
+    known_limitations = _known_limitations(spec, credential_state, policy, checks, target_statuses)
+    maturity_badges = evidence_maturity_badges(project, checks, final_status)
+
     status = "passed"
     if blocked_by_credentials:
         status = "blocked_by_credentials"
-    elif any(check["status"] == "failed" for check in checks):
+    elif any(check["status"] == "failed" for check in checks) or not policy.get("accepted"):
         status = "failed"
 
     commands = []
@@ -5058,7 +5344,14 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
         "project_name": project.get("title", "Untitled"),
         "project_type": spec.get("project_type", "generic"),
         "detected_profiles": profiles,
+        "quality_profile": quality_settings.get("quality_profile"),
+        "quality_settings": quality_settings,
         "implementation_summary": f"Generated project at {root}",
+        "implementation_summary_policy": "Informational only. Final status is calculated from evidence gates, matrices, issues, snapshots, and the durable evidence ledger.",
+        "implemented_claims": _implementation_claims(project, feature_matrix),
+        "verified_capabilities": verified_capabilities,
+        "unverified_capabilities": unverified_capabilities,
+        "failed_capabilities": failed_capabilities,
         "acceptance_criteria_summary": [
             {"id": c.get("id"), "title": c.get("title"), "priority": c.get("priority"), "status": c.get("status")}
             for c in project.get("acceptance_criteria", [])
@@ -5068,13 +5361,62 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
         "commands_executed": commands,
         "test_results": {"latest_full_qa_passed": latest_qa_ok, "rounds": (qa_result or {}).get("rounds_completed"), "errors": (qa_result or {}).get("errors", [])},
         "runtime_verification": runtime,
+        "required_targets": [
+            {"target": target, **record}
+            for target, record in sorted(target_statuses.items())
+            if record.get("requirement") == "required"
+        ],
+        "achieved_evidence_levels": {
+            "targets": {target: record.get("achieved_evidence_level") for target, record in sorted(target_statuses.items())},
+            "acceptance_criteria": [
+                {"id": c.get("id"), "required_evidence_level": c.get("required_evidence_level"), "status": c.get("status")}
+                for c in project.get("acceptance_criteria", [])
+            ],
+        },
+        "target_verification_status": target_statuses,
+        "architecture_report": architecture_report,
+        "architecture_findings": architecture_report.get("blocking_findings", []) + architecture_report.get("findings", []),
+        "frontend_target_status": [
+            {
+                "target": target,
+                "label": f"{status.get('target_type', target).replace('_', ' ').title()} {'passed' if status.get('verdict') == 'passed' else 'not verified' if status.get('verdict') == 'not_verified' else status.get('verdict')}",
+                "verdict": status.get("verdict"),
+                "required_evidence_level": status.get("required_evidence_level"),
+                "achieved_evidence_level": status.get("achieved_evidence_level"),
+                "reason": status.get("reason"),
+            }
+            for target, status in sorted(target_statuses.items())
+        ],
         "installation_instructions": spec.get("installation_method", "See README.md"),
         "run_instructions": spec.get("run_method", "See README.md"),
         "credential_state": credential_state,
         "credentials_still_required": credentials_still_required,
-        "known_limitations": _credential_limitations(spec, credential_state),
+        "security_findings": {
+            "secret_scan": {"status": "passed" if secrets_ok else "failed", "files_with_secret_like_values": secret_hits},
+            "security_baseline": project.get("security_baseline", {}) if isinstance(project.get("security_baseline"), dict) else {},
+            "sentinel_report": feature_matrix.get("sentinel_report", {}),
+        },
+        "known_limitations": known_limitations,
         "checks": checks,
+        "feature_matrix": feature_matrix,
+        "feature_matrix_report": feature_matrix_report(feature_matrix),
+        "test_matrix": {
+            "latest_full_qa": {"passed": latest_qa_ok, "rounds": (qa_result or {}).get("rounds_completed"), "errors": (qa_result or {}).get("errors", [])},
+            "mandatory_test_matrices": feature_matrix.get("quality_matrices", {}),
+            "mandatory_test_matrix_summary": feature_matrix.get("quality_matrix_summary", {}),
+        },
         "status": status,
+        "final_status": report_final_status,
+        "milestone_status": milestone_status,
+        "final_maturity_status": {
+            "status": report_final_status,
+            "accepted": bool(policy.get("accepted")),
+            "acceptance_label": "ACCEPTED" if policy.get("accepted") else "MVP ACCEPTANCE INCOMPLETE",
+            "display_label": report_final_status.replace("_", " "),
+            "badges": maturity_badges,
+        },
+        "maturity_badges": maturity_badges,
+        "completion_policy": policy,
         "legend": {"verified": "passed", "not_verified": "failed", "blocked_by_credentials": "blocked", "optional_limitation": "optional failed/non-critical"},
         "audit_engine_version": 2,
     }
@@ -5087,8 +5429,9 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
             title = f"Final Audit: {check.get('name')}"
             key = ("final_delivery_audit", "", title)
             if key not in existing:
+                severity = "critical" if check.get("name") == "architecture_review" and (check.get("evidence") or {}).get("blocking_findings") else "high"
                 project.setdefault("issues", []).append(Issue(
-                    id=f"ISSUE-AUDIT-{check.get('name')}-{snapshot[:12]}", source="final_delivery_audit", severity="high",
+                    id=f"ISSUE-AUDIT-{check.get('name')}-{snapshot[:12]}", source="final_delivery_audit", severity=severity,
                     requirement_id="", criterion_id="", title=title,
                     evidence={"check": check, "project_snapshot": snapshot},
                     reproduction=["Run Final Delivery Audit", f"Inspect failed check: {check.get('name')}"], owner="opencode",
@@ -5107,7 +5450,7 @@ def run_final_delivery_audit(project: dict, root: str, qa_result: dict | None = 
                         verification_method="final_delivery_audit",
                     ).to_dict())
     project["final_delivery_report"] = report
-    project["_final_audit_passed"] = status == "passed"
+    project["_final_audit_passed"] = status == "passed" and bool(policy.get("accepted"))
     persist_audit_run(project, root, report)
     return report
 

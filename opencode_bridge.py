@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+import config_storage
+import secret_store
 from repair_scope import resolve_inside
 
 logger = logging.getLogger(__name__)
@@ -73,19 +75,12 @@ _MODEL_MAP = {
 
 
 def _provider_key(config: dict, provider: str) -> str:
-    return config.get(f"{provider}_key") or config.get(f"{provider}_api_key") or config.get("api_key") or ""
+    return secret_store.get_secret(f"{provider}_key", config) or secret_store.get_secret("api_key", config)
 
 
 def _get_studio_config() -> dict:
-    """Read FreelancerStudio's studio_config.json for provider + api_key."""
-    studio_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio_config.json")
-    if os.path.isfile(studio_cfg_path):
-        try:
-            with open(studio_cfg_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    """Read FreelancerStudio config for provider + api_key."""
+    return config_storage.load_studio_keys()
 
 
 def _get_opencode_config_dir() -> str:

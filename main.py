@@ -9,6 +9,7 @@ import zipfile
 import tarfile
 import mimetypes
 import importlib.util
+import importlib
 import re
 import glob
 import subprocess
@@ -22,10 +23,23 @@ from fastapi.responses import PlainTextResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import threading as _threading
+import config_storage
 import project_state
+import secret_store
 from repair_scope import SUPPORTED_LOCK_FILES, walk_repairable_files
 import opencode_provider as opencode_provider_module
 from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
+from api.accounts import router as accounts_router
+from api.android import router as android_router
+from api.system import router as system_router
+from system_settings import (
+    ALLOWED_SYSTEM_KEYS,
+    DEFAULT_SYSTEM_SETTINGS,
+    SYSTEM_SETTINGS,
+    _get_saved_system_settings,
+    configure_system_settings_storage,
+    reload_system_settings,
+)
 
 # OpenCode bridge (optional — for real AI-assisted code generation)
 try:
@@ -35,6 +49,8 @@ except ImportError:
     _HAS_OPENCODE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or BASE_DIR
+RUNTIME_DIR = os.environ.get("FREELANCERSTUDIO_RUNTIME_DIR") or DATA_DIR
 
 # ─── Shared critical rules injected into ALL agent prompts ─────────────────
 # Все тонкости, нюансы и грабли, выявленные в процессе разработки.
@@ -52,6 +68,10 @@ _CRITICAL_RULES = (
 
 
 def force_import_local_module(module_name, filename):
+    if getattr(sys, "frozen", False):
+        module = importlib.import_module(Path(filename).stem)
+        sys.modules[module_name] = module
+        return module
     full_path = os.path.join(BASE_DIR, filename)
     spec = importlib.util.spec_from_file_location(module_name, full_path)
     module = importlib.util.module_from_spec(spec)
@@ -62,28 +82,17 @@ def force_import_local_module(module_name, filename):
 
 ai_utils = force_import_local_module("ai_utils", "ai_utils.py")
 search_utils = force_import_local_module("search_utils", "search_utils.py")
-ai_developer = force_import_local_module("ai_developer", "ai_developer.py")
 docker_tester = force_import_local_module("docker_tester", "docker_tester.py")
 goldie_agent = force_import_local_module("goldie_agent", "goldie_agent.py")
 qa_engine_module = force_import_local_module("qa_engine_module", "qa_engine.py")
 requirements_checker = force_import_local_module("requirements_checker", "requirements_checker.py")
 proposal_generator = force_import_local_module("proposal_generator", "proposal_generator.py")
-connected_accounts = force_import_local_module("connected_accounts", "connected_accounts.py")
 project_spec_module = force_import_local_module("project_spec_module", "project_spec.py")
 delivery_audit_module = force_import_local_module("delivery_audit_module", "delivery_audit.py")
-
-check_all_req = requirements_checker.check_all
-get_components = requirements_checker.get_components
-install_component = requirements_checker.install_component
+agent_contracts_module = force_import_local_module("agent_contracts_module", "agent_contracts.py")
 
 generate_proposal = proposal_generator.generate_proposal
 refine_spec = proposal_generator.refine_spec
-
-get_accounts = connected_accounts.get_accounts
-add_account_fn = connected_accounts.add_account
-remove_account_fn = connected_accounts.remove_account
-sync_account_fn = connected_accounts.sync_account
-PLATFORMS_LIST = connected_accounts.PLATFORMS
 
 ask_studio_ai_with_history = ai_utils.ask_studio_ai_with_history
 QAEngine = qa_engine_module.QAEngine
@@ -97,24 +106,68 @@ ensure_acceptance_evidence_history = project_spec_module.ensure_acceptance_evide
 append_agent_review_issues = project_spec_module.append_agent_review_issues
 build_product_judge_input = project_spec_module.build_product_judge_input
 normalize_project_mode = project_spec_module.normalize_project_mode
+normalize_project_quality_profile = project_spec_module.normalize_project_quality_profile
 Issue = project_spec_module.Issue
 run_final_delivery_audit = delivery_audit_module.run_final_delivery_audit
 write_delivery_report = delivery_audit_module.write_delivery_report
+from quality_profiles import ensure_quality_settings
+from feature_matrix import apply_implementation_claim, ensure_feature_matrix, load_feature_matrix
+
+ROLE_CONTRACTS = agent_contracts_module.ROLE_CONTRACTS
+recommended_defaults_for = agent_contracts_module.recommended_defaults_for
+role_contract_for = agent_contracts_module.role_contract_for
+
+
+DEVELOPMENT_CORS_ORIGINS = [
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+]
+
+
+def _split_csv_setting(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def _is_production_settings(settings: dict | None = None) -> bool:
+    source = settings if settings is not None else os.environ
+    env_name = str(source.get("FREELANCERSTUDIO_ENV") or source.get("APP_ENV") or source.get("ENV") or "development").strip().lower()
+    return env_name in {"prod", "production"}
+
+
+def get_cors_origins(settings: dict | None = None) -> list[str]:
+    source = settings if settings is not None else os.environ
+    if _is_production_settings(source):
+        return _split_csv_setting(source.get("FREELANCERSTUDIO_CORS_ORIGINS") or source.get("BACKEND_CORS_ORIGINS") or "")
+    extra_origins = _split_csv_setting(source.get("FREELANCERSTUDIO_DEV_CORS_ORIGINS") or "")
+    return list(dict.fromkeys([*DEVELOPMENT_CORS_ORIGINS, *extra_origins]))
+
+
+def get_backend_bind_host(settings: dict | None = None) -> str:
+    source = settings if settings is not None else os.environ
+    requested = str(source.get("BACKEND_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    allow_network = str(source.get("BACKEND_ALLOW_NETWORK") or source.get("FREELANCERSTUDIO_ALLOW_NETWORK_BIND") or "").strip().lower() in {"1", "true", "yes", "on"}
+    if requested in {"0.0.0.0", "::"} and not allow_network:
+        return "127.0.0.1"
+    return requested
+
 
 app = FastAPI(title="FreelancerStudio")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "service": "FreelancerStudio", "port": 8080}
+app.include_router(accounts_router)
+app.include_router(android_router)
+app.include_router(system_router)
 
 
 def _backend_health_available() -> tuple[bool, str]:
@@ -164,40 +217,36 @@ PRODUCT_JUDGE_STATUS_REASONS = {
 
 
 def _mask_secret(value: str) -> str:
-    if not value:
-        return ""
-    if len(value) <= 8:
-        return "*" * len(value)
-    return value[:4] + "*" * max(4, len(value) - 8) + value[-4:]
+    return secret_store.mask_secret(value)
 
 
 def _provider_key_name(provider: str) -> str:
     return f"{provider}_key"
 
 
-def _get_saved_system_settings(data: dict | None = None) -> dict:
-    source = data if data is not None else load_studio_keys()
-    saved = source.get("_system", {}) if isinstance(source.get("_system"), dict) else {}
-    return {**DEFAULT_SYSTEM_SETTINGS, **saved}
+def _provider_api_key(provider: str, data: dict | None = None) -> str:
+    return secret_store.get_secret(_provider_key_name(provider), data if data is not None else load_studio_keys())
 
-CONFIG_FILE = os.path.join(BASE_DIR, "studio_config.json")
-PROJECTS_DATA_DIR = os.path.join(BASE_DIR, "projects_data")
-PROJECTS_STATE_FILE = os.path.join(BASE_DIR, "projects_state.json")
+
+def _legacy_secret_warnings(data: dict | None = None) -> list[dict]:
+    return secret_store.collect_legacy_secret_warnings(data if data is not None else load_studio_keys())
+
+
+CONFIG_FILE = config_storage.CONFIG_FILE  # Compatibility alias; production storage reads config_storage.CONFIG_FILE.
+PROJECTS_DATA_DIR = os.path.join(DATA_DIR, "projects_data")
+PROJECTS_STATE_FILE = os.path.join(DATA_DIR, "projects_state.json")
 
 
 def load_studio_keys():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    return config_storage.load_studio_keys()
 
 
 def save_studio_keys(data):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    config_storage.save_studio_keys(data)
+
+
+configure_system_settings_storage(load_studio_keys, save_studio_keys)
+reload_system_settings()
 
 
 def _load_projects_state():
@@ -329,7 +378,11 @@ class ManualProjectPayload(BaseModel):
     description: str = ""
     initial_description: str = ""
     budget: str = "?"
-    project_mode: str = "mvp"
+    project_mode: str = "strict_mvp"
+    quality_profile: str = ""
+    required_targets: List[str] = []
+    optional_targets: List[str] = []
+    strict_completion_toggles: Dict[str, Any] = {}
 
 
 class ProjectApprovePayload(BaseModel):
@@ -346,7 +399,10 @@ class ProjectClaimPayload(BaseModel):
     description: str = ""
     budget: str = "?"
     url: str = ""
-    project_mode: str = "mvp"
+    project_mode: str = "strict_mvp"
+    quality_profile: str = ""
+    required_targets: List[str] = []
+    optional_targets: List[str] = []
 
 
 active_projects: Dict[str, Dict[str, Any]] = {}
@@ -374,6 +430,8 @@ def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
         "original_request": original_request,
         "description": original_request,
         "project_mode": project_mode,
+        "quality_profile": state.get("quality_profile") or spec.get("quality_profile") or project_mode,
+        "quality_settings": state.get("quality_settings") or spec.get("quality_settings") or {},
         "project_spec": spec,
         "project_profiles": state.get("effective_project_profile", []),
         "product_runtime_profile": state.get("product_runtime_profile", {}),
@@ -384,6 +442,9 @@ def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
         "recovery_status": state.get("recovery_status", "fully_recovered"),
         **state.get("gates", {}),
     }
+    ensure_quality_settings(project, state.get("quality_settings") if isinstance(state.get("quality_settings"), dict) else None)
+    matrix, _ = load_feature_matrix(project["target_path"])
+    project["feature_matrix"] = matrix or ensure_feature_matrix(project, project["target_path"])
     ledger, _ = project_state.load_evidence_ledger(project["target_path"])
     if ledger:
         project["acceptance_evidence"] = {}
@@ -396,7 +457,7 @@ def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _discover_durable_projects() -> None:
-    generated_root = os.path.join(BASE_DIR, "generated_projects")
+    generated_root = os.path.join(DATA_DIR, "generated_projects")
     for discovered in project_state.discover_projects(generated_root):
         if discovered.get("classification") != "fully_recovered":
             continue
@@ -528,16 +589,22 @@ def get_stored_keys():
     masked_keys = {}
     saved_keys = []
     for k, v in keys.items():
-        if v:
+        if v and not k.startswith("_"):
             masked_keys[k.replace("_key", "")] = True
-            if not k.startswith("_"):
-                saved_keys.append(k)
-    masked_keys["has_nvidia"] = bool(keys.get("nvidia_key"))
-    masked_keys["has_openai"] = bool(keys.get("openai_key"))
-    masked_keys["has_anthropic"] = bool(keys.get("anthropic_key"))
-    masked_keys["has_freelancer"] = bool(keys.get("freelancer_client_id") and keys.get("freelancer_client_secret"))
-    masked_keys["has_upwork"] = bool(keys.get("upwork_client_id") and keys.get("upwork_client_secret"))
+            saved_keys.append(k)
+    for provider in AI_PROVIDER_MODELS:
+        key_name = _provider_key_name(provider)
+        if provider != "ollama" and secret_store.get_secret(key_name, keys):
+            masked_keys[provider] = True
+            if key_name not in saved_keys:
+                saved_keys.append(key_name)
+    masked_keys["has_nvidia"] = bool(_provider_api_key("nvidia", keys))
+    masked_keys["has_openai"] = bool(_provider_api_key("openai", keys))
+    masked_keys["has_anthropic"] = bool(_provider_api_key("anthropic", keys))
+    masked_keys["has_freelancer"] = bool(keys.get("freelancer_client_id") and secret_store.get_secret("freelancer_client_secret", keys))
+    masked_keys["has_upwork"] = bool(keys.get("upwork_client_id") and secret_store.get_secret("upwork_client_secret", keys))
     masked_keys["saved_keys"] = sorted(saved_keys)
+    masked_keys["legacy_secret_warnings"] = _legacy_secret_warnings(keys)
     return masked_keys
 
 
@@ -545,11 +612,20 @@ def get_stored_keys():
 def update_stored_keys(payload: KeysUpdatePayload):
     """Saves active user keys locally on disk."""
     data = load_studio_keys()
+    skipped_secrets = []
     for key, value in payload.keys.items():
-        if value:
+        if not value:
+            continue
+        if secret_store.is_secret_key(key):
+            skipped_secrets.append(key)
+        else:
             data[key] = value
     save_studio_keys(data)
-    return {"status": "saved"}
+    response = {"status": "saved"}
+    if skipped_secrets:
+        response["secret_store_warning"] = "Secrets are no longer written to studio_config.json. Set the matching environment variables instead."
+        response["skipped_secrets"] = sorted(skipped_secrets)
+    return response
 
 
 @app.delete("/api/config/keys")
@@ -571,6 +647,41 @@ def delete_stored_key(key_name: str):
     return {"status": "deleted", "key": key_name, "existed": existed}
 
 
+@app.post("/api/config/legacy-secrets/cleanup")
+def cleanup_legacy_secrets():
+    data = load_studio_keys()
+    removed = 0
+    categories = set()
+    for key in list(data):
+        if secret_store.is_secret_key(key):
+            data.pop(key)
+            removed += 1
+            categories.add("provider_keys")
+    github = data.get("_github")
+    if isinstance(github, dict) and "token" in github:
+        github.pop("token")
+        removed += 1
+        categories.add("github_token")
+    accounts = data.get("_accounts")
+    if isinstance(accounts, list):
+        cleaned_accounts, account_removed = _remove_credential_fields(accounts)
+        if account_removed:
+            data["_accounts"] = cleaned_accounts
+            removed += account_removed
+            categories.add("account_credentials")
+    connections = data.get("_provider_connections")
+    if isinstance(connections, list):
+        cleaned_connections, connection_removed = _remove_credential_fields(connections)
+        if connection_removed:
+            data["_provider_connections"] = cleaned_connections
+            removed += connection_removed
+            categories.add("provider_connection_credentials")
+    if removed:
+        config_storage.backup_studio_config()
+        save_studio_keys(data)
+    return {"removed_fields": removed, "categories": sorted(categories)}
+
+
 def _ai_settings_response(data: dict | None = None) -> dict:
     cfg = data if data is not None else load_studio_keys()
     system = _get_saved_system_settings(cfg)
@@ -578,8 +689,7 @@ def _ai_settings_response(data: dict | None = None) -> dict:
     model = system.get("global_model") or AI_PROVIDER_MODELS.get(provider, [""])[0]
     saved = {}
     for name in AI_PROVIDER_MODELS:
-        key = cfg.get(_provider_key_name(name)) or cfg.get(f"{name}_api_key") or ""
-        saved[name] = {"saved": bool(key), "masked": _mask_secret(key)}
+        saved[name] = secret_store.secret_status(_provider_key_name(name), cfg)
     return {
         "provider": provider,
         "model": model,
@@ -587,6 +697,7 @@ def _ai_settings_response(data: dict | None = None) -> dict:
         "saved_keys": saved,
         "opencode_available": _HAS_OPENCODE,
         "connection_providers": PROVIDER_REGISTRY,
+        "legacy_secret_warnings": _legacy_secret_warnings(cfg),
     }
 
 
@@ -670,6 +781,67 @@ def _load_provider_connections(data: dict | None = None) -> list[dict[str, Any]]
     return [item for item in connections if isinstance(item, dict)] if isinstance(connections, list) else []
 
 
+_PROVIDER_CONNECTION_CREDENTIAL_FIELDS = {
+    "apikey",
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "secret",
+    "clientsecret",
+    "password",
+    "passwd",
+    "cookie",
+    "cookies",
+    "authorization",
+    "credential",
+    "credentials",
+    "privatekey",
+}
+
+
+def _is_provider_connection_credential_field(key: Any) -> bool:
+    normalized = "".join(char for char in str(key).lower() if char not in {"_", "-", " "})
+    return normalized in _PROVIDER_CONNECTION_CREDENTIAL_FIELDS
+
+
+def _sanitize_provider_connection_for_storage(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_provider_connection_for_storage(item)
+            for key, item in value.items()
+            if not _is_provider_connection_credential_field(key)
+        }
+    if isinstance(value, list):
+        return [_sanitize_provider_connection_for_storage(item) for item in value]
+    return value
+
+
+def _remove_credential_fields(value: Any) -> tuple[Any, int]:
+    if isinstance(value, dict):
+        cleaned = {}
+        removed = 0
+        for key, item in value.items():
+            if _is_provider_connection_credential_field(key):
+                removed += 1
+                continue
+            cleaned[key], nested_removed = _remove_credential_fields(item)
+            removed += nested_removed
+        return cleaned, removed
+    if isinstance(value, list):
+        cleaned = []
+        removed = 0
+        for item in value:
+            nested, nested_removed = _remove_credential_fields(item)
+            cleaned.append(nested)
+            removed += nested_removed
+        return cleaned, removed
+    return value, 0
+
+
+def _store_provider_connections(data: dict, connections: list[dict[str, Any]]) -> None:
+    data["_provider_connections"] = _sanitize_provider_connection_for_storage(connections)
+
+
 def _model_capabilities(provider: str, model: str) -> dict[str, Any]:
     caps = MODEL_CAPABILITY_OVERRIDES.get((provider or "").lower(), {}).get(model)
     if caps is None:
@@ -708,7 +880,7 @@ def _filter_supported_generation(provider: str, model: str, params: dict[str, An
 
 
 def _provider_credential_exists(data: dict, provider: str) -> bool:
-    return provider == "ollama" or bool(data.get(_provider_key_name(provider)) or data.get(f"{provider}_api_key"))
+    return provider == "ollama" or bool(_provider_api_key(provider, data))
 
 
 def _provider_connection_id(provider: str) -> str:
@@ -769,7 +941,7 @@ def _upsert_provider_connection(data: dict, connection: dict[str, Any]) -> None:
     else:
         merged = {**connections[existing], **connection}
         connections[existing] = merged
-    data["_provider_connections"] = connections
+    _store_provider_connections(data, connections)
 
 
 def _ensure_provider_connection_records(data: dict) -> bool:
@@ -799,12 +971,12 @@ def _ensure_provider_connection_records(data: dict) -> bool:
         existing_ids.add(connection_id)
         changed = True
     if changed:
-        data["_provider_connections"] = connections
+        _store_provider_connections(data, connections)
     return changed
 
 
 def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
-    safe = {key: value for key, value in connection.items() if key not in {"api_key", "token", "secret", "password"}}
+    safe = _sanitize_provider_connection_for_storage(connection)
     safe["connection_type"] = _canonical_connection_type(str(safe.get("connection_type") or ""), str(safe.get("provider") or ""))
     if safe.get("connection_type") == "opencode_oauth_bridge":
         configured = safe.get("configured_model") or ""
@@ -996,7 +1168,7 @@ def refresh_provider_connection_models(connection_id: str):
     connection["connection_type"] = ctype
     connection["models_refreshed_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     connections[index] = connection
-    data["_provider_connections"] = connections
+    _store_provider_connections(data, connections)
     save_studio_keys(data)
     return {"status": "refreshed", "connection": _sanitize_provider_connection(connection)}
 
@@ -1016,7 +1188,7 @@ def save_opencode_connection(payload: OpenCodeConnectionPayload):
     connections = _load_provider_connections(data)
     connections.append(connection.to_dict())
     connections[-1]["connection_type"] = "opencode_oauth_bridge"
-    data["_provider_connections"] = connections
+    _store_provider_connections(data, connections)
     save_studio_keys(data)
     return {"status": "saved", "connection": connection.to_dict(), "message": "OpenCode authentication remains owned by OpenCode; no token was requested or stored."}
 
@@ -1064,17 +1236,17 @@ def test_provider_connection(connection_id: str):
         raise HTTPException(404, "Provider connection not found")
     if connections[index].get("connection_type") == "api_provider":
         provider = str(connections[index].get("provider") or "").lower()
-        key = data.get(_provider_key_name(provider)) or data.get(f"{provider}_api_key") or ""
+        key = _provider_api_key(provider, data)
         ok, message = _test_provider_key(provider, key)
         connection = _general_provider_connection(data, provider, connections[index].get("configured_model", ""), ok, {"status": "ok" if ok else "error", "message": message})
         connections[index] = connection
-        data["_provider_connections"] = connections
+        _store_provider_connections(data, connections)
         save_studio_keys(data)
         return {"status": "ok" if ok else "error", "connection": _sanitize_provider_connection(connection), "message": message}
     connection = OpenCodeBridgeConnection.from_dict(connections[index])
     result = connection.test_connection(include_vision=True)
     connections[index] = connection.to_dict()
-    data["_provider_connections"] = connections
+    _store_provider_connections(data, connections)
     save_studio_keys(data)
     return {"status": "ok" if result["health_status"] == "available_authenticated" else "error", "connection": _sanitize_provider_connection(connections[index]), **result}
 
@@ -1092,14 +1264,16 @@ def save_ai_settings(payload: AISettingsPayload):
     data["_system"] = system
     SYSTEM_SETTINGS["global_provider"] = provider
     SYSTEM_SETTINGS["global_model"] = model
-    if payload.api_key and payload.api_key.strip():
-        data[_provider_key_name(provider)] = payload.api_key.strip()
+    secret_warning = "" if not payload.api_key.strip() else "API key was not written to studio_config.json. Set the matching environment variable to persist it."
     _upsert_provider_connection(data, _general_provider_connection(data, provider, model))
     global_ai = _load_global_ai_config(data)
     global_ai.update({"connection_id": _provider_connection_id(provider), "provider": provider, "model": model, "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")})
     data["_global_ai"] = global_ai
     save_studio_keys(data)
-    return {"status": "saved", **_ai_settings_response(data)}
+    response = {"status": "saved", **_ai_settings_response(data)}
+    if secret_warning:
+        response["secret_store_warning"] = secret_warning
+    return response
 
 
 @app.delete("/api/config/ai/key/{provider}")
@@ -1158,14 +1332,15 @@ def test_ai_provider(payload: ProviderTestPayload):
     provider = (payload.provider or system.get("global_provider", "nvidia")).strip().lower()
     if provider not in AI_PROVIDER_MODELS:
         raise HTTPException(400, "Unsupported provider")
-    key = payload.api_key.strip() if payload.api_key else (data.get(_provider_key_name(provider)) or data.get(f"{provider}_api_key") or "")
+    key = payload.api_key.strip() if payload.api_key else _provider_api_key(provider, data)
     ok, message = _test_provider_key(provider, key)
-    if payload.api_key and payload.api_key.strip() and ok:
-        data[_provider_key_name(provider)] = payload.api_key.strip()
     current_model = system.get("global_model") if system.get("global_provider") == provider else ""
     _upsert_provider_connection(data, _general_provider_connection(data, provider, current_model, ok, {"status": "ok" if ok else "error", "message": message}))
     save_studio_keys(data)
-    return {"status": "ok" if ok else "error", "provider": provider, "key_saved": bool(key), "message": message, "connections": _frontend_provider_connections(data)}
+    response = {"status": "ok" if ok else "error", "provider": provider, "key_saved": bool(key), "message": message, "connections": _frontend_provider_connections(data)}
+    if payload.api_key and payload.api_key.strip():
+        response["secret_store_warning"] = "The tested API key was not written to studio_config.json. Set the matching environment variable to persist it."
+    return response
 
 
 @app.post("/api/config/ai/apply-opencode")
@@ -1211,7 +1386,7 @@ def verify_ai_settings():
     system = _get_saved_system_settings(data)
     provider = system.get("global_provider", "nvidia")
     model = system.get("global_model") or AI_PROVIDER_MODELS.get(provider, [""])[0]
-    key_exists = provider == "ollama" or bool(data.get(_provider_key_name(provider)) or data.get(f"{provider}_api_key"))
+    key_exists = provider == "ollama" or bool(_provider_api_key(provider, data))
     opencode_generated = False
     mcp_exists = False
     if _HAS_OPENCODE:
@@ -1230,52 +1405,6 @@ def verify_ai_settings():
         "opencode_config_generated": opencode_generated,
         "mcp_config_exists": mcp_exists,
     }
-
-
-ALLOWED_SYSTEM_KEYS = [
-    "global_provider", "global_model",
-    "theme", "accent_color", "animation_speed", "font_size",
-    "language", "auto_save", "notifications_enabled",
-    "default_budget", "polling_interval", "log_detail",
-    "vscode_path", "pycharm_path",
-]
-
-
-@app.get("/api/config/system")
-def get_system_config():
-    all_keys = load_studio_keys()
-    saved = all_keys.get("_system", {})
-    merged = {**DEFAULT_SYSTEM_SETTINGS, **SYSTEM_SETTINGS, **saved}
-    return {k: merged.get(k, DEFAULT_SYSTEM_SETTINGS.get(k)) for k in ALLOWED_SYSTEM_KEYS}
-
-
-@app.post("/api/config/system")
-def update_system_config(payload: Dict[str, Any]):
-    data = load_studio_keys()
-    saved = data.get("_system", {})
-    for key in ALLOWED_SYSTEM_KEYS:
-        if key in payload:
-            saved[key] = payload[key]
-            SYSTEM_SETTINGS[key] = payload[key]
-    data["_system"] = saved
-    save_studio_keys(data)
-    return {"status": "saved"}
-
-
-@app.get("/api/system/requirements")
-def list_requirements():
-    return {"components": get_components()}
-
-
-@app.post("/api/system/check")
-def check_requirements():
-    return {"results": check_all_req()}
-
-
-@app.post("/api/system/install/{component_id}")
-def install_requirement(component_id: str):
-    result = install_component(component_id)
-    return result
 
 
 @app.post("/api/proposals/generate")
@@ -1309,34 +1438,6 @@ def refine_project_spec(payload: Dict[str, Any]):
         model=model,
         temperature=agent_data.get("temperature", 0.2),
     )
-    return result
-
-
-@app.get("/api/accounts")
-def list_accounts():
-    return {"accounts": get_accounts(), "platforms": PLATFORMS_LIST}
-
-
-@app.post("/api/accounts")
-def create_account(payload: Dict[str, Any]):
-    platform = payload.get("platform", "")
-    label = payload.get("label", "")
-    credentials = payload.get("credentials", {})
-    if platform not in PLATFORMS_LIST:
-        raise HTTPException(400, f"Unknown platform: {platform}")
-    acc_id = add_account_fn(platform, label, credentials)
-    return {"id": acc_id, "status": "connected"}
-
-
-@app.delete("/api/accounts/{account_id}")
-def delete_account(account_id: str):
-    remove_account_fn(account_id)
-    return {"status": "removed"}
-
-
-@app.post("/api/accounts/{account_id}/sync")
-def sync_account(account_id: str):
-    result = sync_account_fn(account_id)
     return result
 
 
@@ -1451,11 +1552,15 @@ def _state_display_name(state: str) -> str:
 
 
 def _delivery_gates_satisfied(project: dict) -> bool:
+    settings = ensure_quality_settings(project)
+    require_product_judge = bool(settings.get("require_product_judge", True))
+    report = project.get("final_delivery_report") if isinstance(project.get("final_delivery_report"), dict) else {}
     return bool(
         project.get("_generation_finished")
         and project.get("_qa_passed")
         and project.get("_final_audit_passed")
-        and project.get("_product_judge_passed")
+        and (project.get("_product_judge_passed") or not require_product_judge)
+        and (report.get("completion_policy", {}).get("accepted") is True or report.get("final_status") in {"PROTOTYPE_VALIDATED", "STRICT_MVP_ACCEPTED", "PRODUCTION_CANDIDATE_ACCEPTED", "PRODUCTION_RELEASE_ACCEPTED"})
     )
 
 
@@ -1482,7 +1587,7 @@ def _set_project_status(project: dict, new_state: str, *, reason: str = "", forc
             project["logs"].append("[PROJECT STATE] Completion blocked (project is cancelled).")
             return False
         if not _delivery_gates_satisfied(project):
-            project["logs"].append("[PROJECT STATE] Completion blocked (generation, QA, final audit, and Product Judge are mandatory).")
+            project["logs"].append("[PROJECT STATE] Completion blocked (quality profile gates are not satisfied).")
             return False
 
     if not force and not _can_transition(project, new_state):
@@ -1783,15 +1888,15 @@ def _save_phase(project: dict, phase_name: str):
 
 
 DEFAULT_AGENTS = {
-    "alex": {"name": "Alex", "role": "project_manager", "emoji": "👔", "color": "#6366f1", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.2},
-    "maya": {"name": "Maya", "role": "analyst", "emoji": "🎯", "color": "#a855f7", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.2},
-    "elena": {"name": "Elena", "role": "designer", "emoji": "🎨", "color": "#ec4899", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.2},
-    "codex": {"name": "Codex", "role": "developer", "emoji": "💻", "color": "#0ea5e9", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.2},
-    "bugcatcher": {"name": "BugCatcher", "role": "tester", "emoji": "🐛", "color": "#10b981", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.2},
-    "sentinel": {"name": "Sentinel", "role": "security", "emoji": "🛡️", "color": "#ef4444", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.1},
-    "lupa": {"name": "Lupa", "role": "code_reviewer", "emoji": "🔍", "color": "#8b5cf6", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.1},
-    "goldie": {"name": "Goldie", "role": "sales", "emoji": "💰", "color": "#f59e0b", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, "temperature": 0.2},
-    "product_judge": {"name": "Product Judge", "role": "product_judge", "emoji": "⚖", "color": "#f97316", "enabled": True, "builtin": True, "status": "idle", "provider": "", "model": "", "use_global": False, "temperature": 0.3, "top_p": 0.9, "top_k": None, "auto_select_independent": True},
+    "alex": {"name": "Alex", "role": "project_manager", "emoji": "👔", "color": "#6366f1", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("alex")},
+    "maya": {"name": "Maya", "role": "analyst", "emoji": "🎯", "color": "#a855f7", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("maya")},
+    "elena": {"name": "Elena", "role": "designer", "emoji": "🎨", "color": "#ec4899", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("elena")},
+    "codex": {"name": "Codex", "role": "developer", "emoji": "💻", "color": "#0ea5e9", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("codex")},
+    "bugcatcher": {"name": "BugCatcher", "role": "tester", "emoji": "🐛", "color": "#10b981", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("bugcatcher")},
+    "sentinel": {"name": "Sentinel", "role": "security", "emoji": "🛡️", "color": "#ef4444", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("sentinel")},
+    "lupa": {"name": "Lupa", "role": "code_reviewer", "emoji": "🔍", "color": "#8b5cf6", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("lupa")},
+    "goldie": {"name": "Goldie", "role": "sales", "emoji": "💰", "color": "#f59e0b", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("goldie")},
+    "product_judge": {"name": "Product Judge", "role": "product_judge", "emoji": "⚖", "color": "#f97316", "enabled": True, "builtin": True, "status": "idle", "provider": "", "model": "", "use_global": False, **recommended_defaults_for("product_judge"), "top_k": None, "auto_select_independent": True},
 }
 
 _AI_SPEED_HINT = (
@@ -1911,10 +2016,17 @@ def get_agent_prompt(agent_id: str) -> str:
     cfg = agent_configs.get(agent_id, {})
     if cfg.get("custom_prompt"):
         return cfg["custom_prompt"]
-    return AGENT_SYSTEM_PROMPTS.get(
+    prompt = AGENT_SYSTEM_PROMPTS.get(
         agent_id,
         "You are a professional AI assistant. Be concise and helpful."
     )
+    contract = role_contract_for(agent_id)
+    if contract:
+        prompt += "\n\nROLE CONTRACT: Return role-specific structured artifacts matching this contract. "
+        prompt += f"Required fields: {', '.join(contract.get('required_fields', []))}. "
+        prompt += f"Feeds: {', '.join(contract.get('feeds', []))}. "
+        prompt += f"Cannot: {', '.join(contract.get('cannot', []))}. Malformed output is invalid_agent_output, not success."
+    return prompt
 
 
 def get_fast_agent_prompt(agent_id: str) -> str:
@@ -1929,26 +2041,6 @@ def get_fast_agent_prompt(agent_id: str) -> str:
 def get_agent_provider_model(agent_id: str) -> tuple:
     effective = resolve_effective_agent_ai_config(agent_id)
     return effective["provider"], effective["model"]
-
-DEFAULT_SYSTEM_SETTINGS: Dict[str, Any] = {
-    "global_provider": "nvidia",
-    "global_model": "meta/llama-3.3-70b-instruct",
-    "theme": "dark",
-    "accent_color": "#0ea5e9",
-    "animation_speed": "normal",
-    "font_size": "medium",
-    "language": "en",
-    "auto_save": True,
-    "notifications_enabled": True,
-    "default_budget": "500",
-    "polling_interval": 3000,
-    "log_detail": "normal",
-    "vscode_path": "code",
-    "pycharm_path": "pycharm",
-}
-
-SYSTEM_SETTINGS: Dict[str, Any] = _get_saved_system_settings()
-
 
 def _agent_default_config(agent_id: str) -> dict[str, Any]:
     if agent_id in DEFAULT_AGENTS:
@@ -2059,6 +2151,7 @@ def resolve_effective_agent_ai_config(agent_id: str) -> dict[str, Any]:
         },
         "capability_validation": validation,
         "capability_status": "compatible" if validation.get("valid") else "incompatible",
+        "recommended_defaults": recommended_defaults_for(agent_id),
     }
 
 
@@ -2177,6 +2270,9 @@ def get_agents():
         entry["use_global_model"] = effective["use_global_model"]
         entry["use_global_generation_parameters"] = effective["use_global_generation_parameters"]
         entry["effective_ai"] = effective
+        entry["role_contract"] = role_contract_for(agent_id)
+        entry["role_contract_summary"] = entry["role_contract"].get("summary", "")
+        entry["recommended_defaults"] = recommended_defaults_for(agent_id)
         if agent_id == "product_judge":
             entry["connection_id"] = cfg.get("connection_id", "")
             readiness = _product_judge_status({**agent, **cfg})
@@ -2213,6 +2309,9 @@ def get_agents():
         entry["use_global_model"] = effective["use_global_model"]
         entry["use_global_generation_parameters"] = effective["use_global_generation_parameters"]
         entry["effective_ai"] = effective
+        entry["role_contract"] = role_contract_for(cid)
+        entry["role_contract_summary"] = entry["role_contract"].get("summary", "")
+        entry["recommended_defaults"] = recommended_defaults_for(cid)
         if cfg.get("custom_prompt"):
             entry["custom_prompt"] = cfg["custom_prompt"]
         if cfg.get("save_path"):
@@ -2581,6 +2680,7 @@ def create_manual_project(payload: ManualProjectPayload):
     title = payload.title or payload.jobTitle or "Untitled Project"
     desc = payload.initial_description or payload.description or ""
     project_mode = normalize_project_mode(payload.project_mode)
+    quality_profile = normalize_project_quality_profile(payload.quality_profile or project_mode, payload.project_mode)
     project = {
         "project_id": project_id,
         "id": project_id,
@@ -2589,11 +2689,25 @@ def create_manual_project(payload: ManualProjectPayload):
         "jobTitle": title,
         "description": desc,
         "project_mode": project_mode,
+        "quality_profile": quality_profile,
         "budget": payload.budget or "?",
         "status": "created",
         "chat_history": [],
         "logs": [],
     }
+    settings = ensure_quality_settings(project)
+    if payload.required_targets:
+        settings["required_targets"] = [target for target in payload.required_targets if target]
+        for target in settings["required_targets"]:
+            settings.setdefault("target_requirements", {})[target] = "required"
+    if payload.optional_targets:
+        settings["optional_targets"] = [target for target in payload.optional_targets if target]
+        for target in settings["optional_targets"]:
+            settings.setdefault("target_requirements", {})[target] = "optional"
+    if isinstance(payload.strict_completion_toggles, dict):
+        for key in ("require_real_e2e", "require_rbac_matrix", "require_security_baseline", "block_on_mandatory_not_verified"):
+            if key in payload.strict_completion_toggles:
+                settings[key] = bool(payload.strict_completion_toggles[key])
     _reset_delivery_gates(project)
     active_projects[project_id] = project
     _save_projects_state()
@@ -3002,29 +3116,6 @@ def _pipeline_bugcatcher_tdd(project, sprint_plan, design_system):
         project["logs"].append(f"BugCatcher TDD parse error: {e}")
     project["logs"].append("BugCatcher (TDD): No tests generated, Codex will create without test specs")
     return []
-
-
-def _pipeline_codex_generate(project, sprint_plan, design_system, tdd_tests):
-    context = _build_agent_context(project, sprint_plan=sprint_plan, design_system=design_system, tdd_tests=tdd_tests)
-    chat = project.get("chat_history",[])
-    spec = "\n".join([m.get("content","") for m in chat if m.get("role") in ("user","assistant")]) or project.get("description","")
-    enhanced_spec = f"Project: {project.get('title','')}\nDescription: {project.get('description','')}\n\nSpec:\n{spec}\n\n{context}"
-
-    provider, model = get_agent_provider_model("codex")
-    agent_data = agent_configs.get("codex", {})
-    project_id = project.get("project_id", "")
-
-    def on_progress(task):
-        set_agent_status("codex", "working", task, project_id)
-
-    return ai_developer.run_ai_development_cycle(
-        project_title=project["title"],
-        chat_history=[{"role":"user","content":enhanced_spec}],
-        provider=provider,
-        model_name=model,
-        temperature=agent_data.get("temperature", 0.2),
-        progress_callback=on_progress,
-    )
 
 
 def _read_project_files(target_path, generated_data, max_files=10, max_chars=3000):
@@ -4577,7 +4668,8 @@ def _run_final_delivery_audit(project: dict, target_path: str, project_id: str, 
             errors.append(f"{check.get('name')}: {check.get('evidence')}")
     if report.get("status") == "blocked_by_credentials":
         errors.append("Final audit blocked by missing credentials")
-    ok = not errors and report.get("status") == "passed"
+    policy = report.get("completion_policy", {}) if isinstance(report.get("completion_policy"), dict) else {}
+    ok = not errors and report.get("status") == "passed" and policy.get("accepted") is True
     project.setdefault("logs", []).append(f"[FINAL AUDIT] {'Passed' if ok else 'Failed'}")
     return ok, errors
 
@@ -4695,7 +4787,7 @@ def async_studio_production_pipeline(project_id: str):
         if codex_save_path:
             target_path = os.path.join(codex_save_path, project_dir_name)
         else:
-            target_path = os.path.join(BASE_DIR, "generated_projects", project_dir_name)
+            target_path = os.path.join(DATA_DIR, "generated_projects", project_dir_name)
         project["target_path"] = target_path
 
         if _should_execute_phase(project, "coding"):
@@ -4765,6 +4857,11 @@ def async_studio_production_pipeline(project_id: str):
                         if oc_result["success"]:
                             project["logs"].append(f"OpenCode task completed (session {oc_result.get('session_id','?')})")
                             project["logs"].append(f"Summary: {oc_result.get('summary','')[:200]}")
+                            summary_text = str(oc_result.get("summary", ""))
+                            for feature in (project.get("feature_matrix") or {}).get("features", []):
+                                name = str(feature.get("feature_name", ""))
+                                if name and name.lower() in summary_text.lower():
+                                    apply_implementation_claim(project, feature.get("description") or name, summary_text, "codex", target_path)
                             # Read back generated files from disk
                             generated_data = {"files": {}, "file_tree": {}}
                             for root, dirs, files in os.walk(target_path):
@@ -5034,19 +5131,20 @@ def async_studio_production_pipeline(project_id: str):
                     return
                 if final_ok:
                     _mark_final_audit_passed(project, True)
-                    _save_phase(project, "product_judge")
-                    _set_project_status(project, "product_judge")
-                    judge_ok, judge_errors = _run_product_judge_stage(project, qa_result)
-                    if _abort_if_cancelled(project, "after product judge"):
-                        return
-                    if judge_ok:
-                        _mark_product_judge_passed(project, True)
-                    else:
-                        _mark_product_judge_passed(project, False)
-                        project["product_judge_errors"] = judge_errors
-                        _set_project_status(project, "failed_qa", reason="product judge objections")
-                        project["logs"].append("Product Judge found unresolved objections. Project is not completed.")
-                        return
+                    if ensure_quality_settings(project).get("require_product_judge", True):
+                        _save_phase(project, "product_judge")
+                        _set_project_status(project, "product_judge")
+                        judge_ok, judge_errors = _run_product_judge_stage(project, qa_result)
+                        if _abort_if_cancelled(project, "after product judge"):
+                            return
+                        if judge_ok:
+                            _mark_product_judge_passed(project, True)
+                        else:
+                            _mark_product_judge_passed(project, False)
+                            project["product_judge_errors"] = judge_errors
+                            _set_project_status(project, "failed_qa", reason="product judge objections")
+                            project["logs"].append("Product Judge found unresolved objections. Project is not completed.")
+                            return
                     if _set_project_status(project, "completed"):
                         project["logs"].append("ALL VERIFICATIONS PASSED! Project fully verified and ready for delivery!")
                     else:
@@ -5098,7 +5196,7 @@ def retry_project_qa(project_id: str, background_tasks: BackgroundTasks):
     if project.get("status") in ("completed", "cancelled"):
         raise HTTPException(400, f"Cannot retry QA for project in terminal state: {project.get('status')}")
     if project.get("status") == "failed_final_audit":
-        target_path = str(project.get("target_path") or os.path.join(BASE_DIR, "generated_projects", project['title'].replace(' ', '_').lower()))
+        target_path = str(project.get("target_path") or os.path.join(DATA_DIR, "generated_projects", project['title'].replace(' ', '_').lower()))
         if _repair_final_audit_issues(project, target_path, project_id):
             return {"status": "repairing", "message": "Final Audit repair started."}
     if not _set_project_status(project, "verifying"):
@@ -5111,12 +5209,12 @@ def retry_project_qa(project_id: str, background_tasks: BackgroundTasks):
     _mark_final_audit_passed(project, False)
 
     dir_name = project['title'].replace(' ', '_').lower()
-    target_path = os.path.join(BASE_DIR, "generated_projects", dir_name)
+    target_path = os.path.join(DATA_DIR, "generated_projects", dir_name)
 
     if not os.path.exists(target_path):
         # fallback: try old naming with uuid prefix
         old_name = f"{project_id}_{dir_name}"
-        old_path = os.path.join(BASE_DIR, "generated_projects", old_name)
+        old_path = os.path.join(DATA_DIR, "generated_projects", old_name)
         if os.path.exists(old_path):
             target_path = old_path
         else:
@@ -5164,19 +5262,20 @@ def _run_qa_only(project_id: str, target_path: str):
             return
         if final_ok:
             _mark_final_audit_passed(project, True)
-            _save_phase(project, "product_judge")
-            _set_project_status(project, "product_judge")
-            judge_ok, judge_errors = _run_product_judge_stage(project, qa_result)
-            if _abort_if_cancelled(project, "after retry product judge"):
-                return
-            if judge_ok:
-                _mark_product_judge_passed(project, True)
-            else:
-                _mark_product_judge_passed(project, False)
-                project["product_judge_errors"] = judge_errors
-                _set_project_status(project, "failed_qa", reason="product judge objections")
-                project["logs"].append("❌ Retry passed QA/final audit but Product Judge found unresolved objections.")
-                return
+            if ensure_quality_settings(project).get("require_product_judge", True):
+                _save_phase(project, "product_judge")
+                _set_project_status(project, "product_judge")
+                judge_ok, judge_errors = _run_product_judge_stage(project, qa_result)
+                if _abort_if_cancelled(project, "after retry product judge"):
+                    return
+                if judge_ok:
+                    _mark_product_judge_passed(project, True)
+                else:
+                    _mark_product_judge_passed(project, False)
+                    project["product_judge_errors"] = judge_errors
+                    _set_project_status(project, "failed_qa", reason="product judge objections")
+                    project["logs"].append("❌ Retry passed QA/final audit but Product Judge found unresolved objections.")
+                    return
             if _set_project_status(project, "completed"):
                 project["logs"].append("✅ RETRY PASSED! All verifications successful!")
             else:
@@ -5277,117 +5376,15 @@ def get_project_dir(project_id: str):
         raise HTTPException(404, "Project not found")
     project = active_projects[project_id]
     dir_name = project['title'].replace(' ', '_').lower()
-    target_path = os.path.join(BASE_DIR, "generated_projects", dir_name)
+    target_path = os.path.join(DATA_DIR, "generated_projects", dir_name)
     if not os.path.exists(target_path):
         old_name = f"{project_id}_{dir_name}"
-        old_path = os.path.join(BASE_DIR, "generated_projects", old_name)
+        old_path = os.path.join(DATA_DIR, "generated_projects", old_name)
         if os.path.exists(old_path):
             target_path = old_path
         else:
             raise HTTPException(404, "Project directory not yet generated")
     return {"project_id": project_id, "path": target_path}
-
-
-def _open_local_path(raw_path: str):
-    """Open a local project folder from the backend for browser-based sessions."""
-    if not raw_path:
-        raise HTTPException(status_code=400, detail="Path is required")
-    target_path = os.path.abspath(raw_path)
-    if not os.path.exists(target_path):
-        raise HTTPException(status_code=404, detail="Path not found")
-    try:
-        if os.name == "nt":
-            subprocess.Popen(["explorer", target_path])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", target_path])
-        else:
-            subprocess.Popen(["xdg-open", target_path])
-        return {"status": "opened", "path": target_path}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def _editor_candidates(editor: str) -> list[str]:
-    editor = (editor or "").strip().lower()
-    if editor in ("vscode", "vs_code", "code"):
-        return [
-            SYSTEM_SETTINGS.get("vscode_path", "code"),
-            "code",
-            "code.cmd",
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd"),
-            os.path.expandvars(r"%ProgramFiles%\Microsoft VS Code\bin\code.cmd"),
-            os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft VS Code\bin\code.cmd"),
-        ]
-    if editor in ("pycharm", "pycharm64"):
-        jetbrains_roots = [
-            os.path.expandvars(r"%ProgramFiles%\JetBrains\PyCharm*\bin\pycharm64.exe"),
-            os.path.expandvars(r"%ProgramFiles(x86)%\JetBrains\PyCharm*\bin\pycharm64.exe"),
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\JetBrains\PyCharm*\bin\pycharm64.exe"),
-        ]
-        discovered = []
-        for pattern in jetbrains_roots:
-            discovered.extend(sorted(glob.glob(pattern), reverse=True))
-        return [
-            SYSTEM_SETTINGS.get("pycharm_path", "pycharm"),
-            "pycharm",
-            "pycharm64",
-            os.path.expandvars(r"%LOCALAPPDATA%\JetBrains\Toolbox\scripts\pycharm.cmd"),
-            os.path.expandvars(r"%ProgramFiles%\JetBrains\PyCharm Community Edition 2024.3\bin\pycharm64.exe"),
-            os.path.expandvars(r"%ProgramFiles%\JetBrains\PyCharm 2024.3\bin\pycharm64.exe"),
-            os.path.expandvars(r"%ProgramFiles%\JetBrains\PyCharm Community Edition 2024.2\bin\pycharm64.exe"),
-            os.path.expandvars(r"%ProgramFiles%\JetBrains\PyCharm 2024.2\bin\pycharm64.exe"),
-        ] + discovered
-    configured = SYSTEM_SETTINGS.get(f"{editor}_path")
-    return [configured or editor]
-
-
-def _resolve_editor_executable(editor: str) -> str:
-    checked = []
-    for candidate in _editor_candidates(editor):
-        if not candidate:
-            continue
-        candidate = os.path.expandvars(os.path.expanduser(str(candidate).strip().strip('"')))
-        if not candidate or candidate in checked:
-            continue
-        checked.append(candidate)
-        if os.path.isabs(candidate) and os.path.exists(candidate):
-            return candidate
-        found = shutil.which(candidate)
-        if found:
-            return found
-    raise HTTPException(status_code=404, detail=f"Editor '{editor}' not found. Checked: {', '.join(checked[:8])}")
-
-
-def _open_editor(editor: str, raw_path: str):
-    if not raw_path:
-        raise HTTPException(status_code=400, detail="Path is required")
-    target_path = os.path.abspath(raw_path)
-    if not os.path.exists(target_path):
-        raise HTTPException(status_code=404, detail="Project path not found")
-    executable = _resolve_editor_executable(editor)
-    try:
-        if os.name == "nt" and executable.lower().endswith((".cmd", ".bat")):
-            subprocess.Popen(subprocess.list2cmdline([executable, target_path]), shell=True)
-        else:
-            subprocess.Popen([executable, target_path])
-        return {"status": "opened", "editor": editor, "executable": executable, "path": target_path}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to open editor: {e}")
-
-
-@app.post("/api/system/open-path")
-def open_system_path(payload: dict):
-    return _open_local_path(payload.get("path", ""))
-
-
-@app.get("/api/system/open-path")
-def open_system_path_get(path: str = Query(...)):
-    return _open_local_path(path)
-
-
-@app.post("/api/system/open-editor")
-def open_system_editor(payload: dict):
-    return _open_editor(payload.get("editor", ""), payload.get("path", ""))
 
 
 @app.get("/api/projects/{project_id}/dir/changes")
@@ -5396,10 +5393,10 @@ def get_project_changes(project_id: str, since: float = 0):
         raise HTTPException(404, "Project not found")
     project = active_projects[project_id]
     dir_name = project['title'].replace(' ', '_').lower()
-    target_path = os.path.join(BASE_DIR, "generated_projects", dir_name)
+    target_path = os.path.join(DATA_DIR, "generated_projects", dir_name)
     if not os.path.exists(target_path):
         old_name = f"{project_id}_{dir_name}"
-        old_path = os.path.join(BASE_DIR, "generated_projects", old_name)
+        old_path = os.path.join(DATA_DIR, "generated_projects", old_name)
         if os.path.exists(old_path):
             target_path = old_path
         else:
@@ -5486,6 +5483,8 @@ def get_completed_projects():
 
 @app.post("/api/projects/claim")
 def claim_project(payload: ProjectClaimPayload, background_tasks: BackgroundTasks):
+    project_mode = normalize_project_mode(payload.project_mode)
+    quality_profile = normalize_project_quality_profile(payload.quality_profile or project_mode, payload.project_mode)
     project_id = str(uuid.uuid4())
     title = payload.title or f"Job from {payload.platform}"
     project = {
@@ -5495,13 +5494,23 @@ def claim_project(payload: ProjectClaimPayload, background_tasks: BackgroundTask
         "title": title,
         "jobTitle": title,
         "description": payload.description or "",
-        "project_mode": normalize_project_mode(payload.project_mode),
+        "project_mode": project_mode,
+        "quality_profile": quality_profile,
         "budget": payload.budget or "?",
         "url": payload.url or "",
         "status": "planning",
         "chat_history": [],
         "logs": [],
     }
+    settings = ensure_quality_settings(project)
+    if payload.required_targets:
+        settings["required_targets"] = [target for target in payload.required_targets if target]
+        for target in settings["required_targets"]:
+            settings.setdefault("target_requirements", {})[target] = "required"
+    if payload.optional_targets:
+        settings["optional_targets"] = [target for target in payload.optional_targets if target]
+        for target in settings["optional_targets"]:
+            settings.setdefault("target_requirements", {})[target] = "optional"
     _reset_delivery_gates(project)
     active_projects[project_id] = project
     project["logs"].append(f"Project claimed: {title}")
@@ -5576,29 +5585,39 @@ class GitHubImportPayload(BaseModel):
 def get_github_config():
     data = load_studio_keys()
     cfg = data.get("_github", {})
+    token = secret_store.get_secret("github_token", {"github_token": cfg.get("token", "")})
+    warnings = []
+    if cfg.get("token") and not secret_store.has_env_secret("github_token"):
+        warnings.append(secret_store.legacy_secret_warning("github_token"))
     return {
-        "token": bool(cfg.get("token")),
+        "token": bool(token),
         "username": cfg.get("username", ""),
         "repo": cfg.get("repo", ""),
-        "connected": bool(cfg.get("token") and cfg.get("username") and cfg.get("repo"))
+        "connected": bool(token and cfg.get("username") and cfg.get("repo")),
+        "legacy_secret_warnings": warnings,
     }
 
 @app.post("/api/config/github")
 def save_github_config(payload: GitHubConfigPayload):
     data = load_studio_keys()
+    current = data.get("_github", {}) if isinstance(data.get("_github"), dict) else {}
     data["_github"] = {
-        "token": payload.token,
+        "token": current.get("token", ""),
         "username": payload.username,
         "repo": payload.repo,
     }
     save_studio_keys(data)
-    return {"status": "saved", "connected": bool(payload.token and payload.username and payload.repo)}
+    token = payload.token or secret_store.get_secret("github_token", {"github_token": current.get("token", "")})
+    response = {"status": "saved", "connected": bool(token and payload.username and payload.repo)}
+    if payload.token:
+        response["secret_store_warning"] = "GitHub token was not written to studio_config.json. Set GITHUB_TOKEN to persist it."
+    return response
 
 @app.post("/api/projects/{project_id}/github/push")
 def push_project_to_github(project_id: str):
     data = load_studio_keys()
     github = data.get("_github", {})
-    token = github.get("token", "")
+    token = secret_store.get_secret("github_token", {"github_token": github.get("token", "")})
     username = github.get("username", "")
     repo = github.get("repo", "")
     if not (token and username and repo):
@@ -5926,7 +5945,7 @@ def create_project_directory(project_id: str, name: str = Query(...)):
 
 
 # ── Serve built frontend (SPA) ───────────────────────────────────────────
-FRONTEND_DIST = os.path.join(BASE_DIR, "frontend", "dist")
+FRONTEND_DIST = os.environ.get("FREELANCERSTUDIO_FRONTEND_DIR") or os.path.join(BASE_DIR, "frontend", "dist")
 print(f"[Backend Debug]: FRONTEND_DIST={FRONTEND_DIST} isdir={os.path.isdir(FRONTEND_DIST)}")
 
 @app.get("/api/debug/frontend", include_in_schema=False)
@@ -5973,30 +5992,36 @@ else:
     print(f"[Backend Warning]: Frontend dist not found at {FRONTEND_DIST}")
 
 
-if __name__ == "__main__":
+def run_backend():
     import uvicorn
     import socket
 
-    def find_free_port(start_port: int = 8080, max_attempts: int = 20) -> int:
+    def find_free_port(start_port: int = 8080, max_attempts: int = 20, host: str = "127.0.0.1") -> int:
         for port in range(start_port, start_port + max_attempts):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    s.bind(("0.0.0.0", port))
+                    s.bind((host, port))
                     return port
                 except OSError:
                     continue
         raise IOError("Could not find any available network ports in the system registry.")
 
     start_port = int(os.environ.get("BACKEND_START_PORT", "8080"))
-    free_port = find_free_port(start_port=start_port)
-    print(f"[Backend Boot]: Network cluster allocated securely on target port: {free_port}")
+    bind_host = get_backend_bind_host()
+    free_port = find_free_port(start_port=start_port, host=bind_host)
+    print(f"[Backend Boot]: Network cluster allocated securely on {bind_host}:{free_port}")
 
-    port_file = os.path.join(BASE_DIR, "studio_port.txt")
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    port_file = os.path.join(RUNTIME_DIR, "studio_port.txt")
     try:
         with open(port_file, "w", encoding="utf-8") as f:
             f.write(str(free_port))
     except Exception as e:
         print(f"[Backend Warning]: Failed to write port file: {e}")
 
-    uvicorn.run(app, host="0.0.0.0", port=free_port)
+    uvicorn.run(app, host=bind_host, port=free_port)
+
+
+if __name__ == "__main__":
+    run_backend()

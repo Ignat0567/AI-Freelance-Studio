@@ -28,6 +28,8 @@ test_project.json
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
 
 # Logs
 *.log
@@ -46,6 +48,10 @@ frontend/installers/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Local backups
+local_backups/
+.opencode_backups/
 
 # OS
 Thumbs.db

@@ -1,0 +1,18 @@
+target-version = "py312"
+line-length = 160
+
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".opencode_backups",
+    "android_artifacts",
+    "backups",
+    "generated_projects",
+    "local_backups",
+    "node_modules",
+    "frontend/node_modules",
+]
+
+[lint]
+select = ["E9", "F63", "F7", "F82"]

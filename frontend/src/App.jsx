@@ -324,16 +324,16 @@ function App() {
             .catch(err => console.error('[API Error Claim]:', err));
     };
 
-    const handleCreateManualProject = (title, description, projectMode = 'mvp') => {
+    const handleCreateManualProject = (title, description, qualityProfile = 'strict_mvp', targets = {}) => {
         setIsNewProjectOpen(false);
         fetch(`http://localhost:${activePort}/api/projects/manual`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, initial_description: description, project_mode: projectMode })
+            body: JSON.stringify({ title, initial_description: description, project_mode: qualityProfile, quality_profile: qualityProfile, required_targets: targets.requiredTargets || [], optional_targets: targets.optionalTargets || [], strict_completion_toggles: targets.strictToggles || {} })
         })
             .then(r => r.json())
             .then(data => {
-                setActiveProject({ project_id: data.project_id, status: data.status, title, project_mode: data.project_mode });
+                setActiveProject({ project_id: data.project_id, status: data.status, title, project_mode: data.project_mode, quality_profile: data.quality_profile });
                 setChatHistory(data.chat_history);
                 setIsChatOpen(true);
                 addLog(`[Manual]: Created project "${title}". Chatting with Maya.`);

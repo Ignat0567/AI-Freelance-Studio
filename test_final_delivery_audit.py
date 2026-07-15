@@ -1,16 +1,204 @@
 import json
 import sys
+import threading
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import pytest
 
 import delivery_audit
 import project_state
 from delivery_audit import ACCEPTANCE_VERIFIERS, FastAPIRuntimeAdapter, ReactViteRuntimeAdapter, RuntimeAdapterResult, StaticWebRuntimeAdapter, TelegramBotRuntimeAdapter, normalize_credential_state, run_final_delivery_audit, verify_acceptance_criterion, write_delivery_report
+from quality_profiles import LEVEL_1_STRUCTURAL, LEVEL_2_BUILD, LEVEL_3_RUNTIME, LEVEL_4_INTERACTION, LEVEL_6_NATIVE_RUNTIME, LEVEL_7_PACKAGED_ARTIFACT
 from project_spec import ACCEPTANCE_CONTRACT_FIELDS, ACCEPTANCE_EVIDENCE_HISTORY_KEY, ensure_acceptance_evidence_history, ensure_project_spec_bundle, record_acceptance_evidence
 
 
 def _write(path: Path, text: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+FAST_HTTP_RUNTIME_TESTS = {
+    "test_http_sequence_verifier_passes_successful_create_list",
+    "test_final_audit_stores_http_sequence_criterion_evidence",
+    "test_http_sequence_verifier_fails_when_created_item_absent_from_list",
+    "test_http_sequence_verifier_fails_when_list_endpoint_fails",
+    "test_crud_verifier_create_observes_created_record",
+    "test_crud_verifier_update_persists_changed_value",
+    "test_crud_verifier_delete_removes_record",
+    "test_crud_verifier_search_isolates_target_record",
+    "test_crud_verifier_filter_isolates_target_record",
+    "test_crud_verifier_status_change_persists_status_value",
+    "test_crud_verifier_rejects_update_response_without_persisted_state_change",
+    "test_persistence_restart_verifier_passes_with_persistent_store",
+    "test_persistence_restart_verifier_fails_for_in_memory_store",
+    "test_persistence_restart_verifier_reports_restart_failure",
+}
+
+BROWSER_TOOLING_UNAVAILABLE_TESTS = {
+    "test_same_ui_semantic_uses_adapter_from_product_profile",
+    "test_browser_adapter_exposes_required_viewport_matrix_and_high_res",
+    "test_dpi_unsupported_state_is_reported_honestly",
+    "test_window_size_evidence_is_bound_to_snapshot_freshness",
+    "test_playwright_is_studio_owned_not_generated_project",
+    "test_responsive_ui_static_profile_uses_real_browser_when_available",
+}
+
+
+def _test_openapi(include_item_routes: bool = False, include_query: bool = False) -> dict:
+    item_schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "status": {"type": "string"}},
+        "required": ["name"],
+    }
+    paths = {
+        "/api/items": {
+            "post": {"requestBody": {"content": {"application/json": {"schema": item_schema}}}},
+            "get": {"parameters": []},
+        }
+    }
+    if include_query:
+        paths["/api/items"]["get"]["parameters"] = [
+            {"name": "q", "in": "query", "required": False, "schema": {"type": "string"}},
+            {"name": "status", "in": "query", "required": False, "schema": {"type": "string"}},
+        ]
+    if include_item_routes:
+        paths["/api/items/{item_id}"] = {
+            "get": {"parameters": [{"name": "item_id", "in": "path", "required": True}]},
+            "patch": {"parameters": [{"name": "item_id", "in": "path", "required": True}], "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}, "status": {"type": "string"}}}}}}},
+            "delete": {"parameters": [{"name": "item_id", "in": "path", "required": True}]},
+        }
+    return {"openapi": "3.0.0", "paths": paths}
+
+
+def _fast_runtime_server(fixture: dict, env_extra: dict[str, str] | None = None):
+    env_extra = env_extra or {}
+    mode = fixture.get("mode", "http_sequence")
+    store_key = env_extra.get("DATABASE_PATH") if mode in {"persistence_sqlite", "persistence_restart_failure"} else None
+    if store_key:
+        storage = fixture.setdefault("persistent_storage", {}).setdefault(store_key, {"items": {}, "next_id": 1})
+    else:
+        storage = {"items": {}, "next_id": 1}
+    list_contains_item = fixture.get("list_contains_item", True)
+    list_fails = fixture.get("list_fails", False)
+    persist_update = fixture.get("persist_update", True)
+    delete_effective = fixture.get("delete_effective", True)
+    search_effective = fixture.get("search_effective", True)
+    filter_effective = fixture.get("filter_effective", True)
+    response_secret = fixture.get("response_secret", "safe-response-value")
+    openapi = _test_openapi(include_item_routes=mode != "http_sequence", include_query=mode == "crud")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            return
+
+        def _send(self, status: int, payload: object):
+            data = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _body(self):
+            size = int(self.headers.get("Content-Length") or 0)
+            return json.loads(self.rfile.read(size).decode("utf-8")) if size else {}
+
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            if parsed.path == "/health":
+                self._send(200, {"status": "ok"})
+                return
+            if parsed.path == "/openapi.json":
+                self._send(200, openapi)
+                return
+            if parsed.path == "/api/items":
+                if list_fails:
+                    self._send(500, {"detail": "list exploded"})
+                    return
+                if not list_contains_item:
+                    self._send(200, [])
+                    return
+                items = list(storage["items"].values())
+                q = (query.get("q") or [""])[0]
+                status = (query.get("status") or [""])[0]
+                if q and search_effective:
+                    items = [item for item in items if q.lower() in str(item.get("name", "")).lower()]
+                if status and filter_effective:
+                    items = [item for item in items if item.get("status") == status]
+                self._send(200, items)
+                return
+            if parsed.path.startswith("/api/items/"):
+                item_id = int(parsed.path.rsplit("/", 1)[-1])
+                item = storage["items"].get(item_id)
+                self._send(200, item) if item else self._send(404, {"detail": "missing"})
+                return
+            self._send(404, {"detail": "missing"})
+
+        def do_POST(self):
+            payload = self._body()
+            item_id = storage["next_id"]
+            storage["next_id"] += 1
+            record = {"id": item_id, "name": payload.get("name", ""), "status": payload.get("status", "open")}
+            if response_secret:
+                record["api_key"] = response_secret
+            storage["items"][item_id] = record
+            self._send(201, record)
+
+        def do_PATCH(self):
+            item_id = int(urllib.parse.urlparse(self.path).path.rsplit("/", 1)[-1])
+            if item_id not in storage["items"]:
+                self._send(404, {"detail": "missing"})
+                return
+            updated = {**storage["items"][item_id], **self._body()}
+            if persist_update:
+                storage["items"][item_id] = updated
+            self._send(200, updated)
+
+        def do_DELETE(self):
+            item_id = int(urllib.parse.urlparse(self.path).path.rsplit("/", 1)[-1])
+            if item_id not in storage["items"]:
+                self._send(404, {"detail": "missing"})
+                return
+            if delete_effective:
+                storage["items"].pop(item_id)
+            self._send(200, {"deleted": item_id})
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    result = RuntimeAdapterResult(True, True, True, False, {"adapter": "fast_test_http", "pid": id(thread), "base_url": f"http://127.0.0.1:{server.server_port}"}, "")
+    handle = type("FastTestHandle", (), {"base_url": f"http://127.0.0.1:{server.server_port}", "result": result, "server": server, "thread": thread, "cookies": {}})()
+    return handle, {"status": "passed", "adapter": "fast_test_http", "started": True, "verified": True, "pid": id(thread), "base_url": handle.base_url}
+
+
+@pytest.fixture(autouse=True)
+def _speed_up_targeted_slow_tests(request, monkeypatch):
+    if request.node.name in BROWSER_TOOLING_UNAVAILABLE_TESTS:
+        monkeypatch.setattr(delivery_audit, "_detect_playwright_capability", lambda: {"real_browser_verification_available": False, "reason": "unit test skips real browser startup", "setup_policy": {"ownership": "FreelancerStudio-managed browser tooling"}})
+    if request.node.name not in FAST_HTTP_RUNTIME_TESTS:
+        return
+
+    starts: dict[str, int] = {}
+
+    def start_runtime(project, root, env_extra=None):
+        fixture = project.get("_fast_runtime_fixture", {})
+        key = str(root)
+        starts[key] = starts.get(key, 0) + 1
+        if fixture.get("mode") == "persistence_restart_failure" and starts[key] > 1:
+            return None, {"status": "failed", "error": "intentional restart failure"}
+        return _fast_runtime_server(fixture, env_extra)
+
+    def stop_runtime(handle):
+        handle.server.shutdown()
+        handle.server.server_close()
+        handle.thread.join(timeout=2)
+        return {"stopped_cleanly": not handle.thread.is_alive(), "shutdown_method": "test_http_server", "killed": False}
+
+    monkeypatch.setattr(delivery_audit, "_start_http_sequence_runtime", start_runtime)
+    monkeypatch.setattr(delivery_audit, "_stop_http_sequence_runtime", stop_runtime)
 
 
 def test_semantic_acceptance_verifier_registry_covers_hardening_types():
@@ -216,7 +404,7 @@ def test_source_runtime_success_cannot_satisfy_packaged_artifact(tmp_path):
     profile = delivery_audit.detect_product_runtime_profile(project, str(tmp_path))
 
     assert profile["packaging_kind"] == "portable_executable"
-    assert delivery_audit._required_ui_evidence_level("packaged_artifact_launch") == "LEVEL_5_PACKAGED_DELIVERY"
+    assert delivery_audit._required_ui_evidence_level("packaged_artifact_launch") == LEVEL_7_PACKAGED_ARTIFACT
 
 
 def test_unsupported_desktop_tooling_remains_not_verified(tmp_path):
@@ -229,8 +417,207 @@ def test_unsupported_desktop_tooling_remains_not_verified(tmp_path):
 
 
 def test_real_interaction_evidence_level_is_stronger_than_structural():
-    assert delivery_audit._required_ui_evidence_level("primary_ui_actions") == "LEVEL_3_REAL_INTERACTION"
-    assert delivery_audit._required_ui_evidence_level("responsive_ui") == "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE"
+    assert delivery_audit._required_ui_evidence_level("primary_ui_actions") == LEVEL_4_INTERACTION
+    assert delivery_audit._required_ui_evidence_level("responsive_ui") == LEVEL_4_INTERACTION
+
+
+def test_http_200_cannot_pass_manager_ui_interaction_target(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    project = {"project_id": "manager-http", "title": "Manager", "description": "manager dashboard", "target_path": str(tmp_path), "quality_profile": "strict_mvp", "project_profiles": ["fastapi"], "project_spec": {"quality_profile": "strict_mvp", "project_profiles": ["fastapi"], "requested_target_platforms": []}, "acceptance_criteria": [{"id": "AC-PERSIST", "title": "Data persists", "priority": "high", "status": "passed"}, {"id": "AC-WORKFLOW", "title": "Real E2E workflow", "priority": "high", "status": "passed"}, {"id": "AC-RBAC", "title": "Authentication and RBAC", "priority": "high", "status": "passed"}], "issues": []}
+    monkeypatch.setattr(delivery_audit, "_runtime_smoke", lambda *_args: {"status": "passed", "status_code": 200})
+    monkeypatch.setattr(delivery_audit, "_evaluate_acceptance", lambda *_args: (True, []))
+    monkeypatch.setattr(delivery_audit, "ensure_feature_matrix", lambda *_args: {"summary": {}})
+    monkeypatch.setattr(delivery_audit, "matrix_blocks_completion", lambda *_args: (False, []))
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    manager = report["target_verification_status"]["manager_web"]
+    assert manager["required_evidence_level"] == LEVEL_4_INTERACTION
+    assert manager["achieved_evidence_level"] == LEVEL_3_RUNTIME
+    assert manager["verdict"] == "not_verified"
+
+
+def _stub_conservative_audit(monkeypatch, *, matrix: dict | None = None):
+    def pass_acceptance(project, *_args):
+        for criterion in project.get("acceptance_criteria", []):
+            criterion["status"] = "passed"
+        return True, []
+
+    monkeypatch.setattr(delivery_audit, "_verify_readme", lambda *_args: (True, {"readme": "verified"}))
+    monkeypatch.setattr(delivery_audit, "_runtime_smoke", lambda *_args: {"status": "passed", "status_code": 200})
+    monkeypatch.setattr(delivery_audit, "analyze_architecture", lambda *_args: {"status": "passed", "findings": [], "blocking_findings": []})
+    monkeypatch.setattr(delivery_audit, "_evaluate_acceptance", pass_acceptance)
+    monkeypatch.setattr(delivery_audit, "ensure_feature_matrix", lambda *_args: matrix or {"features": [], "summary": {"total_mandatory": 0}, "quality_matrices": {}, "quality_matrix_summary": {"blocking_gaps": []}})
+    monkeypatch.setattr(delivery_audit, "matrix_blocks_completion", lambda *_args: (False, []))
+
+
+def test_core_e2e_does_not_equal_strict_mvp(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\nRun it.\n")
+    _write(tmp_path / "main.py", "print('ok')\n")
+    _stub_conservative_audit(monkeypatch)
+    project = {"project_id": "core", "title": "Core booking", "description": "booking web", "target_path": str(tmp_path), "quality_profile": "strict_mvp", "project_spec": {"quality_profile": "strict_mvp", "project_profiles": ["fastapi"]}, "project_profiles": ["fastapi"], "acceptance_criteria": [{"id": "AC-CORE", "title": "Core booking E2E workflow", "priority": "high", "status": "passed"}], "issues": []}
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    assert report["final_status"] == "CORE_E2E_PASSED"
+    assert report["final_maturity_status"]["acceptance_label"] == "MVP ACCEPTANCE INCOMPLETE"
+    assert report["completion_policy"]["accepted"] is False
+
+
+def test_unverified_native_target_blocks_strict_mobile_mvp(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    _write(tmp_path / "main.py", "print('ok')\n")
+    _stub_conservative_audit(monkeypatch)
+    project = {"project_id": "mobile", "title": "Mobile booking", "description": "booking web android", "target_path": str(tmp_path), "quality_profile": "strict_mvp", "project_spec": {"quality_profile": "strict_mvp", "project_profiles": ["fastapi"], "requested_target_platforms": ["android"]}, "project_profiles": ["fastapi"], "acceptance_criteria": [{"id": "AC-CORE", "title": "Core booking E2E workflow persists with RBAC", "priority": "high", "status": "passed"}], "issues": []}
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    assert report["target_verification_status"]["android"]["verdict"] == "not_verified"
+    assert "required_target_android_missing" in report["completion_policy"]["blockers"]
+    assert report["final_status"] != "STRICT_MVP_ACCEPTED"
+
+
+def test_missing_feature_matrix_dimension_blocks_strict_completion():
+    matrix = {"features": [{"feature_id": "F-1", "feature_name": "Booking", "mandatory": True, "evidence_status": "passed"}], "quality_matrix_summary": {"blocking_gaps": []}}
+
+    blocks, blockers = delivery_audit.matrix_blocks_completion(matrix, "strict_mvp")
+
+    assert blocks is True
+    assert any("missing dimensions" in blocker for blocker in blockers)
+
+
+def test_implementation_claims_are_separate_from_verified_capabilities(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    _write(tmp_path / "main.py", "print('ok')\n")
+    matrix = {"features": [], "summary": {}, "quality_matrices": {}, "quality_matrix_summary": {"blocking_gaps": []}}
+    _stub_conservative_audit(monkeypatch, matrix=matrix)
+    project = {"project_id": "claims", "title": "Claims", "description": "simple web", "target_path": str(tmp_path), "quality_profile": "prototype", "project_spec": {"quality_profile": "prototype", "project_profiles": ["fastapi"]}, "project_profiles": ["fastapi"], "implementation_claims": [{"changed_files": ["main.py"], "summary": "implemented booking"}], "acceptance_criteria": [], "issues": []}
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    assert report["implemented_claims"]
+    assert all(item.get("type") != "implementation_summary" for item in report["verified_capabilities"])
+
+
+def test_final_report_lists_exact_limitations(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    _write(tmp_path / "main.py", "print('ok')\n")
+    _stub_conservative_audit(monkeypatch)
+    project = {"project_id": "limits", "title": "Limits", "description": "android booking", "target_path": str(tmp_path), "quality_profile": "strict_mvp", "project_spec": {"quality_profile": "strict_mvp", "requested_target_platforms": ["android"]}, "acceptance_criteria": [{"id": "AC-CORE", "title": "Core E2E workflow", "priority": "high", "status": "passed"}], "issues": []}
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    limitations = report["known_limitations"]
+    assert any(item["source"] == "completion_policy" and "required_target_android" in item["limitation"] for item in limitations)
+    assert any(item["source"] == "target_verification" and item["required_evidence_level"] == LEVEL_6_NATIVE_RUNTIME for item in limitations)
+
+
+def test_production_candidate_requirements_exceed_strict_mvp(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    _write(tmp_path / "main.py", "print('ok')\n")
+    _stub_conservative_audit(monkeypatch)
+    project = {"project_id": "prod", "title": "Production candidate", "description": "booking web", "target_path": str(tmp_path), "quality_profile": "production_candidate", "project_spec": {"quality_profile": "production_candidate", "project_profiles": ["fastapi"]}, "project_profiles": ["fastapi"], "acceptance_criteria": [{"id": "AC-CORE", "title": "Core E2E workflow persists with RBAC", "priority": "high", "status": "passed"}], "issues": []}
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    assert "expanded_security_baseline_not_passed" in report["completion_policy"]["blockers"]
+    assert "packaged_artifact_not_verified" in report["completion_policy"]["blockers"]
+    assert report["final_status"] != "STRICT_MVP_ACCEPTED"
+    assert report["final_status"] != "PRODUCTION_CANDIDATE_ACCEPTED"
+
+
+def test_durable_replay_produces_same_final_report_status(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    _write(tmp_path / "main.py", "print('ok')\n")
+    _stub_conservative_audit(monkeypatch)
+    project = {"project_id": "replay", "title": "Replay", "description": "booking web", "target_path": str(tmp_path), "quality_profile": "prototype", "project_spec": {"quality_profile": "prototype", "project_profiles": ["fastapi"]}, "project_profiles": ["fastapi"], "acceptance_criteria": [], "issues": []}
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+    write_delivery_report(project, str(tmp_path))
+
+    replay = delivery_audit.run_final_delivery_audit_from_persisted_state(str(tmp_path))
+
+    assert replay["replay"] is True
+    assert replay["final_status"] == report["final_status"]
+    assert replay["final_maturity_status"] == report["final_maturity_status"]
+
+
+def test_stale_evidence_cannot_satisfy_report(tmp_path):
+    _write(tmp_path / "README.md", "# Demo\n")
+    criterion = {"id": "AC-STALE", "title": "Core workflow", "priority": "high", "required_evidence_level": LEVEL_3_RUNTIME}
+    project = {"project_id": "stale", "title": "Stale", "target_path": str(tmp_path), "project_spec": {}, "acceptance_criteria": [criterion], "issues": []}
+    project_state.append_evidence_record(project, criterion, {"status": "passed", "achieved_evidence_level": LEVEL_3_RUNTIME, "verifier_type": "direct_probe"}, str(tmp_path))
+    _write(tmp_path / "main.py", "print('changed')\n")
+
+    record, reason = project_state.latest_valid_evidence(str(tmp_path), criterion)
+
+    assert record is None
+    assert reason == "stale_or_missing"
+
+
+def test_source_and_screenshot_cannot_pass_interaction_behavior():
+    criterion = {"id": "AC-UI", "title": "Button works", "required_evidence_level": LEVEL_4_INTERACTION}
+    evidence = delivery_audit._targeted_evidence(criterion, {}, ".", "primary_ui_actions", "passed", "selector and screenshot found", achieved_evidence_level=LEVEL_1_STRUCTURAL, collected_evidence={"button_selector_found": True, "screenshot": "ui.png"})
+
+    assert evidence["status"] == "not_verified"
+    assert evidence["required_evidence_level"] == LEVEL_4_INTERACTION
+    assert evidence["achieved_evidence_level"] == LEVEL_1_STRUCTURAL
+    assert "required LEVEL_4_INTERACTION" in evidence["failure_reason"]
+
+
+def test_live_final_audit_rejects_persisted_level_mismatch(tmp_path):
+    _write(tmp_path / "README.md", "# Demo\n")
+    criterion = {"id": "AC-UI", "title": "Button works", "priority": "high", "required_evidence_level": LEVEL_4_INTERACTION}
+    project = {"project_id": "weak-evidence", "title": "Weak", "target_path": str(tmp_path), "acceptance_criteria": [criterion], "issues": []}
+    project_state.persist_project_state(project)
+    project_state.append_evidence_record(project, criterion, {"criterion_id": "AC-UI", "status": "passed", "verdict": "passed", "required_evidence_level": LEVEL_4_INTERACTION, "achieved_evidence_level": LEVEL_1_STRUCTURAL, "collected_evidence": {"screenshot": "only"}}, str(tmp_path))
+
+    ok, failed = delivery_audit._evaluate_acceptance(project, str(tmp_path), {"success": True}, [])
+
+    assert ok is False
+    assert failed[0]["status"] == "not_verified"
+
+
+def test_dev_runtime_cannot_pass_packaged_artifact_target():
+    project = {"project_id": "pkg", "quality_profile": "production_candidate", "project_profiles": [], "project_spec": {"quality_profile": "production_candidate"}, "quality_settings": {"quality_profile": "production_candidate", "target_requirements": {"packaged_installer": "required"}, "required_targets": ["packaged_installer"], "optional_targets": []}}
+    checks: list[dict] = []
+
+    delivery_audit._add_target_requirement_checks(checks, project, {"status": "passed"})
+
+    check = next(item for item in checks if item["name"] == "target:packaged_installer")
+    assert check["status"] == "not_verified"
+    assert check["evidence"]["required_evidence_level"] == LEVEL_7_PACKAGED_ARTIFACT
+
+
+def test_final_report_explains_target_level_mismatch(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    project = {"project_id": "android-build", "title": "Android", "description": "android app", "target_path": str(tmp_path), "quality_profile": "strict_mvp", "project_profiles": [], "project_spec": {"quality_profile": "strict_mvp", "requested_target_platforms": ["android"]}, "native_build_evidence": {"android": {"path": "app.apk"}}, "acceptance_criteria": [{"id": "AC-PERSIST", "title": "Data persists", "priority": "high", "status": "passed"}, {"id": "AC-WORKFLOW", "title": "Real E2E workflow", "priority": "high", "status": "passed"}], "issues": []}
+    monkeypatch.setattr(delivery_audit, "_runtime_smoke", lambda *_args: {"status": "passed"})
+    monkeypatch.setattr(delivery_audit, "_evaluate_acceptance", lambda *_args: (True, []))
+    monkeypatch.setattr(delivery_audit, "ensure_feature_matrix", lambda *_args: {"summary": {}})
+    monkeypatch.setattr(delivery_audit, "matrix_blocks_completion", lambda *_args: (False, []))
+
+    report = run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+
+    android = report["target_verification_status"]["android"]
+    assert android["required_evidence_level"] == LEVEL_6_NATIVE_RUNTIME
+    assert android["achieved_evidence_level"] == LEVEL_2_BUILD
+    assert android["reason"] == "required LEVEL_6_NATIVE_RUNTIME, achieved LEVEL_2_BUILD only"
+    assert report["status"] == "failed"
+
+
+def test_target_status_survives_restart(tmp_path, monkeypatch):
+    _write(tmp_path / "README.md", "# Demo\n")
+    project = {"project_id": "restart-target", "title": "Android", "description": "android app", "target_path": str(tmp_path), "quality_profile": "strict_mvp", "project_profiles": [], "project_spec": {"quality_profile": "strict_mvp", "requested_target_platforms": ["android"]}, "native_build_evidence": {"android": {"path": "app.apk"}}, "acceptance_criteria": [], "issues": []}
+    monkeypatch.setattr(delivery_audit, "_runtime_smoke", lambda *_args: {"status": "passed"})
+    monkeypatch.setattr(delivery_audit, "_evaluate_acceptance", lambda *_args: (True, []))
+    monkeypatch.setattr(delivery_audit, "ensure_feature_matrix", lambda *_args: {"summary": {}})
+    monkeypatch.setattr(delivery_audit, "matrix_blocks_completion", lambda *_args: (False, []))
+
+    run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
+    state, error = project_state.load_project_state(str(tmp_path))
+
+    assert error == ""
+    assert state["target_verification_status"]["android"]["achieved_evidence_level"] == LEVEL_2_BUILD
 
 
 def test_ac_ids_do_not_affect_adapter_selection(tmp_path):
@@ -398,7 +785,7 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000
 python -m pytest -q
 """)
     _write(tmp_path / "requirements.txt", "fastapi\nuvicorn\npytest\n")
-    project = {"title": "Audit Demo", "description": "Build a FastAPI app with a health endpoint.", "logs": [], "chat_history": []}
+    project = {"title": "Audit Demo", "description": "Build a FastAPI app with a health endpoint.", "quality_profile": "prototype", "project_mode": "prototype", "logs": [], "chat_history": []}
     ensure_project_spec_bundle(project, str(tmp_path))
     return project
 
@@ -468,6 +855,7 @@ def list_items():
         "project_spec": {"project_profiles": ["fastapi"], "project_type": "fastapi", "delivery_artifacts": ["README.md"]},
         "acceptance_criteria": [criterion],
         "logs": [],
+        "_fast_runtime_fixture": {"mode": "http_sequence", "list_contains_item": list_contains_item, "list_fails": list_fails, "response_secret": response_secret_value},
     }
     return project, criterion
 
@@ -566,6 +954,7 @@ def delete_item(item_id: int):
         "project_spec": {"project_profiles": ["fastapi"], "project_type": "fastapi", "delivery_artifacts": ["README.md"]},
         "acceptance_criteria": [criterion],
         "logs": [],
+        "_fast_runtime_fixture": {"mode": "crud", "persist_update": persist_update, "delete_effective": delete_effective, "search_effective": search_effective, "filter_effective": filter_effective},
     }
     return project, criterion
 
@@ -724,6 +1113,7 @@ def read_item(item_id: int):
         "project_spec": {"project_profiles": ["fastapi"], "project_type": "fastapi", "delivery_artifacts": ["README.md"]},
         "acceptance_criteria": [criterion],
         "logs": [],
+        "_fast_runtime_fixture": {"mode": {"sqlite": "persistence_sqlite", "memory": "persistence_memory", "restart_failure": "persistence_restart_failure"}[mode]},
     }
     return project, criterion
 
@@ -753,7 +1143,9 @@ python -m pytest -q
 """)
     return {
         "title": "Evidence Gate Demo",
-        "project_spec": {"delivery_artifacts": ["README.md"], "project_profiles": []},
+        "quality_profile": "prototype",
+        "project_mode": "prototype",
+        "project_spec": {"delivery_artifacts": ["README.md"], "project_profiles": [], "quality_profile": "prototype"},
         "project_profiles": [],
         "acceptance_criteria": [criterion],
         "logs": [],
@@ -991,6 +1383,7 @@ def test_fastapi_runtime_adapter_not_applicable_for_other_profiles(tmp_path):
     }
 
 
+@pytest.mark.slow
 def test_fastapi_runtime_adapter_verifies_and_stops_cleanly(tmp_path):
     project = _fastapi_project(tmp_path)
 
@@ -1011,6 +1404,7 @@ def test_fastapi_runtime_adapter_verifies_and_stops_cleanly(tmp_path):
     assert any(probe["success"] and probe["path"] == "/health" for probe in result.evidence["probes"])
 
 
+@pytest.mark.slow
 def test_fastapi_runtime_adapter_uses_free_port_in_command_and_probe(tmp_path):
     project = _fastapi_project(tmp_path)
 
@@ -1022,9 +1416,34 @@ def test_fastapi_runtime_adapter_uses_free_port_in_command_and_probe(tmp_path):
     assert all(f":{port}" in probe["url"] for probe in result.evidence["probes"])
 
 
-def test_fastapi_runtime_adapter_failure_still_stops_owned_process(tmp_path):
+@pytest.mark.slow
+def test_fastapi_runtime_adapter_failure_still_stops_owned_process(tmp_path, monkeypatch):
     _write(tmp_path / "main.py", "raise RuntimeError('boom before app')\n")
     project = {"project_profiles": ["fastapi"], "project_spec": {"project_profiles": ["fastapi"]}}
+
+    class FakeStdout:
+        def read(self):
+            return "RuntimeError: boom before app"
+
+    class FakeProcess:
+        pid = 12345
+        stdout = FakeStdout()
+        terminated = False
+
+        def poll(self):
+            return None if not self.terminated else 1
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 1
+
+    ticks = iter(range(100, 130))
+    monkeypatch.setattr(delivery_audit.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+    monkeypatch.setattr(delivery_audit.time, "time", lambda: next(ticks, 130))
+    monkeypatch.setattr(delivery_audit.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(delivery_audit.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionRefusedError("test connection refused")))
 
     result = FastAPIRuntimeAdapter().run(project, str(tmp_path))
 
@@ -1033,7 +1452,7 @@ def test_fastapi_runtime_adapter_failure_still_stops_owned_process(tmp_path):
     assert result.verified is False
     assert result.stopped_cleanly is True
     assert result.evidence["owned_process_only"] is True
-    assert result.evidence["shutdown_method"] in ("terminate", "already_exited")
+    assert result.evidence["shutdown_method"] in ("terminate", "already_exited", "taskkill_tree")
     assert result.evidence["killed"] is False
     assert result.error
 
@@ -1051,6 +1470,7 @@ def test_static_web_runtime_adapter_not_applicable_for_other_profiles(tmp_path):
     }
 
 
+@pytest.mark.slow
 def test_static_web_runtime_adapter_verifies_assets_http_200_and_shutdown(tmp_path):
     project = _static_project(tmp_path)
 
@@ -1070,6 +1490,7 @@ def test_static_web_runtime_adapter_verifies_assets_http_200_and_shutdown(tmp_pa
     assert result.evidence["killed"] is False
 
 
+@pytest.mark.slow
 def test_static_web_runtime_adapter_uses_free_port_in_command_and_probe(tmp_path):
     project = _static_project(tmp_path)
 
@@ -1137,6 +1558,7 @@ def test_react_vite_runtime_adapter_requires_build_and_runtime_scripts(tmp_path)
     assert result.error == "Missing required package scripts"
 
 
+@pytest.mark.slow
 def test_react_vite_runtime_adapter_builds_starts_probes_and_stops(tmp_path):
     project = _react_vite_fixture(tmp_path)
 
@@ -1157,6 +1579,7 @@ def test_react_vite_runtime_adapter_builds_starts_probes_and_stops(tmp_path):
     assert result.evidence["killed"] is False
 
 
+@pytest.mark.slow
 def test_react_vite_runtime_adapter_uses_free_port_for_probe(tmp_path):
     project = _react_vite_fixture(tmp_path)
 
@@ -1170,6 +1593,7 @@ def test_react_vite_runtime_adapter_uses_free_port_for_probe(tmp_path):
     assert any(probe["success"] and f":{port}" in probe["url"] for probe in result.evidence["probes"])
 
 
+@pytest.mark.slow
 def test_final_audit_uses_react_vite_runtime_adapter_before_static(tmp_path):
     project = _react_vite_fixture(tmp_path)
     qa_result = {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []}
@@ -1398,7 +1822,7 @@ def test_responsive_ui_static_profile_uses_real_browser_when_available(tmp_path)
         assert evidence["status"] == "not_verified"
     assert evidence["verifier_type"] == "responsive_ui"
     assert evidence["collected_evidence"]["runtime_ui_adapter"]["adapter_type"] == "BrowserWebEvidenceAdapter"
-    assert "LEVEL_4_LAYOUT_AND_DISPLAY_EVIDENCE" in evidence["collected_evidence"]["evidence_levels"]
+    assert LEVEL_4_INTERACTION in evidence["collected_evidence"]["evidence_levels"]
 
 
 def test_responsive_ui_unsupported_profile_is_not_verified(tmp_path):
@@ -1554,6 +1978,7 @@ def test_registered_acceptance_verifier_returns_structured_evidence(tmp_path):
     assert "artifacts" in evidence
 
 
+@pytest.mark.slow
 def test_http_sequence_verifier_passes_successful_create_list(tmp_path):
     project, criterion = _http_sequence_project(tmp_path)
 
@@ -1574,6 +1999,7 @@ def test_http_sequence_verifier_passes_successful_create_list(tmp_path):
     assert "<redacted>" in evidence_text
 
 
+@pytest.mark.slow
 def test_final_audit_stores_http_sequence_criterion_evidence(tmp_path):
     project, criterion = _http_sequence_project(tmp_path, response_secret=False)
 
@@ -1588,6 +2014,7 @@ def test_final_audit_stores_http_sequence_criterion_evidence(tmp_path):
     assert project[ACCEPTANCE_EVIDENCE_HISTORY_KEY]["AC-CREATE-LIST"][-1] == evidence
 
 
+@pytest.mark.slow
 def test_http_sequence_verifier_fails_when_created_item_absent_from_list(tmp_path):
     project, criterion = _http_sequence_project(tmp_path, list_contains_item=False)
 
@@ -1601,6 +2028,7 @@ def test_http_sequence_verifier_fails_when_created_item_absent_from_list(tmp_pat
     assert "created identifier or unique marker" in evidence["failure_reason"]
 
 
+@pytest.mark.slow
 def test_http_sequence_verifier_fails_when_list_endpoint_fails(tmp_path):
     project, criterion = _http_sequence_project(tmp_path, list_fails=True)
 
@@ -1625,6 +2053,7 @@ def test_http_sequence_verifier_fails_when_runtime_unavailable(tmp_path, monkeyp
     assert "no applicable HTTP runtime adapter" in evidence["failure_reason"]
 
 
+@pytest.mark.slow
 def test_crud_verifier_create_observes_created_record(tmp_path):
     criterion = _crud_criterion("AC-CREATE", "User can create a new client request.")
     project, criterion = _crud_sequence_project(tmp_path, criterion)
@@ -1638,6 +2067,7 @@ def test_crud_verifier_create_observes_created_record(tmp_path):
     assert evidence["assertion_result"] is True
 
 
+@pytest.mark.slow
 def test_crud_verifier_update_persists_changed_value(tmp_path):
     criterion = _crud_criterion("AC-UPDATE", "User can open an existing request and update its data.")
     project, criterion = _crud_sequence_project(tmp_path, criterion)
@@ -1652,6 +2082,7 @@ def test_crud_verifier_update_persists_changed_value(tmp_path):
     assert evidence["assertion_result"] is True
 
 
+@pytest.mark.slow
 def test_crud_verifier_delete_removes_record(tmp_path):
     criterion = _crud_criterion("AC-DELETE", "User can delete an existing request.")
     project, criterion = _crud_sequence_project(tmp_path, criterion)
@@ -1665,6 +2096,7 @@ def test_crud_verifier_delete_removes_record(tmp_path):
     assert evidence["assertion_result"] is True
 
 
+@pytest.mark.slow
 def test_crud_verifier_search_isolates_target_record(tmp_path):
     criterion = _crud_criterion("AC-SEARCH", "User can search requests by client or request text.")
     project, criterion = _crud_sequence_project(tmp_path, criterion)
@@ -1678,6 +2110,7 @@ def test_crud_verifier_search_isolates_target_record(tmp_path):
     assert evidence["assertion_result"] is True
 
 
+@pytest.mark.slow
 def test_crud_verifier_filter_isolates_target_record(tmp_path):
     criterion = _crud_criterion("AC-FILTER", "User can filter requests by status and priority.")
     project, criterion = _crud_sequence_project(tmp_path, criterion)
@@ -1691,6 +2124,7 @@ def test_crud_verifier_filter_isolates_target_record(tmp_path):
     assert evidence["collected_evidence"]["control_present"] is False
 
 
+@pytest.mark.slow
 def test_crud_verifier_status_change_persists_status_value(tmp_path):
     criterion = _crud_criterion("AC-STATUS", "User can change request status.")
     project, criterion = _crud_sequence_project(tmp_path, criterion)
@@ -1704,6 +2138,7 @@ def test_crud_verifier_status_change_persists_status_value(tmp_path):
     assert evidence["assertion_result"] is True
 
 
+@pytest.mark.slow
 def test_crud_verifier_rejects_update_response_without_persisted_state_change(tmp_path):
     criterion = _crud_criterion("AC-UPDATE-FALSE", "User can open an existing request and update its data.")
     project, criterion = _crud_sequence_project(tmp_path, criterion, persist_update=False)
@@ -1718,6 +2153,7 @@ def test_crud_verifier_rejects_update_response_without_persisted_state_change(tm
     assert "not persisted" in evidence["summary"]
 
 
+@pytest.mark.slow
 def test_persistence_restart_verifier_passes_with_persistent_store(tmp_path):
     project, criterion = _persistence_project(tmp_path, "sqlite")
 
@@ -1738,6 +2174,7 @@ def test_persistence_restart_verifier_passes_with_persistent_store(tmp_path):
     assert "DATABASE_PATH" in evidence["collected_evidence"]["storage"]["env_override_names"]
 
 
+@pytest.mark.slow
 def test_persistence_restart_verifier_fails_for_in_memory_store(tmp_path):
     project, criterion = _persistence_project(tmp_path, "memory")
 
@@ -1752,6 +2189,7 @@ def test_persistence_restart_verifier_fails_for_in_memory_store(tmp_path):
     assert "in-memory" in evidence["failure_reason"]
 
 
+@pytest.mark.slow
 def test_persistence_restart_verifier_reports_restart_failure(tmp_path):
     project, criterion = _persistence_project(tmp_path, "restart_failure")
 
@@ -1863,6 +2301,7 @@ def test_command_verifier_fails_on_unexpected_exit_code(tmp_path):
     assert evidence["stdout_tail"].strip() == "bad"
 
 
+@pytest.mark.slow
 def test_command_verifier_fails_on_timeout(tmp_path):
     criterion = {
         "id": "AC-CMD",

@@ -1,11 +1,8 @@
-import os
-import json
 import time
 import uuid
-from ai_utils import ask_studio_ai_with_history
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "studio_config.json")
+import config_storage
+from ai_utils import ask_studio_ai_with_history
 
 PLATFORMS = {
     "google": {"name": "Google", "icon": "🔴", "auth_type": "oauth", "url": "https://console.cloud.google.com/apis/credentials"},
@@ -17,17 +14,22 @@ PLATFORMS = {
     "ollama": {"name": "Ollama", "icon": "🦙", "auth_type": "local", "url": "https://ollama.com"},
 }
 
+ACCOUNT_METADATA_FIELDS = (
+    "id",
+    "platform",
+    "label",
+    "status",
+    "last_sync",
+    "created_at",
+)
+
 
 def _load():
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    with open(CONFIG_PATH, "r") as f:
-        return json.load(f)
+    return config_storage.load_studio_keys()
 
 
 def _save(data):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(data, f, indent=2)
+    config_storage.save_studio_keys(data)
 
 
 def get_accounts():
@@ -37,7 +39,7 @@ def get_accounts():
     result = []
     for acc in accounts:
         plat = platforms.get(acc.get("platform", ""), {})
-        result.append({
+        account = {
             "id": acc.get("id", ""),
             "platform": acc.get("platform", ""),
             "platform_name": plat.get("name", acc["platform"]),
@@ -47,23 +49,26 @@ def get_accounts():
             "last_sync": acc.get("last_sync", 0),
             "created_at": acc.get("created_at", 0),
             "auth_type": plat.get("auth_type", "unknown"),
-        })
+        }
+        if "credentials" in acc:
+            account["warning"] = "legacy_credentials_present"
+        result.append(account)
     return result
 
 
-def add_account(platform: str, label: str = "", credentials: dict = None):
+def add_account(platform: str, label: str = ""):
     data = _load()
     accounts = data.get("_accounts", [])
     new_id = str(uuid.uuid4())
-    accounts.append({
+    account = {
         "id": new_id,
         "platform": platform,
         "label": label or f"{PLATFORMS.get(platform, {}).get('name', platform)} account",
-        "credentials": credentials or {},
         "status": "connected",
         "last_sync": int(time.time()),
         "created_at": int(time.time()),
-    })
+    }
+    accounts.append({field: account[field] for field in ACCOUNT_METADATA_FIELDS})
     data["_accounts"] = accounts
     _save(data)
     return new_id

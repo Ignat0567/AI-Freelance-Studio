@@ -89,19 +89,23 @@ export default function KeyManagerModal({ activePort, onClose, addLog }) {
         const keysToSave = Object.fromEntries(Object.entries(customKeys).filter(([, value]) => value && value.trim()));
         const payload = { keys: keysToSave };
 
-        fetch(`http://localhost:${activePort}/api/config/keys`, {
+        const request = fetch(`http://localhost:${activePort}/api/config/keys`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         })
+        setCustomKeys({});
+        setNewKey('');
+        setNewProvider('');
+        request
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'saved' || data.status === 'success') {
-                    addLog('[System]: API credentials saved. Agents ready.');
-                    setCustomKeys({});
+                    const warning = data.secret_store_warning || (data.skipped_secrets?.length ? 'Secrets are not saved in Studio settings.' : '');
+                    addLog(warning ? `[Warning]: ${warning}` : '[System]: Non-secret settings saved.');
                     refreshSavedKeys();
                 } else {
-                    addLog(`[Warning]: ${JSON.stringify(data)}`);
+                    addLog('[Warning]: Configuration was not saved.');
                 }
             })
             .catch(err => {
@@ -183,7 +187,7 @@ export default function KeyManagerModal({ activePort, onClose, addLog }) {
                         <span className="text-lg">🔑</span>
                     </div>
                     <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200">{t('activateStudio')}</h3>
-                    <p className="text-[11px] text-slate-500 mt-1">{t('configureTokens')}</p>
+                    <p className="text-[11px] text-slate-500 mt-1">Secrets are not saved in Studio settings.</p>
                 </div>
 
                 <form onSubmit={handleSaveKeys} className="space-y-3">
@@ -218,7 +222,7 @@ export default function KeyManagerModal({ activePort, onClose, addLog }) {
                                 type="password"
                                 value={customKeys[field.id] || ''}
                                 onChange={(e) => setCustomKeys(prev => ({ ...prev, [field.id]: e.target.value }))}
-                                placeholder={savedKeys.includes(field.id) ? 'Saved permanently - enter new value to replace' : field.placeholder}
+                                placeholder={savedKeys.includes(field.id) ? 'Configured externally - enter a temporary value' : field.placeholder}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 text-slate-300 placeholder-slate-700 font-mono"
                             />
                         </div>

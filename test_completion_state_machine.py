@@ -31,6 +31,7 @@ def test_c_completion_requires_final_audit_step():
     assert main._set_project_status(p, "final_audit")
 
     main._mark_final_audit_passed(p, True)
+    p["final_delivery_report"] = {"final_status": "STRICT_MVP_ACCEPTED", "completion_policy": {"accepted": True}}
     assert not main._set_project_status(p, "completed")
     assert main._set_project_status(p, "product_judge")
     main._mark_product_judge_passed(p, True)

@@ -86,7 +86,7 @@ export default function InfoModal({ activePort, onClose, addLog, embedded = fals
               </div>
               <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
                 <div className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Privacy</div>
-                <div style={{ color: 'var(--text-muted)' }}>Settings and API keys are stored locally in the workspace configuration.</div>
+                <div style={{ color: 'var(--text-muted)' }}>Settings are stored locally. API keys are not saved in Studio settings; set the matching provider environment variable to persist a key.</div>
               </div>
               <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
                 <div className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Runtime</div>

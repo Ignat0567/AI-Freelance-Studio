@@ -1,12 +1,12 @@
-import os
-import json
-import requests
-import xml.etree.ElementTree as ET
-import urllib.parse
 import re as _re
+import urllib.parse
+import warnings
+import xml.etree.ElementTree as ET
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, "studio_config.json")
+import requests
+
+import config_storage
+import secret_store
 
 PLATFORMS = {
     "upwork": {"name": "Upwork", "base_url": "https://upwork.com"},
@@ -62,13 +62,14 @@ MOCK_FALLBACKS = {
 
 
 def _load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    return config_storage.load_studio_keys()
+
+
+def _client_secret(config: dict, secret_name: str) -> str:
+    secret = secret_store.get_secret(secret_name, config)
+    if secret_store.has_legacy_secret(secret_name, config) and not secret_store.has_env_secret(secret_name):
+        warnings.warn(secret_store.legacy_secret_warning(secret_name)["message"], RuntimeWarning, stacklevel=2)
+    return secret
 
 
 def _keyword_match(keyword: str, text: str) -> bool:
@@ -78,10 +79,10 @@ def _keyword_match(keyword: str, text: str) -> bool:
 
 
 def _search_freelancer_api(keyword):
-    """Search Freelancer.com via REST API. Requires client_id + client_secret in studio_config.json."""
+    """Search Freelancer.com via REST API. Requires configured client_id + client_secret."""
     config = _load_config()
     client_id = config.get("freelancer_client_id", "")
-    client_secret = config.get("freelancer_client_secret", "")
+    client_secret = _client_secret(config, "freelancer_client_secret")
     if not client_id or not client_secret:
         return None  # signal: no keys configured
 
@@ -123,10 +124,10 @@ def _search_freelancer_api(keyword):
 
 
 def _search_upwork_api(keyword):
-    """Search Upwork via GraphQL API. Requires client_id + client_secret in studio_config.json."""
+    """Search Upwork via GraphQL API. Requires configured client_id + client_secret."""
     config = _load_config()
     client_id = config.get("upwork_client_id", "")
-    client_secret = config.get("upwork_client_secret", "")
+    client_secret = _client_secret(config, "upwork_client_secret")
     if not client_id or not client_secret:
         return None  # signal: no keys configured
 

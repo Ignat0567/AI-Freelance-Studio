@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import config_storage
 import main
 from project_spec import ensure_project_spec_bundle
 
@@ -16,7 +17,7 @@ def _client(monkeypatch, tmp_path, config=None):
     state_path = tmp_path / "projects_state.json"
     _write(config_path, config or {})
     _write(state_path, {"projects": {}, "tasks": {}})
-    monkeypatch.setattr(main, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
     monkeypatch.setattr(main, "PROJECTS_STATE_FILE", str(state_path))
     main.active_projects.clear()
     main.PROJECT_TASKS.clear()
@@ -66,14 +67,37 @@ def _openai_connection():
 def test_project_modes_persist_across_restart(monkeypatch, tmp_path):
     client, _cfg, state_path = _client(monkeypatch, tmp_path)
     ids = []
-    for mode in ("prototype", "manual", "mvp"):
+    expected = {"prototype": "prototype", "manual": "manual", "mvp": "strict_mvp"}
+    for mode in expected:
         data = client.post("/api/projects/manual", json={"title": f"{mode} app", "initial_description": "Build a todo app", "project_mode": mode}).json()
         ids.append((data["project_id"], mode))
 
     persisted = json.loads(state_path.read_text(encoding="utf-8"))["projects"]
 
     for project_id, mode in ids:
-        assert persisted[project_id]["project_mode"] == mode
+        assert persisted[project_id]["project_mode"] == expected[mode]
+        assert persisted[project_id]["quality_profile"] == ("prototype" if mode == "prototype" else "strict_mvp")
+
+
+def test_manual_project_quality_targets_and_toggles_persist(monkeypatch, tmp_path):
+    client, _cfg, state_path = _client(monkeypatch, tmp_path)
+    data = client.post("/api/projects/manual", json={
+        "title": "Quality UI",
+        "initial_description": "Build booking manager web and mobile app",
+        "quality_profile": "strict_mvp",
+        "required_targets": ["backend", "manager_web", "android"],
+        "optional_targets": ["ios"],
+        "strict_completion_toggles": {"require_real_e2e": True, "require_rbac_matrix": True, "require_security_baseline": True, "block_on_mandatory_not_verified": True},
+    }).json()
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))["projects"][data["project_id"]]
+
+    settings = persisted["quality_settings"]
+    assert settings["required_targets"] == ["backend", "manager_web", "android"]
+    assert settings["optional_targets"] == ["ios"]
+    assert settings["target_requirements"]["manager_web"] == "required"
+    assert settings["target_requirements"]["ios"] == "optional"
+    assert settings["require_real_e2e"] is True
+    assert settings["require_rbac_matrix"] is True
 
 
 def test_generic_credentials_do_not_block_prototype_or_mvp_coding():

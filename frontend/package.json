@@ -16,7 +16,9 @@
         "dist:win": "electron-builder --win",
         "dist:mac": "electron-builder --mac",
         "dist:linux": "electron-builder --linux",
-        "dist:all": "electron-builder --win --mac --linux"
+        "dist:all": "electron-builder --win --mac --linux",
+        "build:backend": "python ../scripts/build_backend.py",
+        "package:win": "npm run build:vite && npm run build:backend && npm run dist:win"
     },
     "dependencies": {
         "@google/model-viewer": "^4.3.1",
@@ -44,27 +46,27 @@
             "dist/**/*",
             "main.js",
             "preload.js",
-            "../main.py",
-            "../ai_utils.py",
-            "../ai_developer.py",
-            "../docker_tester.py",
-            "../goldie_agent.py",
-            "../qa_engine.py",
-            "../requirements_checker.py",
-            "../search_utils.py",
-            "../package.json",
-            "../studio_config.json"
+            "../package.json"
         ],
         "extraResources": [
             {
-                "from": "../.venv",
-                "to": ".venv",
+                "from": "../backend_dist",
+                "to": "backend",
                 "filter": [
                     "**/*"
+                ]
+            },
+            {
+                "from": "dist",
+                "to": "frontend-dist",
+                "filter": [
+                    "**/*",
+                    "!**/*.map"
                 ]
             }
         ],
         "win": {
+            "signAndEditExecutable": false,
             "target": [
                 "nsis"
             ],

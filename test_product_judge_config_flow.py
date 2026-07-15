@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import config_storage
 import main
 
 
@@ -38,7 +39,7 @@ def _vision_connection(provider="openai", model="gpt-4o"):
 def _client(monkeypatch, tmp_path, config):
     config_path = tmp_path / "studio_config.json"
     _write_config(config_path, config)
-    monkeypatch.setattr(main, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
     monkeypatch.setitem(main.SYSTEM_SETTINGS, "global_provider", config.get("_system", {}).get("global_provider", "openai"))
     monkeypatch.setitem(main.SYSTEM_SETTINGS, "global_model", config.get("_system", {}).get("global_model", "gpt-4o"))
     main.agent_configs = main.load_agent_configs()

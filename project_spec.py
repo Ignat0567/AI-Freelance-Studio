@@ -5,6 +5,9 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 from project_state import append_evidence_record, persist_project_state
+from quality_profiles import QUALITY_PROFILES, ensure_quality_settings, normalize_quality_profile
+from feature_matrix import ensure_feature_matrix
+from agent_contracts import ROLE_CONTRACTS, apply_agent_artifact, recommended_defaults_for, role_contract_for, validate_agent_output
 
 
 ACCEPTANCE_EVIDENCE_FIELDS = (
@@ -620,12 +623,18 @@ def orphan_mandatory_requirements(project_spec: dict, acceptance_criteria: list[
     return [req for req in mandatory_user_requirements(project_spec) if req.get("id") not in linked_requirement_ids]
 
 
-PROJECT_MODES = {"prototype", "manual", "mvp"}
+PROJECT_MODES = {"prototype", "manual", "mvp", "strict_mvp", "production_candidate", "production"}
 
 
 def normalize_project_mode(value: str | None) -> str:
-    mode = str(value or "mvp").strip().lower()
-    return mode if mode in PROJECT_MODES else "mvp"
+    mode = str(value or "strict_mvp").strip().lower()
+    if mode == "mvp":
+        return "strict_mvp"
+    return mode if mode in PROJECT_MODES else "strict_mvp"
+
+
+def normalize_project_quality_profile(value: str | None, legacy_mode: str | None = None) -> str:
+    return normalize_quality_profile(value, legacy_mode)[0]
 
 
 def _credential_record(name: str, description: str, source: str = "user_request", required: bool = True, blocks_completion: bool | None = None, project_mode: str = "mvp", text: str = "") -> dict[str, Any]:
@@ -970,6 +979,7 @@ def _safe_read(project_path: str | None, rel: str) -> str:
 def build_project_spec(project: dict, existing_path: str | None = None) -> dict[str, Any]:
     source_text = _text(project)
     project_mode = normalize_project_mode(project.get("project_mode"))
+    quality_profile = normalize_project_quality_profile(project.get("quality_profile"), project_mode)
     original = _original_request(project)
     if project.get("recovery_status") in {"native", "fully_recovered"} and not original.strip():
         raise ValueError("recovery_state_error: original request is required for contract migration")
@@ -1030,6 +1040,7 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
         "original_user_request": original,
         "project_goal": project.get("title") or (features[0] if features else "Generated project"),
         "project_mode": project_mode,
+        "quality_profile": quality_profile,
         "project_type": profiles[0],
         "project_profiles": profiles,
         "requested_product_kind": product_decision["requested_product_kind"],
@@ -1058,6 +1069,7 @@ def build_project_spec(project: dict, existing_path: str | None = None) -> dict[
         "unknowns": _unknowns(source_text, credentials),
         "assumptions": _assumptions(profiles),
     }
+    spec["quality_settings"] = ensure_quality_settings({**project, "project_spec": spec})
     ticket_blob = f"{original} {source_text}".lower()
     if "ticket" in ticket_blob and ("priority" in ticket_blob or "status" in ticket_blob):
         units = [
@@ -1708,6 +1720,9 @@ def ensure_project_spec_bundle(project: dict, project_path: str | None = None) -
     profiles = detect_project_profiles(spec, project_path=project_path)
     spec["project_profiles"] = profiles
     spec["project_type"] = profiles[0] if profiles else "generic"
+    settings = ensure_quality_settings({**project, "project_spec": spec, "project_profiles": profiles})
+    spec["quality_profile"] = settings["quality_profile"]
+    spec["quality_settings"] = settings
     criteria = generate_acceptance_criteria(spec)
     qa_plan = generate_qa_plan(spec, profiles, criteria)
     bundle = {
@@ -1715,10 +1730,13 @@ def ensure_project_spec_bundle(project: dict, project_path: str | None = None) -
         "project_profiles": profiles,
         "acceptance_criteria": criteria,
         "qa_plan": qa_plan,
+        "quality_profile": settings["quality_profile"],
+        "quality_settings": settings,
         "traceability": {"orphan_mandatory_requirement_ids": qa_plan["orphan_mandatory_requirement_ids"]},
     }
     project.update(bundle)
     ensure_acceptance_evidence_history(project)
+    ensure_feature_matrix(project, project_path)
     return bundle
 
 
