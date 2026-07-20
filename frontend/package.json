@@ -1,6 +1,9 @@
 {
     "name": "ai-freelance-studio",
-    "version": "1.0.0",
+    "version": "1.0.0-beta.1",
+    "description": "Desktop studio for creating, validating, and delivering small freelance software projects.",
+    "author": "AI Labs",
+    "copyright": "Copyright (C) 2026 AI Labs",
     "main": "main.js",
     "engines": {
         "node": ">=14.17.0"
@@ -13,12 +16,16 @@
         "start:electron": "electron .",
         "dev:full": "npm run start:electron",
         "dev:lite": "vite --host",
+        "validate:signing": "node scripts/validate-windows-signing.js",
+        "predist:win": "npm run validate:signing",
+        "prepackage:win": "npm run validate:signing",
         "dist:win": "electron-builder --win",
         "dist:mac": "electron-builder --mac",
         "dist:linux": "electron-builder --linux",
         "dist:all": "electron-builder --win --mac --linux",
         "build:backend": "python ../scripts/build_backend.py",
-        "package:win": "npm run build:vite && npm run build:backend && npm run dist:win"
+        "hash:win": "node scripts/write-installer-sha256.js",
+        "package:win": "npm run build:vite && npm run build:backend && npm run dist:win && npm run hash:win"
     },
     "dependencies": {
         "@google/model-viewer": "^4.3.1",
@@ -46,14 +53,18 @@
             "dist/**/*",
             "main.js",
             "preload.js",
-            "../package.json"
+            "official-downloads.js",
+            "build/icon.ico",
+            "../package.json",
+            "!**/*.{pfx,p12,pem,key,cer,crt}"
         ],
         "extraResources": [
             {
                 "from": "../backend_dist",
                 "to": "backend",
                 "filter": [
-                    "**/*"
+                    "**/*",
+                    "!**/*.{pfx,p12,pem,key,cer,crt}"
                 ]
             },
             {
@@ -66,7 +77,8 @@
             }
         ],
         "win": {
-            "signAndEditExecutable": false,
+            "signAndEditExecutable": true,
+            "executableName": "AI Freelance Studio",
             "target": [
                 "nsis"
             ],
@@ -77,7 +89,12 @@
             "oneClick": false,
             "allowToChangeInstallationDirectory": true,
             "runAfterFinish": true,
-            "shortcutName": "AI Freelance Studio"
+            "createDesktopShortcut": true,
+            "shortcutName": "AI Freelance Studio",
+            "installerIcon": "build/icon.ico",
+            "uninstallerIcon": "build/icon.ico",
+            "uninstallDisplayName": "AI Freelance Studio ${version}",
+            "include": "build/installer.nsh"
         },
         "mac": {
             "target": [

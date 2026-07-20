@@ -29,6 +29,10 @@ def test_electron_package_manifest_bundles_only_sidecar_and_built_frontend_resou
 
     assert not any(".venv" in path.lower() for path in build.get("files", []))
     assert build.get("extraResources", []) == [
-        {"from": "../backend_dist", "to": "backend", "filter": ["**/*"]},
+        {
+            "from": "../backend_dist",
+            "to": "backend",
+            "filter": ["**/*", "!**/*.{pfx,p12,pem,key,cer,crt}"],
+        },
         {"from": "dist", "to": "frontend-dist", "filter": ["**/*", "!**/*.map"]},
     ]

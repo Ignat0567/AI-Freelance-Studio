@@ -10,11 +10,14 @@ import time
 import json
 import os
 import sys
+import atexit
 import logging
 import threading
 import uuid
 import re
 import queue
+import socket
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -27,8 +30,12 @@ logger = logging.getLogger(__name__)
 
 OPCODE_SERVE_PORT = 4096
 OPCODE_SERVE_HOST = "127.0.0.1"
-OPENCODE_WEB_PORT = 4097
 TASK_TIMEOUT = 600  # 10 minutes max per task
+
+_opencode_web_lock = threading.Lock()
+_opencode_web_process: Optional[subprocess.Popen] = None
+_opencode_web_url = ""
+_opencode_web_output: list[str] = []
 
 
 def _resolve_cli_task_file(project_dir: str, task_file_argument: str) -> tuple[Path, Path, str]:
@@ -215,6 +222,63 @@ def _discover_opencode() -> Optional[str]:
     return None
 
 
+def _standard_windows_tool_paths(tool: str) -> list[str]:
+    if os.name != "nt":
+        return []
+    program_files = [os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
+    app_data = os.environ.get("APPDATA", os.path.expanduser(r"~\AppData\Roaming"))
+    local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local"))
+    if tool == "node":
+        return [os.path.join(root, "nodejs", "node.exe") for root in program_files] + [os.path.join(local_app_data, "Programs", "nodejs", "node.exe")]
+    if tool == "npm":
+        return [os.path.join(root, "nodejs", "npm.cmd") for root in program_files] + [os.path.join(local_app_data, "Programs", "nodejs", "npm.cmd")]
+    if tool == "opencode":
+        return [
+            os.path.join(app_data, "npm", "opencode.cmd"),
+            os.path.join(app_data, "npm", "opencode.exe"),
+            os.path.join(local_app_data, "Microsoft", "WinGet", "Links", "opencode.exe"),
+        ]
+    return []
+
+
+def _detect_onboarding_tool(tool: str) -> dict:
+    command_names = {
+        "node": ["node.exe", "node"],
+        "npm": ["npm.cmd", "npm"],
+        "opencode": ["opencode.cmd", "opencode.exe", "opencode"],
+    }[tool]
+    path = ""
+    for name in command_names:
+        path = shutil.which(name) or ""
+        if path:
+            break
+    found_via_standard_path = False
+    if not path:
+        path = next((candidate for candidate in _standard_windows_tool_paths(tool) if os.path.isfile(candidate)), "")
+        found_via_standard_path = bool(path)
+    if not path:
+        return {"installed": False, "version": "", "path": "", "path_refresh_recommended": False}
+    code, stdout, stderr = _run_capture([path, "--version"], timeout=10)
+    if code != 0:
+        return {"installed": False, "version": "", "path": "", "path_refresh_recommended": found_via_standard_path}
+    return {
+        "installed": True,
+        "version": _strip_ansi(stdout or stderr).strip(),
+        "path": path,
+        "path_refresh_recommended": found_via_standard_path,
+    }
+
+
+def get_opencode_onboarding_dependencies() -> dict:
+    components = {tool: _detect_onboarding_tool(tool) for tool in ("node", "npm", "opencode")}
+    restart_recommended = any(item["path_refresh_recommended"] for item in components.values())
+    return {
+        "components": components,
+        "restart_recommended": restart_recommended,
+        "restart_message": "A dependency was found in a standard Windows install location but is not visible on Studio's current PATH. Restart Studio, then select Detect Again." if restart_recommended else "",
+    }
+
+
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text or "")
 
@@ -275,24 +339,117 @@ def _opencode_auth_provider_ids() -> set[str]:
         output = _strip_ansi(stdout + "\n" + stderr)
     except Exception:
         return set()
-    providers = set()
-    aliases = {
-        "openai": "openai",
-        "openrouter": "openrouter",
-        "nvidia": "nvidia",
-        "anthropic": "anthropic",
-        "google": "google",
-        "groq": "groq",
-        "mistral": "mistral",
-        "deepseek": "deepseek",
-        "together": "together",
+    return {item["provider"] for item in _parse_opencode_auth_list(output)}
+
+
+def _normalize_provider_id(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+
+
+def _parse_opencode_auth_list(output: str) -> list[dict[str, str]]:
+    """Extract only provider and auth type labels from `auth list` output."""
+    credentials = []
+    for line in _strip_ansi(output).splitlines():
+        clean = line.strip(" |•—\t")
+        if not clean or "credential" in clean.lower() or clean.startswith("~"):
+            continue
+        parts = clean.split()
+        if len(parts) < 2:
+            continue
+        provider = _normalize_provider_id(" ".join(parts[:-1]))
+        auth_type = _normalize_provider_id(parts[-1])
+        if provider and auth_type:
+            credentials.append({"provider": provider, "auth_type": auth_type})
+    return credentials
+
+
+def _readiness_result(error_code: str, message: str, checks: dict, **extra) -> dict:
+    return {"status": "error", "ready": False, "error_code": error_code, "message": message, "checks": checks, **extra}
+
+
+def test_opencode_readiness(executable_path: str = "", selected_model: str = "", server_url: str = "") -> dict:
+    """Verify local OpenCode installation, server, auth metadata, models, and selection."""
+    checks = {
+        "executable": {"status": "not_checked"},
+        "server": {"status": "not_checked"},
+        "authentication": {"status": "not_checked"},
+        "models": {"status": "not_checked"},
+        "selection": {"status": "not_checked", "provider": "", "model": selected_model},
     }
-    for line in output.splitlines():
-        clean = line.strip(" |•—\t").lower()
-        for label, provider in aliases.items():
-            if clean.startswith(label):
-                providers.add(provider)
-    return providers
+    binary = executable_path.strip() or _discover_opencode()
+    if not binary:
+        checks["executable"] = {"status": "failed", "error_code": "opencode_not_installed"}
+        return _readiness_result("opencode_not_installed", "OpenCode is not installed or could not be detected.", checks)
+
+    code, stdout, stderr = _run_capture([binary, "--version"], timeout=10)
+    if code is None:
+        error_code = "timeout" if stderr == "timeout" else "executable_not_detected"
+        checks["executable"] = {"status": "failed", "error_code": error_code}
+        return _readiness_result(error_code, "OpenCode executable detection timed out." if error_code == "timeout" else "The selected OpenCode executable could not be started.", checks)
+    if code != 0:
+        checks["executable"] = {"status": "failed", "error_code": "cli_command_failed"}
+        return _readiness_result("cli_command_failed", "OpenCode executable validation failed.", checks)
+    checks["executable"] = {"status": "passed", "version": _strip_ansi(stdout or stderr).strip()}
+
+    candidates = []
+    for candidate in (server_url.strip(), _opencode_web_url, f"http://{OPCODE_SERVE_HOST}:{OPCODE_SERVE_PORT}"):
+        if candidate and re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):\d+", candidate) and candidate not in candidates:
+            candidates.append(candidate)
+    active_server = next((candidate for candidate in candidates if _opencode_web_ready(candidate)), "")
+    if not active_server:
+        checks["server"] = {"status": "failed", "error_code": "server_not_running"}
+        return _readiness_result("server_not_running", "OpenCode server is not running. Start OpenCode Web or the local server first.", checks, executable_path=binary)
+    checks["server"] = {"status": "passed", "url": active_server}
+
+    code, stdout, stderr = _run_capture([binary, "auth", "list"], timeout=20)
+    if code is None:
+        error_code = "timeout" if stderr == "timeout" else "cli_command_failed"
+        checks["authentication"] = {"status": "failed", "error_code": error_code, "providers": []}
+        return _readiness_result(error_code, "OpenCode authentication check timed out." if error_code == "timeout" else "OpenCode authentication check failed.", checks, executable_path=binary, server_url=active_server)
+    if code != 0:
+        checks["authentication"] = {"status": "failed", "error_code": "cli_command_failed", "providers": []}
+        return _readiness_result("cli_command_failed", "OpenCode authentication check failed.", checks, executable_path=binary, server_url=active_server)
+    credentials = _parse_opencode_auth_list(f"{stdout}\n{stderr}")
+    providers = sorted({item["provider"] for item in credentials})
+    auth_types = sorted({item["auth_type"] for item in credentials})
+    if not providers:
+        checks["authentication"] = {"status": "failed", "error_code": "provider_not_authenticated", "providers": [], "auth_types": []}
+        return _readiness_result("provider_not_authenticated", "No authenticated OpenCode provider was found. Select Authenticate Provider first.", checks, executable_path=binary, server_url=active_server)
+    checks["authentication"] = {"status": "passed", "providers": providers, "auth_types": auth_types}
+
+    code, stdout, stderr = _run_capture([binary, "models"], timeout=30)
+    if code is None:
+        error_code = "timeout" if stderr == "timeout" else "cli_command_failed"
+        checks["models"] = {"status": "failed", "error_code": error_code, "count": 0}
+        return _readiness_result(error_code, "OpenCode model discovery timed out." if error_code == "timeout" else "OpenCode model discovery failed.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers)
+    if code != 0:
+        checks["models"] = {"status": "failed", "error_code": "cli_command_failed", "count": 0}
+        return _readiness_result("cli_command_failed", "OpenCode model discovery failed.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers)
+    models = sorted({line.strip() for line in _strip_ansi(stdout).splitlines() if re.fullmatch(r"[^\s/]+/.+", line.strip())})
+    if not models:
+        checks["models"] = {"status": "failed", "error_code": "models_unavailable", "count": 0}
+        return _readiness_result("models_unavailable", "OpenCode authentication exists, but no models are available.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=[])
+    checks["models"] = {"status": "passed", "count": len(models)}
+
+    selected = selected_model.strip()
+    selected_provider = _normalize_provider_id(selected.split("/", 1)[0]) if "/" in selected else ""
+    checks["selection"] = {"status": "failed", "provider": selected_provider, "model": selected}
+    if not selected_provider or not selected:
+        checks["selection"]["error_code"] = "selected_model_missing"
+        return _readiness_result("selected_model_missing", "Select an OpenCode provider/model before testing.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=models)
+    if selected_provider not in providers:
+        checks["selection"]["error_code"] = "selected_provider_not_authenticated"
+        return _readiness_result("selected_provider_not_authenticated", "The selected OpenCode provider is not authenticated.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=models)
+    if selected not in models:
+        checks["selection"]["error_code"] = "selected_model_unavailable"
+        return _readiness_result("selected_model_unavailable", "The selected OpenCode model is not available.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=models)
+    checks["selection"] = {"status": "passed", "provider": selected_provider, "model": selected}
+    selected_auth_types = sorted({item["auth_type"] for item in credentials if item["provider"] == selected_provider})
+    return {
+        "status": "ok", "ready": True, "error_code": "", "message": "OpenCode executable, server, provider authentication, and selected model are ready.",
+        "checks": checks, "executable_path": binary, "server_url": active_server,
+        "authorized_providers": providers, "auth_types": auth_types, "selected_auth_types": selected_auth_types, "available_models": models,
+    }
 
 
 def _effective_opencode_provider_model(provider_raw: str, model: str, studio_cfg: dict) -> tuple[str, str, str]:
@@ -328,6 +485,47 @@ def _friendly_opencode_error(text: str) -> str:
     return clean
 
 
+def _find_free_local_port(host: str = OPCODE_SERVE_HOST) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind((host, 0))
+        return int(listener.getsockname()[1])
+
+
+def _opencode_web_ready(url: str) -> bool:
+    try:
+        response = httpx.get(f"{url}/global/health", timeout=1)
+        return response.status_code in (200, 401, 403)
+    except Exception:
+        return False
+
+
+def _capture_web_output(stream) -> None:
+    if stream is None:
+        return
+    try:
+        for line in iter(stream.readline, ""):
+            clean = _strip_ansi(line).strip()
+            if clean:
+                _opencode_web_output.append(clean[-1000:])
+                del _opencode_web_output[:-20]
+    except Exception:
+        return
+
+
+def _clear_opencode_web_process() -> None:
+    global _opencode_web_process, _opencode_web_url
+    _opencode_web_process = None
+    _opencode_web_url = ""
+
+
+def stop_opencode_web() -> None:
+    """Stop only the OpenCode Web process started and owned by Studio."""
+    with _opencode_web_lock:
+        if _opencode_web_process and _opencode_web_process.poll() is None:
+            _terminate_process_tree(_opencode_web_process)
+        _clear_opencode_web_process()
+
+
 def get_opencode_status() -> dict:
     """Return safe OpenCode install/auth/config status. Never returns secrets."""
     binary = _discover_opencode()
@@ -343,7 +541,7 @@ def get_opencode_status() -> dict:
         "effective_model": "",
         "effective_note": "",
         "config_path": os.path.join(_get_opencode_config_dir(), "opencode.json"),
-        "web_url": f"http://127.0.0.1:{OPENCODE_WEB_PORT}",
+        "web_url": _opencode_web_url if _opencode_web_url and _opencode_web_ready(_opencode_web_url) else "",
     }
     studio_cfg = _get_studio_config()
     system_cfg = studio_cfg.get("_system", {}) if isinstance(studio_cfg.get("_system"), dict) else {}
@@ -367,14 +565,7 @@ def get_opencode_status() -> dict:
     try:
         _returncode, stdout, stderr = _run_capture([binary, "auth", "list"], timeout=20)
         output = _strip_ansi(stdout + "\n" + stderr)
-        credentials = []
-        for line in output.splitlines():
-            clean = line.strip(" |•—\t")
-            if not clean or "Credentials" in clean or "credential" in clean.lower():
-                continue
-            parts = clean.split()
-            if len(parts) >= 2:
-                credentials.append({"provider": parts[0], "method": parts[-1]})
+        credentials = [{"provider": item["provider"], "method": item["auth_type"]} for item in _parse_opencode_auth_list(output)]
         status["credentials"] = credentials
         status["credentials_count"] = len(credentials)
     except Exception:
@@ -382,70 +573,117 @@ def get_opencode_status() -> dict:
     return status
 
 
-def start_opencode_web(port: int = OPENCODE_WEB_PORT, workdir: Optional[str] = None) -> dict:
-    """Start OpenCode web UI for browser login and return its URL."""
-    if not _ensure_opencode_installed():
-        return {"status": "error", "message": "OpenCode is not installed", "url": ""}
+def start_opencode_web(workdir: Optional[str] = None, readiness_timeout: float = 15.0) -> dict:
+    """Start one Studio-owned OpenCode Web process and return only after readiness."""
+    global _opencode_web_process, _opencode_web_url
+    with _opencode_web_lock:
+        if _opencode_web_url and _opencode_web_ready(_opencode_web_url):
+            return {
+                "status": "ready", "error_code": "", "url": _opencode_web_url,
+                "port": int(_opencode_web_url.rsplit(":", 1)[1]), "reused": True,
+                "message": "OpenCode Web is already running. Opening the existing local interface.",
+            }
+        if _opencode_web_process and _opencode_web_process.poll() is None:
+            _terminate_process_tree(_opencode_web_process)
+        _clear_opencode_web_process()
+
+        binary = _discover_opencode()
+        if not binary:
+            return {"status": "error", "error_code": "executable_missing", "message": "OpenCode executable was not found. Install or detect OpenCode first.", "url": ""}
+
+        try:
+            port = _find_free_local_port()
+        except OSError:
+            return {"status": "error", "error_code": "port_unavailable", "message": "No free localhost port is available for OpenCode Web.", "url": ""}
+
+        url = f"http://{OPCODE_SERVE_HOST}:{port}"
+        command = [binary, "web", "--hostname", OPCODE_SERVE_HOST, "--port", str(port)]
+        _opencode_web_output.clear()
+        try:
+            _opencode_web_process = subprocess.Popen(
+                command,
+                cwd=workdir or os.getcwd(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                shell=False,
+            )
+        except OSError:
+            _clear_opencode_web_process()
+            return {"status": "error", "error_code": "start_failed", "message": "OpenCode Web could not be started.", "url": ""}
+
+        threading.Thread(target=_capture_web_output, args=(_opencode_web_process.stdout,), daemon=True).start()
+        threading.Thread(target=_capture_web_output, args=(_opencode_web_process.stderr,), daemon=True).start()
+        deadline = time.monotonic() + readiness_timeout
+        while time.monotonic() < deadline:
+            if _opencode_web_process.poll() is not None:
+                output = "\n".join(_opencode_web_output).lower()
+                code = "port_unavailable" if any(marker in output for marker in ("address already in use", "eaddrinuse", "port is already in use")) else "early_exit"
+                message = "The selected localhost port became unavailable before OpenCode Web started." if code == "port_unavailable" else "OpenCode Web exited before it became ready."
+                _clear_opencode_web_process()
+                return {"status": "error", "error_code": code, "message": message, "url": ""}
+            if _opencode_web_ready(url):
+                _opencode_web_url = url
+                return {
+                    "status": "ready", "error_code": "", "url": url, "port": port,
+                    "reused": False, "message": "OpenCode Web is ready. Opening the local interface.",
+                }
+            time.sleep(0.2)
+
+        _terminate_process_tree(_opencode_web_process)
+        _clear_opencode_web_process()
+        return {"status": "error", "error_code": "readiness_timeout", "message": "OpenCode Web did not become ready in time.", "url": ""}
+
+
+def start_opencode_auth_terminal(workdir: Optional[str] = None) -> dict:
+    """Open the interactive OpenCode-owned provider authentication flow."""
+    manual_command = "opencode auth login"
     binary = _discover_opencode()
     if not binary:
-        return {"status": "error", "message": "OpenCode binary not found", "url": ""}
-    url = f"http://127.0.0.1:{port}"
+        return {
+            "status": "error", "error_code": "executable_missing",
+            "message": "OpenCode executable was not found. Install or detect OpenCode first.",
+            "manual_command": manual_command,
+        }
+    if os.name != "nt":
+        return {
+            "status": "manual_required", "error_code": "terminal_unavailable",
+            "message": "Open a terminal and run the command shown below.",
+            "manual_command": manual_command,
+        }
+
+    executable = shutil.which(binary) or binary
+    comspec = os.environ.get("COMSPEC") or os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+    command_line = subprocess.list2cmdline([executable, "auth", "login"])
+    terminal_command = [comspec, "/d", "/k", f"title OpenCode Provider Authentication & {command_line}"]
     try:
         subprocess.Popen(
-            [binary, "web", "--port", str(port), "--hostname", "127.0.0.1"],
+            terminal_command,
             cwd=workdir or os.getcwd(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010),
+            shell=False,
         )
-        return {"status": "started", "url": url, "message": "OpenCode web UI started. Use it to log in, then restart OpenCode if needed."}
-    except Exception as e:
-        return {"status": "error", "message": str(e), "url": ""}
-
-
-def start_opencode_auth_login(provider: str = "", method: str = "") -> dict:
-    """Start OpenCode auth login flow. OAuth providers usually open a browser."""
-    if not _ensure_opencode_installed():
-        return {"status": "error", "message": "OpenCode is not installed"}
-    binary = _discover_opencode()
-    if not binary:
-        return {"status": "error", "message": "OpenCode binary not found"}
-    cmd = [binary, "auth", "login"]
-    if provider:
-        cmd += ["--provider", provider]
-    if method:
-        cmd += ["--method", method]
-    try:
-        subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        return {"status": "started", "message": "OpenCode login flow started. Complete the browser login if prompted."}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "started", "error_code": "", "manual_command": manual_command,
+            "message": "Complete the authentication steps in the OpenCode terminal. When finished, return here and select Test Connection.",
+        }
+    except OSError:
+        return {
+            "status": "manual_required", "error_code": "terminal_launch_failed",
+            "message": "The OpenCode terminal could not be opened. Run the command shown below in a terminal.",
+            "manual_command": manual_command,
+        }
 
 
 def _ensure_opencode_installed() -> bool:
-    """Prompt user or auto-install opencode if missing. Also ensures config is ready."""
+    """Validate OpenCode presence without downloading or installing software."""
     binary = _discover_opencode()
     if not binary:
-        logger.warning("OpenCode not found. Attempting npm install...")
-        try:
-            subprocess.run(
-                ["npm", "install", "-g", "opencode-ai"],
-                capture_output=True, timeout=120, check=True
-            )
-            binary = _discover_opencode()
-            if not binary:
-                logger.error("npm install succeeded but opencode binary not found")
-                return False
-        except Exception as e:
-            logger.error(f"Failed to install OpenCode: {e}")
-            return False
+        logger.warning("OpenCode not found. Installation must be completed by the user from the official download page.")
+        return False
 
     # Ensure config with permissions + API key exists
     if not _ensure_opencode_config():
@@ -956,3 +1194,6 @@ def stop_opencode():
     """Convenience: stop OpenCode if we started it."""
     bridge = get_bridge()
     bridge.stop()
+
+
+atexit.register(stop_opencode_web)

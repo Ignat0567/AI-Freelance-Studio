@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { tr } from '../i18n.js';
+import { applyStudioTheme } from '../theme.js';
 import OpenCodeConnectionSetup from './OpenCodeConnectionSetup.jsx';
 
 const ACCENT_COLORS = [
@@ -10,7 +11,7 @@ const ACCENT_COLORS = [
   { name: 'Rose', color: '#f43f5e' },
   { name: 'Purple', color: '#a855f7' },
   { name: 'Cyan', color: '#06b6d4' },
-  { name: 'White', color: '#f1f5f9' },
+  { name: 'Slate', color: '#475569' },
 ];
 
 export default function SettingsModal({ activePort, onClose, addLog, embedded = false }) {
@@ -18,6 +19,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
   const [activeTab, setActiveTab] = useState('appearance');
   const [loading, setLoading] = useState(true);
   const dialogRef = useRef(null);
+  const scrollBodyRef = useRef(null);
   const closeButtonRef = useRef(null);
   const returnFocusRef = useRef(null);
   const onCloseRef = useRef(onClose);
@@ -37,6 +39,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
   }, [activePort]);
 
   const updateSetting = (key, value) => {
+    const previous = settings;
     const updated = { ...settings, [key]: value };
     setSettings(updated);
     fetch(`http://localhost:${activePort}/api/config/system`, {
@@ -44,28 +47,31 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [key]: value })
     })
-      .then(res => res.json())
+      .then(async res => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Settings could not be saved');
+        return data;
+      })
       .then(data => {
         if (data.status === 'saved') {
-          applyTheme(updated);
+          applyStudioTheme(updated, { cache: key === 'theme' });
           addLog(`[Settings]: ${key} set to ${value}.`);
         }
       })
-      .catch(err => console.error('[Settings Error]:', err));
-  };
-
-  const applyTheme = (s) => {
-    const root = document.documentElement;
-    if (s.accent_color) root.style.setProperty('--accent', s.accent_color);
-    root.classList.toggle('theme-light', s.theme === 'light');
-    root.classList.toggle('theme-reduced-motion', s.animation_speed === 'off');
-    root.classList.remove('font-small', 'font-medium', 'font-large');
-    if (s.font_size) root.classList.add('font-' + s.font_size);
+      .catch(err => {
+        setSettings(previous);
+        applyStudioTheme(previous);
+        console.error('[Settings Error]:', err);
+      });
   };
 
   useEffect(() => {
-    if (settings) applyTheme(settings);
+    if (settings) applyStudioTheme(settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (scrollBodyRef.current) scrollBodyRef.current.scrollTop = 0;
+  }, [activeTab]);
 
   useEffect(() => {
     if (embedded) return undefined;
@@ -122,7 +128,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
 
   return (
     <div className={embedded ? "settings-inline" : "settings-modal-overlay animate-fade-in"} onMouseDown={(event) => { if (!embedded && event.target === event.currentTarget) onClose?.(); }}>
-      <div ref={dialogRef} role={embedded ? undefined : "dialog"} aria-modal={embedded ? undefined : "true"} aria-labelledby="settings-modal-title" className={embedded ? "settings-inline-container bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full" : "settings-modal-container bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full max-w-2xl shadow-2xl"} style={{ borderColor: 'var(--border)' }}>
+      <div ref={dialogRef} role={embedded ? undefined : "dialog"} aria-modal={embedded ? undefined : "true"} aria-labelledby="settings-modal-title" className={`settings-modal-container ${embedded ? "settings-inline-container" : "max-w-2xl shadow-2xl"} bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full`} style={{ borderColor: 'var(--border)' }}>
 
         <div className="settings-modal-header p-4 border-b border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
           <h3 id="settings-modal-title" className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{t('systemPreferences')}</h3>
@@ -134,6 +140,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
           {tabs.map(tab => (
             <button
               key={tab.id}
+              data-settings-tab={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className="flex-1 py-2.5 text-[10px] font-bold uppercase tracking-wider transition-colors"
               style={{
@@ -147,7 +154,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
           ))}
         </div>
 
-        <div className="settings-modal-body p-5 space-y-5" style={{ backgroundColor: 'var(--bg-card)' }}>
+        <div ref={scrollBodyRef} role="region" tabIndex={0} aria-label="Settings content" data-active-tab={activeTab} className="settings-modal-body p-5 space-y-5" style={{ backgroundColor: 'var(--bg-card)' }}>
           {activeTab === 'appearance' && (
             <>
               {/* Theme */}
@@ -210,7 +217,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
               </Section>
 
               {/* Font Size */}
-              <Section label={t('fontSize')}>
+              <Section label={t('fontSize')} testId="settings-last-appearance">
                 <div className="flex space-x-2">
                   {['small', 'medium', 'large'].map(size => (
                     <button
@@ -251,7 +258,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
                 <Toggle checked={s.notifications_enabled !== false} onChange={v => updateSetting('notifications_enabled', v)} label={t('enableNotifications')} />
               </Section>
 
-              <Section label={t('autoSave')}>
+              <Section label={t('autoSave')} testId="settings-last-general">
                 <Toggle checked={s.auto_save !== false} onChange={v => updateSetting('auto_save', v)} label={t('autoSaveProject')} />
               </Section>
             </>
@@ -321,7 +328,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
                 />
                 <p className="text-[9px] mt-1" style={{ color: 'var(--text-muted)' }}>Executable path or command (default: <code>code</code>)</p>
               </Section>
-              <Section label="PyCharm Path">
+              <Section label="PyCharm Path" testId="settings-last-studio">
                 <input
                   type="text"
                   value={s.pycharm_path || 'pycharm'}
@@ -343,7 +350,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
             className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
             style={{
               backgroundColor: 'var(--accent)',
-              color: '#fff',
+              color: 'var(--accent-contrast)',
             }}
           >
             {t('close')}
@@ -354,9 +361,9 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
   );
 }
 
-function Section({ label, children }) {
+function Section({ label, children, testId }) {
   return (
-    <div>
+    <div data-testid={testId}>
       <label className="block text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>{label}</label>
       {children}
     </div>
@@ -400,7 +407,7 @@ function Toggle({ checked, onChange, label, disabled = false }) {
             width: 22,
             height: 22,
             borderRadius: 999,
-            backgroundColor: '#fff',
+            backgroundColor: 'var(--control-thumb)',
             transform: checked ? 'translateX(20px)' : 'translateX(0)',
           }}
         />
@@ -417,6 +424,7 @@ function AIProviderSettings({ activePort, addLog }) {
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [authManualCommand, setAuthManualCommand] = useState('');
   const [openCodeStatus, setOpenCodeStatus] = useState(null);
 
   const load = () => {
@@ -502,13 +510,14 @@ function AIProviderSettings({ activePort, addLog }) {
 
   const openCodeWebLogin = () => {
     setBusy(true);
-    setMessage('Starting OpenCode web login...');
+    setMessage('Starting OpenCode Web...');
     fetch(`http://localhost:${activePort}/api/opencode/web`, { method: 'POST' })
-      .then(r => r.json())
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || 'OpenCode Web failed'); return data; })
       .then(data => {
-        if (data.url) window.open(data.url, '_blank', 'noopener,noreferrer');
-        setMessage(data.message || 'OpenCode web opened. Log in in the browser, then retry generation.');
-        addLog('[OpenCode]: Web login opened.');
+        const browserWindow = data.url ? window.open(data.url, '_blank', 'noopener,noreferrer') : null;
+        if (!browserWindow) setMessage(`OpenCode Web is ready, but the browser could not be opened. Open ${data.url} manually.`);
+        else setMessage(data.message || 'OpenCode Web opened.');
+        addLog(`[OpenCode]: Web ${data.reused ? 'reused' : 'started'} on localhost.`);
         load();
       })
       .catch(err => setMessage(`OpenCode web failed: ${err.message}`))
@@ -517,19 +526,16 @@ function AIProviderSettings({ activePort, addLog }) {
 
   const openCodeProviderLogin = () => {
     setBusy(true);
-    setMessage(`Starting OpenCode ${provider} OAuth/login flow...`);
-    fetch(`http://localhost:${activePort}/api/opencode/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, method: 'oauth' }),
-    })
-      .then(r => r.json())
+    setAuthManualCommand('');
+    setMessage('Opening the interactive OpenCode authentication terminal...');
+    fetch(`http://localhost:${activePort}/api/opencode/authenticate`, { method: 'POST' })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || 'OpenCode authentication failed'); return data; })
       .then(data => {
-        setMessage(data.message || 'OpenCode login flow started. Complete browser login if prompted.');
-        addLog(`[OpenCode]: ${provider} login flow started.`);
-        setTimeout(load, 2000);
+        setAuthManualCommand(data.status === 'manual_required' ? data.manual_command || 'opencode auth login' : '');
+        setMessage(data.message || 'Complete the authentication steps in the OpenCode terminal. When finished, return here and select Test Connection.');
+        addLog(`[OpenCode]: Provider authentication ${data.status}.`);
       })
-      .catch(err => setMessage(`OpenCode login failed: ${err.message}`))
+      .catch(err => setMessage(`OpenCode authentication failed: ${err.message}`))
       .finally(() => setBusy(false));
   };
 
@@ -592,12 +598,12 @@ function AIProviderSettings({ activePort, addLog }) {
             <span className="text-[10px]" style={{ color: saved?.saved || provider === 'ollama' ? 'var(--success)' : 'var(--warning)' }}>
               {provider === 'ollama' ? 'Local provider - no key required' : saved?.saved ? `Saved: ${saved.masked}` : 'No saved key for this provider'}
             </span>
-            {saved?.saved && provider !== 'ollama' && <button type="button" onClick={deleteKey} disabled={busy} className="text-[10px] text-red-400 hover:text-red-300">Delete saved key</button>}
+            {saved?.saved && provider !== 'ollama' && <button type="button" onClick={deleteKey} disabled={busy} className="semantic-danger-action text-[10px]">Delete saved key</button>}
           </div>
         </Section>
 
         <div className="flex flex-wrap gap-2 pt-2">
-          <button onClick={save} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>Save</button>
+          <button onClick={save} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-contrast)' }}>Save</button>
           <button onClick={test} disabled={busy || (provider !== 'ollama' && !apiKey && !saved?.saved)} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Test Connection</button>
           <button onClick={applyOpenCode} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'color-mix(in srgb, var(--success) 18%, transparent)', border: '1px solid color-mix(in srgb, var(--success) 35%, transparent)', color: 'var(--success)' }}>Apply to OpenCode</button>
         </div>
@@ -608,7 +614,7 @@ function AIProviderSettings({ activePort, addLog }) {
         {message && <div className="mt-3 text-[11px]" style={{ color: message.toLowerCase().includes('failed') ? 'var(--warning)' : 'var(--text-secondary)' }}>{message}</div>}
       </div>
 
-      <div className="rounded-xl p-4 border" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+      <div data-testid="settings-last-ai" className="rounded-xl p-4 border" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
             <div className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>OpenCode Browser Bridge</div>
@@ -636,10 +642,12 @@ function AIProviderSettings({ activePort, addLog }) {
           </div>
         )}
         <div className="flex flex-wrap gap-2">
-          <button onClick={openCodeWebLogin} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>Open OpenCode Login/Web</button>
-          <button onClick={openCodeProviderLogin} disabled={busy || provider === 'ollama'} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Start {provider} OAuth Login</button>
+          <button onClick={openCodeWebLogin} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-contrast)' }}>Start OpenCode Web</button>
+          <button onClick={openCodeProviderLogin} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Authenticate Provider</button>
         </div>
-        <div className="mt-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>OpenCode owns the browser login session. FreelancerStudio stores only bridge metadata, status, and model/capability records.</div>
+        {authManualCommand && <div className="mt-3 rounded-lg px-3 py-2 text-[10px]" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Run manually: <code className="select-all" style={{ color: 'var(--accent)' }}>{authManualCommand}</code></div>}
+        <div className="mt-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>Complete the authentication steps in the OpenCode terminal. When finished, return here and select Test Connection.</div>
+        <div className="mt-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>OpenCode owns provider credentials and its interactive authorization flow. FreelancerStudio stores only verified connection metadata.</div>
       </div>
     </div>
   );
@@ -853,7 +861,7 @@ function GitHubConfig({ activePort, addLog }) {
         </span>
         <button onClick={save} disabled={!dirty}
           className="px-3 py-1 rounded text-[10px] font-medium transition-opacity disabled:opacity-40"
-          style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+          style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-contrast)' }}
         >Save GitHub Config</button>
       </div>
     </div>

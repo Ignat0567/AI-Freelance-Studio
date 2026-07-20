@@ -82,7 +82,8 @@ function getPrimaryAction(project, handlers) {
   if (!project) return { label: 'New project', onClick: handlers.onNewProject };
   if (project.status === 'spec_clarification') return { label: 'Open briefing', onClick: handlers.onOpenBriefing };
   if (project.status === 'needs_user_input') return { label: 'Continue', onClick: handlers.onContinueDone };
-  if (['failed', 'failed_qa', 'blocked', 'needs_credentials'].includes(project.status)) return { label: 'Resolve issue', onClick: handlers.onRetry };
+  if (project.status === 'blocked') return { label: 'Retry Generation', onClick: handlers.onRetry };
+  if (['failed', 'failed_qa', 'needs_credentials'].includes(project.status)) return { label: 'Resolve issue', onClick: handlers.onRetry };
   if (project._phase && ['created', 'cancelled'].includes(project.status)) return { label: 'Continue', onClick: handlers.onResume };
   if (project.status === 'completed') return { label: 'Open project', onClick: handlers.onFiles };
   return { label: 'View pipeline', onClick: handlers.onPipeline };
@@ -219,8 +220,8 @@ export default function StudioDashboard({
         </header>
 
         <div className="fs-body">
-          <main className={`fs-workspace ${activeView === 'overview' ? 'fs-overview-workspace' : ''}`} tabIndex={0} aria-label="Central workspace content">
-            <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />
+          <main className={`fs-workspace ${activeView === 'overview' ? 'fs-overview-workspace' : ''} ${activeView === 'settings' ? 'fs-settings-workspace' : ''} ${activeView === 'info' ? 'fs-info-workspace' : ''}`} tabIndex={0} aria-label="Central workspace content">
+            {!['settings', 'info'].includes(activeView) && <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />}
             {activeView === 'overview' && (
               <>
                 <PipelineSummary pipeline={pipeline} project={project} workingAgent={workingAgent} criteria={criteria} passedCriteria={passedCriteria} onPipeline={() => setActiveView('pipeline')} />
@@ -476,7 +477,7 @@ function AttentionPanel({ issues, project, onRetry, onContinueDone, expanded = f
     <section className="fs-panel fs-attention-panel">
       <div className="fs-panel-title"><div><span>Attention Required</span><strong>{issues.length || manualSteps.length || (needsInput ? 1 : 0) || 'Clear'}</strong></div></div>
       {needsInput && <div className="fs-alert warning"><b>User input required</b><span>{manualSteps[0] || 'The active project is waiting for guidance.'}</span><button type="button" onClick={onContinueDone}>Continue</button></div>}
-      {issues.length ? issues.slice(0, expanded ? issues.length : 3).map((issue, index) => <div className="fs-alert" key={`${issue.title || issue.message || index}`}><b>{issue.title || issue.type || `Issue ${index + 1}`}</b><span>{issue.message || issue.detail || pretty(issue.status)}</span><button type="button" onClick={onRetry}>Resolve</button></div>) : !needsInput && <p className="fs-empty">No open issues are currently reported.</p>}
+      {issues.length ? issues.slice(0, expanded ? issues.length : 3).map((issue, index) => <div className="fs-alert" key={`${issue.title || issue.message || index}`}><b>{issue.title || issue.type || `Issue ${index + 1}`}</b><span>{issue.message || issue.detail || pretty(issue.status)}</span><button type="button" onClick={onRetry}>{project?.status === 'blocked' ? 'Retry Generation' : 'Resolve'}</button></div>) : !needsInput && <p className="fs-empty">No open issues are currently reported.</p>}
     </section>
   );
 }
@@ -540,7 +541,10 @@ function isEmbeddablePreviewUrl(value) {
   if (!text) return false;
   try {
     const url = new URL(text);
-    return ['localhost', '127.0.0.1', '0.0.0.0'].includes(url.hostname) || url.hostname.endsWith('.local');
+        return ['http:', 'https:'].includes(url.protocol)
+          && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+          && !url.username
+          && !url.password;
   } catch {
     return false;
   }
@@ -576,7 +580,7 @@ function MobilePreviewPanel({ activePort, project }) {
         <div className="fs-phone-stage">
           <div className="fs-phone-frame" style={{ width: device.width * scale, height: device.height * scale, borderRadius: device.radius * scale }}>
             <div className="fs-phone-speaker" />
-            {canEmbed ? <iframe title={`${device.name} preview`} src={previewUrl} style={{ borderRadius: Math.max(18, device.radius * scale - 10) }} /> : <div className="fs-phone-empty"><b>{device.name}</b>{hasExternalUrl ? <><span>This URL is external and may block embedded preview. Use a local preview URL to render it here.</span><button type="button" onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}>Open externally</button></> : <span>Enter a running local project URL to preview it in this virtual phone.</span>}</div>}
+            {canEmbed ? <iframe title={`${device.name} preview`} src={previewUrl} sandbox="allow-forms allow-scripts" style={{ borderRadius: Math.max(18, device.radius * scale - 10) }} /> : <div className="fs-phone-empty"><b>{device.name}</b>{hasExternalUrl ? <span>This URL is external and cannot be embedded. Use a local preview URL instead.</span> : <span>Enter a running local project URL to preview it in this virtual phone.</span>}</div>}
           </div>
         </div>
       </div>

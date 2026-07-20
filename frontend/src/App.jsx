@@ -17,6 +17,8 @@ import ErrorBoundary from './components/ErrorBoundary.jsx';
 import QuestionAnswerModal from './components/QuestionAnswerModal.jsx';
 import StudioDashboard from './components/StudioDashboard.jsx';
 import { tr } from './i18n.js';
+import { applyStudioTheme } from './theme.js';
+import { getAppVersion, versionLabel } from './app-version.js';
 
 const fallbackAgents = {};
 
@@ -38,7 +40,7 @@ function App() {
     const [isInfoOpen, setIsInfoOpen] = useState(false);
     const [isUpworkOpen, setIsUpworkOpen] = useState(false);
     const [isAccountsOpen, setIsAccountsOpen] = useState(false);
-    const [isDarkTheme, setIsDarkTheme] = useState(true);
+    const [isDarkTheme, setIsDarkTheme] = useState(() => localStorage.getItem('studio_theme') !== 'light');
     const [showConfigMenu, setShowConfigMenu] = useState(false);
     const [isPipelineDetailOpen, setIsPipelineDetailOpen] = useState(false);
     const [agentStatuses, setAgentStatuses] = useState({});
@@ -51,6 +53,7 @@ function App() {
     const [isQuestionOpen, setIsQuestionOpen] = useState(false);
     const [isLogPanelOpen, setIsLogPanelOpen] = useState(true);
     const [language, setLanguage] = useState('en');
+    const [appVersion, setAppVersion] = useState('');
 
     const clearActiveProjectState = () => {
         setActiveProject(null);
@@ -67,7 +70,15 @@ function App() {
     };
     const [autonomousMode, setAutonomousMode] = useState(true);
 
-    const activePort = window.BACKEND_PORT || 8080;
+    const activePort = Number(window.location.port) || 8080;
+
+    useEffect(() => {
+        let active = true;
+        getAppVersion().then(version => {
+            if (active) setAppVersion(version);
+        });
+        return () => { active = false; };
+    }, []);
 
     const fetchAgents = () => {
         fetch(`http://localhost:${activePort}/api/agents`)
@@ -87,13 +98,8 @@ function App() {
         fetch(`http://localhost:${activePort}/api/config/system`)
             .then(r => r.json())
             .then(data => {
-                const root = document.documentElement;
-                if (data.accent_color) root.style.setProperty('--accent', data.accent_color);
                 const isDark = data.theme !== 'light';
-                root.classList.toggle('theme-light', !isDark);
-                root.classList.toggle('theme-reduced-motion', data.animation_speed === 'off');
-                root.classList.remove('font-small', 'font-medium', 'font-large');
-                if (data.font_size) root.classList.add('font-' + data.font_size);
+                applyStudioTheme(data, { cache: true });
                 setIsDarkTheme(isDark);
                 setLanguage(data.language || 'en');
                 document.documentElement.lang = data.language || 'en';
@@ -363,11 +369,13 @@ function App() {
     const toggleTheme = () => {
         const newDark = !isDarkTheme;
         setIsDarkTheme(newDark);
-        document.documentElement.classList.toggle('theme-light', !newDark);
+        applyStudioTheme({ theme: newDark ? 'dark' : 'light' });
         fetch(`http://localhost:${activePort}/api/config/system`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ theme: newDark ? 'dark' : 'light' })
+        }).then(response => {
+            if (response.ok) localStorage.setItem('studio_theme', newDark ? 'dark' : 'light');
         }).catch(() => { });
         addLog(`[System]: Switched to ${newDark ? 'dark' : 'light'} theme.`);
     };
@@ -406,18 +414,10 @@ function App() {
             .catch(err => addLog(`[QA]: Error - ${err.message}`));
     };
 
-    const getSystemPath = async (port, editor) => {
-        try {
-            const data = await (await fetch(`http://localhost:${port}/api/config/system`)).json();
-            return data[`${editor}_path`] || editor;
-        } catch { return editor; }
-    };
-
     const handleOpenEditor = async (port, project, editor) => {
         if (!project || !project.project_id) { addLog('[Editor]: No active project.'); return; }
         try {
             const dirData = await (await fetch(`http://localhost:${port}/api/projects/${project.project_id}/dir`)).json();
-            const editorPath = await getSystemPath(port, editor);
             const openRes = await fetch(`http://localhost:${port}/api/system/open-editor`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -425,21 +425,14 @@ function App() {
             });
             if (openRes.ok) {
                 const data = await openRes.json().catch(() => ({}));
-                addLog(`[Editor]: Opened in ${editor} (${data.executable || editorPath}).`);
-                return;
-            }
-            if (window.env && window.env.openInEditor) {
-                const errData = await openRes.json().catch(() => ({}));
-                addLog(`[Editor]: Backend fallback failed - ${errData.detail || openRes.status}. Trying Electron...`);
-                await window.env.openInEditor(editorPath, dirData.path);
-                addLog(`[Editor]: Opened in ${editor}.`);
+                addLog(`[Editor]: Opened in ${editor} (${data.executable || editor}).`);
                 return;
             }
             const errData = await openRes.json().catch(() => ({}));
-            throw new Error(errData.detail || `Run "${editorPath}" "${dirData.path}" in terminal.`);
+            throw new Error(errData.detail || `Run "${editor}" "${dirData.path}" in terminal.`);
         } catch (err) {
             addLog(`[Editor]: Error - ${err.message}`);
-            if (window.env && window.env.openExternal) window.env.openExternal('https://code.visualstudio.com/download');
+            addLog('[Editor]: Download an editor manually from its official website.');
         }
     };
 
@@ -467,14 +460,6 @@ function App() {
                         addLog('[Explorer]: Opened folder.');
                         return;
                     }
-                }
-                if (window.env && window.env.revealInExplorer) {
-                    const electronError = await window.env.revealInExplorer(dirData.path);
-                    if (!electronError) {
-                        addLog('[Explorer]: Opened folder.');
-                        return;
-                    }
-                    throw new Error(electronError);
                 }
                 const errData = await openRes.json().catch(() => ({}));
                 throw new Error(errData.detail || 'Backend could not open folder');
@@ -604,7 +589,7 @@ function App() {
                 onAutonomousMode={setAutonomousMode}
                 onNewProject={() => setIsNewProjectOpen(true)}
                 settingsContent={<SettingsModal activePort={activePort} embedded addLog={addLog} />}
-                infoContent={<InfoModal activePort={activePort} embedded addLog={addLog} />}
+                infoContent={<InfoModal activePort={activePort} embedded addLog={addLog} appVersion={appVersion} />}
                 projects={allProjects}
                 onProjects={loadAllProjects}
                 onDeleteProject={handleDeleteProjectFromComputer}
@@ -613,13 +598,13 @@ function App() {
                 onPush={() => handlePushToGitHub(activePort, activeProject)}
                 onExport={() => handleExport(activePort, activeProject)}
                 onOpenEditor={(editor) => handleOpenEditor(activePort, activeProject, editor)}
-                onOpenCode={() => fetch(`http://localhost:${activePort}/api/opencode/web`, { method: 'POST' }).then(r => r.json()).then(data => { if (data.url) window.open(data.url, '_blank', 'noopener,noreferrer'); addLog(`[OpenCode]: ${data.message || data.status}`); }).catch(error => addLog(`[OpenCode]: ${error.message}`))}
+                onOpenCode={() => fetch(`http://localhost:${activePort}/api/opencode/web`, { method: 'POST' }).then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || 'OpenCode Web failed'); return data; }).then(data => { const browserWindow = data.url ? window.open(data.url, '_blank', 'noopener,noreferrer') : null; addLog(`[OpenCode]: ${browserWindow ? data.message || data.status : `Web is ready, but the browser could not be opened. Open ${data.url} manually.`}`); }).catch(error => addLog(`[OpenCode]: ${error.message}`))}
                 onAgentChat={setActiveAgentChat}
                 pipelineMetadata={pipelineMetadata}
                 onPipeline={() => activeProject ? null : addLog('[Pipeline]: No active project.')}
                 onOpenBriefing={() => activeProject ? setIsChatOpen(true) : addLog('[Chat]: No active project.')}
                 onStopGeneration={handleStopGeneration}
-                onRetry={() => activeProject ? handleRestart() : addLog('[System]: No active project.')}
+                onRetry={() => activeProject ? (activeProject.status === 'blocked' ? handleQARetry(activePort, activeProject) : handleRestart()) : addLog('[System]: No active project.')}
                 onResume={() => activeProject ? handleResume(activeProject) : addLog('[System]: No active project.')}
                 onContinueDone={() => handleQARetry(activePort, activeProject)}
                 onKeyManager={() => setIsKeyManagerOpen(true)}
@@ -647,7 +632,7 @@ function App() {
             <header className="studio-topbar flex items-center justify-between px-6 py-4 shadow-md" style={{ backgroundColor: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
                 <div className="studio-brand flex items-center space-x-3">
                     <div className="studio-status-dot w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
-                    <h1 className="text-lg font-bold tracking-wider" style={{ color: 'var(--text-primary)' }}>{t('appTitle')}</h1>
+                    <h1 className="text-lg font-bold tracking-wider" style={{ color: 'var(--text-primary)' }}>{t('appTitle')} | {versionLabel(appVersion)}</h1>
                     <button
                         onClick={() => setIsUpworkOpen(true)}
                         className="ml-0.5 px-2.5 py-1 rounded text-[10px] font-medium transition-colors"
@@ -1027,7 +1012,7 @@ function App() {
             )}
 
             {isInfoOpen && (
-                <InfoModal activePort={activePort} onClose={() => setIsInfoOpen(false)} addLog={addLog} />
+                <InfoModal activePort={activePort} onClose={() => setIsInfoOpen(false)} addLog={addLog} appVersion={appVersion} />
             )}
 
             {isUpworkOpen && (

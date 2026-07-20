@@ -165,20 +165,24 @@ def test_system_check_uses_router_dependency(monkeypatch):
     assert response.json() == {"results": results}
 
 
-def test_system_install_uses_router_dependency(monkeypatch):
-    captured = {}
+def test_system_check_returns_summary_payload(monkeypatch):
+    payload = {
+        "results": [{"id": "python", "status": "Installed"}],
+        "summary": {"total": 1, "installed": 1, "missing": 0, "error": 0, "restart_required": 0, "duration_ms": 4},
+    }
+    monkeypatch.setattr(system_routes, "check_all", lambda: payload)
 
-    def fake_install(component_id):
-        captured["component_id"] = component_id
-        return {"id": component_id, "status": "installed", "message": "ok"}
-
-    monkeypatch.setattr(system_routes, "install_component", fake_install)
-
-    response = client.post("/api/system/install/python")
+    response = client.post("/api/system/check")
 
     assert response.status_code == 200
-    assert response.json() == {"id": "python", "status": "installed", "message": "ok"}
-    assert captured == {"component_id": "python"}
+    assert response.json() == payload
+
+
+def test_system_install_endpoint_rejects_automatic_installation():
+    response = client.post("/api/system/install/python")
+
+    assert response.status_code == 410
+    assert "Automatic installation is disabled" in response.json()["detail"]
 
 
 def test_system_open_path_requires_path():

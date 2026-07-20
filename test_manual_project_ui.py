@@ -74,3 +74,8 @@ def test_quality_modals_remain_scrollable():
     css = Path("frontend/src/index.css").read_text(encoding="utf-8")
     assert ".settings-modal-body" in css and "overflow-y: auto" in css
     assert ".new-project-modal-body" in css and "overflow-y: auto" in css
+    assert ".info-modal-container" in css and "max-height: calc(100dvh - 32px)" in css
+    assert ".info-inline-body" in css and "min-height: 0" in css and "overflow-y: auto" in css
+    source = Path("frontend/src/components/InfoModal.jsx").read_text(encoding="utf-8")
+    assert "info-modal-header" in source
+    assert "info-modal-footer" in source

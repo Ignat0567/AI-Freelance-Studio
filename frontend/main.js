@@ -1,11 +1,17 @@
 // Clean fault-tolerant Electron entry point. Slashes fixed for root execution.
 // Complies with strict code conventions. All comments are in English.
 
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const {
+    officialDownloadUrl,
+    classifyWindowOpenUrl,
+    isAllowedStudioNavigation,
+    isAllowedDownloadSender,
+} = require('./official-downloads');
 
 let mainWindow = null;
 let backendProcess = null;
@@ -13,6 +19,27 @@ let backendOwnedByElectron = false;
 let backendStarting = false;
 let backendStartupFailure = '';
 let backendStartupOutput = '';
+let expectedRendererOrigin = '';
+
+ipcMain.handle('open-official-download', async (event, downloadId) => {
+    if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) {
+        return { status: 'rejected', message: 'This request did not come from the trusted Studio window.' };
+    }
+    const target = officialDownloadUrl(downloadId);
+    if (!target) return { status: 'rejected', message: 'This download destination is not allowed.' };
+    try {
+        await shell.openExternal(target);
+        return { status: 'opened', downloadId };
+    } catch (error) {
+        console.error(`[Electron]: Failed to open official download page: ${error.message}`);
+        return { status: 'error', message: 'The system browser could not be opened.' };
+    }
+});
+
+ipcMain.handle('get-app-version', (event) => {
+    if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) return '';
+    return app.getVersion();
+});
 
 function appendBoundedLog(prefix, chunk) {
     const text = String(chunk || '')
@@ -182,7 +209,11 @@ function startBackend() {
                 ...process.env,
                 FREELANCERSTUDIO_RUNTIME_DIR: runtimeDir,
                 FREELANCERSTUDIO_USER_DATA: runtimeDir,
-                FREELANCERSTUDIO_FRONTEND_DIR: frontendDir
+                FREELANCERSTUDIO_FRONTEND_DIR: frontendDir,
+                ...(app.isPackaged ? {
+                    SSL_CERT_FILE: path.join(spec.cwd, '_internal', 'certifi', 'cacert.bundle'),
+                    REQUESTS_CA_BUNDLE: path.join(spec.cwd, '_internal', 'certifi', 'cacert.bundle')
+                } : {})
             }
         });
 
@@ -236,6 +267,7 @@ function stopBackend() {
 async function createWindow(backendPort) {
     console.log("[Electron]: Creating main application viewport...");
     console.log(`[Electron]: Using backend port: ${backendPort}`);
+    expectedRendererOrigin = `http://127.0.0.1:${backendPort}`;
 
     mainWindow = new BrowserWindow({
         width: 1280,
@@ -245,18 +277,38 @@ async function createWindow(backendPort) {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
             preload: path.join(__dirname, 'preload.js')
         },
         backgroundColor: '#0f172a',
-        title: "AI Freelance Studio"
+        title: "AI Freelance Studio",
+        icon: path.join(__dirname, 'build', 'icon.ico')
     });
 
-    // Set Content-Security-Policy to suppress Electron security warning
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (classifyWindowOpenUrl(url) !== 'reject') {
+            shell.openExternal(url).catch(error => {
+                console.error(`[Electron]: Failed to open trusted external URL: ${error.message}`);
+            });
+        }
+        return { action: 'deny' };
+    });
+
+    const preventUntrustedNavigation = (event, url) => {
+        if (!isAllowedStudioNavigation(url, expectedRendererOrigin)) event.preventDefault();
+    };
+    mainWindow.webContents.on('will-navigate', preventUntrustedNavigation);
+    mainWindow.webContents.on('will-redirect', preventUntrustedNavigation);
+
     mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+        if (!isAllowedStudioNavigation(details.url, expectedRendererOrigin)) {
+            callback({ responseHeaders: details.responseHeaders });
+            return;
+        }
         callback({
             responseHeaders: {
                 ...details.responseHeaders,
-                'content-security-policy': ["default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; img-src 'self' data:;"]
+                'content-security-policy': ["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; img-src 'self' data: blob:; frame-src 'self' http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';"]
             }
         });
     });

@@ -1,6 +1,6 @@
 export const TRANSLATIONS = {
   en: {
-    appTitle: 'AI FREELANCE STUDIO v1.0', jobs: 'Jobs', accounts: 'Accounts', projects: 'Projects', configureStaff: 'Configure AI Staff',
+    appTitle: 'AI FREELANCE STUDIO', jobs: 'Jobs', accounts: 'Accounts', projects: 'Projects', configureStaff: 'Configure AI Staff',
     manageKeys: 'Manage API Keys', systemPreferences: 'System Preferences', about: 'About AI FreelancerStudio', activeStaff: 'Active Staff',
     liveStudio: 'Live Studio Blueprint Floor', newProject: 'New Manual Project', hideLog: 'Hide Log', showLog: 'Show Log', activityLog: 'Activity Log', clear: 'Clear', close: 'Close',
     allProjects: 'All Projects', noProjects: 'No projects yet.', openFolder: 'Open Folder', deleteComputer: 'Delete from computer', removeCompleted: 'Remove from completed list', resume: 'Resume',
@@ -10,7 +10,7 @@ export const TRANSLATIONS = {
     activateStudio: 'Activate AI Freelance Studio', configureTokens: 'Configure API tokens for AI agents and job search.', deleteKey: 'Delete key', savedPermanently: 'Configured externally', customProviders: 'Custom AI Providers', activateSave: 'Activate & Save Configuration', resetConfiguration: 'Reset Configuration', closeWindow: 'Close this window',
   },
   ru: {
-    appTitle: 'AI FREELANCE STUDIO v1.0', jobs: 'Заказы', accounts: 'Аккаунты', projects: 'Проекты', configureStaff: 'Настроить AI-команду',
+    appTitle: 'AI FREELANCE STUDIO', jobs: 'Заказы', accounts: 'Аккаунты', projects: 'Проекты', configureStaff: 'Настроить AI-команду',
     manageKeys: 'Управление API-ключами', systemPreferences: 'Системные настройки', about: 'О AI FreelancerStudio', activeStaff: 'Активная команда',
     liveStudio: 'План студии в реальном времени', newProject: 'Новый ручной проект', hideLog: 'Скрыть лог', showLog: 'Показать лог', activityLog: 'Журнал активности', clear: 'Очистить', close: 'Закрыть',
     allProjects: 'Все проекты', noProjects: 'Проектов пока нет.', openFolder: 'Открыть папку', deleteComputer: 'Удалить с компьютера', removeCompleted: 'Удалить из списка выполненных', resume: 'Продолжить',
@@ -20,7 +20,7 @@ export const TRANSLATIONS = {
     activateStudio: 'Активация AI Freelance Studio', configureTokens: 'Настройте API-токены для AI-агентов и поиска заказов.', deleteKey: 'Удалить ключ', savedPermanently: 'Настроен вне Studio', customProviders: 'Свои AI-провайдеры', activateSave: 'Активировать и сохранить', resetConfiguration: 'Сбросить конфигурацию', closeWindow: 'Закрыть это окно',
   },
   de: {
-    appTitle: 'AI FREELANCE STUDIO v1.0', jobs: 'Aufträge', accounts: 'Konten', projects: 'Projekte', configureStaff: 'AI-Team konfigurieren',
+    appTitle: 'AI FREELANCE STUDIO', jobs: 'Aufträge', accounts: 'Konten', projects: 'Projekte', configureStaff: 'AI-Team konfigurieren',
     manageKeys: 'API-Schlüssel verwalten', systemPreferences: 'Systemeinstellungen', about: 'Über AI FreelancerStudio', activeStaff: 'Aktives Team',
     liveStudio: 'Live-Studio-Grundriss', newProject: 'Neues manuelles Projekt', hideLog: 'Log ausblenden', showLog: 'Log anzeigen', activityLog: 'Aktivitätslog', clear: 'Leeren', close: 'Schließen',
     allProjects: 'Alle Projekte', noProjects: 'Noch keine Projekte.', openFolder: 'Ordner öffnen', deleteComputer: 'Vom Computer löschen', removeCompleted: 'Aus abgeschlossenen Projekten entfernen', resume: 'Fortsetzen',

@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from requirements_checker import check_all, get_components, install_component
+from requirements_checker import check_all, get_components
 from system_settings import (
     ALLOWED_SYSTEM_KEYS,
     DEFAULT_SYSTEM_SETTINGS,
@@ -34,13 +34,16 @@ def list_requirements():
 
 @router.post("/api/system/check")
 def check_requirements():
-    return {"results": check_all()}
+    result = check_all()
+    return result if isinstance(result, dict) else {"results": result}
 
 
 @router.post("/api/system/install/{component_id}")
 def install_requirement(component_id: str):
-    result = install_component(component_id)
-    return result
+    raise HTTPException(
+        status_code=410,
+        detail=f"Automatic installation is disabled for {component_id}. Use the official component action in Info.",
+    )
 
 
 @router.get("/api/config/system")

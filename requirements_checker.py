@@ -1,8 +1,12 @@
+import glob
+import json
+import logging
 import os
 import re
 import subprocess
 import sys
-import json
+import threading
+import time
 
 
 PLATFORM = sys.platform  # 'win32', 'darwin', 'linux'
@@ -11,18 +15,30 @@ IS_MAC = PLATFORM == "darwin"
 IS_LINUX = PLATFORM.startswith("linux")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+COMPONENT_CHECK_TIMEOUT_SECONDS = 12.0
+_RUN_STATE = threading.local()
+logger = logging.getLogger(__name__)
 
 
 def _run(cmd, timeout=30, cwd=None):
+    deadline = getattr(_RUN_STATE, "deadline", None)
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _RUN_STATE.error_code = "subprocess_timeout"
+            return False, "", "timed out"
+        timeout = min(timeout, remaining)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, shell=IS_WIN, cwd=cwd)
         return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
     except FileNotFoundError:
         return False, "", "not found"
     except subprocess.TimeoutExpired:
+        _RUN_STATE.error_code = "subprocess_timeout"
         return False, "", "timed out"
-    except Exception as e:
-        return False, "", str(e)
+    except Exception:
+        _RUN_STATE.error_code = "subprocess_failed"
+        return False, "", "check failed"
 
 
 def _which(name):
@@ -93,11 +109,17 @@ COMPONENTS = []
 
 
 def _add(comp):
+    comp.pop("install", None)
+    comp["can_auto_install"] = False
     COMPONENTS.append(comp)
 
 
 def _check_python():
-    path = _executable_path("python3") or _executable_path("python") or sys.executable
+    path = _executable_path("python3") or _executable_path("python")
+    if not path and not getattr(sys, "frozen", False):
+        path = sys.executable
+    if not path:
+        return False, "", "", None
     ok, out, _ = _run([path, "--version"])
     if ok:
         ver = _parse_version(out)
@@ -130,12 +152,15 @@ def _check_pip():
     path = _executable_path("pip3") or _executable_path("pip") or _executable_path("pip3.12") or _executable_path("pip3.11")
     if path:
         ok, out, _ = _run([path, "--version"])
+    elif getattr(sys, "frozen", False):
+        return False, "", "", None
     else:
         ok, out, _ = _run([sys.executable, "-m", "pip", "--version"])
     if ok:
         ver = _parse_version(out)
         pip_path = path or sys.executable + " -m pip"
-        return True, out.split(",")[0] if out else "", pip_path, ver
+        display_version = f"pip {'.'.join(str(part) for part in ver)}" if ver else "pip detected"
+        return True, display_version, pip_path, ver
     return False, "", "", None
 
 
@@ -181,7 +206,7 @@ def _install_node():
 
 
 _add({
-    "id": "node",
+    "id": "nodejs",
     "name": "Node.js",
     "description": "JavaScript runtime for the Electron desktop app and frontend build",
     "required": True,
@@ -320,15 +345,7 @@ def _check_python_packages():
 
 
 def _install_python_packages():
-    req_path = os.path.join(BASE_DIR, "requirements.txt")
-    if not os.path.exists(req_path):
-        # Create one
-        pkgs = ["fastapi", "uvicorn", "pydantic", "aiofiles", "python-multipart", "docker", "httpx"]
-        return True, f"Run: pip install {' '.join(pkgs)}"
-    ok, out, err = _run([sys.executable, "-m", "pip", "install", "-r", req_path], timeout=120)
-    if ok:
-        return True, "All Python packages installed successfully."
-    return False, f"pip install failed: {err[:200]}"
+    return False, "Automatic package installation is disabled."
 
 
 _add({
@@ -379,13 +396,7 @@ def _check_node_packages():
 
 
 def _install_node_packages():
-    frontend_path = os.path.join(BASE_DIR, "frontend")
-    if not os.path.exists(os.path.join(frontend_path, "package.json")):
-        return False, "package.json not found"
-    ok, out, err = _run(["npm", "install"], timeout=120, cwd=frontend_path)
-    if ok:
-        return True, "All Node packages installed successfully."
-    return False, f"npm install failed: {err[:200]}"
+    return False, "Automatic package installation is disabled."
 
 
 _add({
@@ -506,14 +517,17 @@ _add({
 
 
 def _check_expo_cli():
-    path = _executable_path("npx")
-    if not path:
-        return False, "npx not found", "", None
-    ok, out, err = _run(["npx", "expo", "--version"], timeout=60)
+    frontend_path = os.path.join(BASE_DIR, "frontend")
+    path = os.path.join(frontend_path, "node_modules", ".bin", "expo")
+    if IS_WIN:
+        path += ".cmd"
+    if not os.path.exists(path):
+        return False, "", "", None
+    ok, out, _ = _run([path, "--version"], timeout=10, cwd=frontend_path)
     if ok:
         ver = _parse_version(out)
         return True, out.strip(), path, ver
-    return False, err or out, path, None
+    return False, "", "", None
 
 
 def _install_expo_cli():
@@ -521,7 +535,7 @@ def _install_expo_cli():
 
 
 _add({
-    "id": "expo_cli",
+    "id": "expo",
     "name": "Expo / React Native",
     "description": "Mobile app toolchain for React Native and Expo Android/iOS projects",
     "required": False,
@@ -534,11 +548,11 @@ _add({
 
 def _check_android_sdk():
     adb = _executable_path("adb")
-    emulator = _executable_path("emulator")
-    android_home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
-    if adb or emulator or android_home:
-        return True, "Android SDK detected", adb or emulator or android_home, None
-    return False, "Android SDK not found", "", None
+    if adb:
+        ok, out, _ = _run([adb, "version"], timeout=10)
+        first_line = out.splitlines()[0] if out else "ADB detected"
+        return (True, first_line, adb, _parse_version(first_line)) if ok else (False, "", "", None)
+    return False, "", "", None
 
 
 def _install_android_sdk():
@@ -546,8 +560,8 @@ def _install_android_sdk():
 
 
 _add({
-    "id": "android_sdk",
-    "name": "Android SDK / Emulator",
+    "id": "android-platform-tools",
+    "name": "Android Platform Tools / ADB",
     "description": "Optional native Android emulator/runtime for generated mobile apps",
     "required": False,
     "min_version": None,
@@ -585,7 +599,108 @@ _add({
 })
 
 
+def _check_opencode():
+    from opencode_bridge import _discover_opencode
+
+    path = _discover_opencode()
+    if not path:
+        return False, "", "", None
+    ok, out, _ = _run([path, "--version"], timeout=10)
+    return (True, out.strip(), path, _parse_version(out)) if ok else (False, "", "", None)
+
+
+def _check_github_cli():
+    path = _executable_path("gh")
+    if not path:
+        return False, "", "", None
+    ok, out, _ = _run([path, "--version"], timeout=10)
+    first_line = out.splitlines()[0] if out else ""
+    return (True, first_line, path, _parse_version(first_line)) if ok else (False, "", "", None)
+
+
+def _check_pycharm():
+    for command in ("pycharm", "pycharm64"):
+        path = _executable_path(command)
+        if path:
+            return True, "Detected", path, None
+    if IS_WIN:
+        patterns = [
+            os.path.expandvars(r"%ProgramFiles%\JetBrains\PyCharm*\bin\pycharm64.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\JetBrains\PyCharm*\bin\pycharm64.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\JetBrains\Toolbox\scripts\pycharm.cmd"),
+        ]
+        for pattern in patterns:
+            matches = glob.glob(pattern)
+            if matches:
+                return True, "Detected", matches[0], None
+    return False, "", "", None
+
+
+_add({
+    "id": "opencode",
+    "name": "OpenCode",
+    "description": "Mandatory coding and repair runtime used by the production pipeline",
+    "required": True,
+    "min_version": None,
+    "can_auto_install": False,
+    "check": _check_opencode,
+    "install": lambda: (False, "Use the official OpenCode installation documentation."),
+})
+
+_add({
+    "id": "github-cli",
+    "name": "GitHub CLI",
+    "description": "Optional command-line tooling for GitHub workflows",
+    "required": False,
+    "min_version": None,
+    "can_auto_install": False,
+    "check": _check_github_cli,
+    "install": lambda: (False, "Use the official GitHub CLI installation page."),
+})
+
+_add({
+    "id": "pycharm",
+    "name": "PyCharm",
+    "description": "Integrated editor option for generated Python projects",
+    "required": False,
+    "min_version": None,
+    "can_auto_install": False,
+    "check": _check_pycharm,
+    "install": lambda: (False, "Use the official PyCharm download page."),
+})
+
+
 # ─── Public API ────────────────────────────────────────────────────────
+
+COMPONENT_PRESENTATION = {
+    "python": {"category": "Recommended", "action_label": "Download Python", "description": "Runs and validates generated Python projects."},
+    "pip": {"category": "Recommended", "action_label": "Install Instructions", "description": "Installs Python project dependencies; normally bundled with Python."},
+    "nodejs": {"category": "Recommended", "action_label": "Download Node.js", "description": "Runs and validates generated JavaScript projects."},
+    "npm": {"category": "Recommended", "action_label": "Node.js Instructions", "description": "Installs JavaScript dependencies and normally comes with Node.js."},
+    "opencode": {"category": "Required", "action_label": "Download OpenCode", "description": "Mandatory coding and repair runtime for the production pipeline."},
+    "git": {"category": "Recommended", "action_label": "Download Git", "description": "Version control for generated projects and collaboration."},
+    "github-cli": {"category": "Optional", "action_label": "Download GitHub CLI", "description": "Optional command-line integration for GitHub workflows."},
+    "vscode": {"category": "Recommended", "action_label": "Download VS Code", "description": "Editor integration for generated project files."},
+    "pycharm": {"category": "Recommended", "action_label": "Download PyCharm", "description": "Editor integration for generated Python projects."},
+    "android-platform-tools": {"category": "Optional", "action_label": "Download Platform Tools", "description": "ADB and Android tooling for target-specific mobile verification."},
+    "docker": {"category": "Optional", "action_label": "Download Docker", "description": "Optional container runtime for isolated project testing."},
+    "ollama": {"category": "Optional", "action_label": "Download Ollama", "description": "Optional local model runtime."},
+    "expo": {"category": "Optional", "action_label": "Install Instructions", "description": "Optional Expo and React Native project tooling."},
+    "ios_simulator": {"category": "Optional", "action_label": "Install Instructions", "description": "Optional Xcode simulator tooling available on macOS."},
+}
+
+COMPONENT_ORDER = tuple(COMPONENT_PRESENTATION)
+
+
+def _user_components():
+    registered = {}
+    for component in COMPONENTS:
+        registered.setdefault(component["id"], component)
+    return [
+        {**registered[component_id], **COMPONENT_PRESENTATION[component_id]}
+        for component_id in COMPONENT_ORDER
+        if component_id in registered
+    ]
 
 
 def get_components():
@@ -594,45 +709,163 @@ def get_components():
             "id": c["id"],
             "name": c["name"],
             "description": c["description"],
-            "required": c["required"],
+            "category": c["category"],
+            "required": c["category"] == "Required",
             "min_version": c.get("min_version"),
-            "can_auto_install": c.get("can_auto_install", False),
+            "can_auto_install": False,
+            "action_label": c["action_label"],
         }
-        for c in COMPONENTS
+        for c in _user_components()
     ]
 
 
-def check_all():
-    results = []
-    for c in COMPONENTS:
-        try:
-            installed, version, path, parsed_ver = c["check"]()
-        except Exception as e:
-            installed, version, path, parsed_ver = False, "", "", None
+def _minimum_version(component):
+    minimum = component.get("min_version")
+    return ".".join(str(part) for part in minimum) if minimum else ""
 
-        min_ver = c.get("min_version")
+
+def _error_result(component, duration_ms, error_code, message, timed_out=False):
+    return {
+        "id": component["id"],
+        "name": component["name"],
+        "description": component["description"],
+        "category": component["category"],
+        "action_label": component["action_label"],
+        "status": "Error",
+        "installed": False,
+        "version": "",
+        "path": "",
+        "up_to_date": False,
+        "required": component["category"] == "Required",
+        "min_version": _minimum_version(component),
+        "can_auto_install": False,
+        "timed_out": timed_out,
+        "error_code": error_code,
+        "message": message,
+        "duration_ms": duration_ms,
+    }
+
+
+def _check_component(component, component_timeout, results, closed, lock):
+    started = time.monotonic()
+    _RUN_STATE.error_code = None
+    _RUN_STATE.deadline = started + component_timeout
+    try:
+        outcome = component["check"]()
+        if not isinstance(outcome, tuple) or len(outcome) != 4:
+            raise ValueError("Invalid component check result")
+        installed, version, _path, parsed_ver = outcome
+        min_ver = component.get("min_version")
         up_to_date = _version_ok(parsed_ver, min_ver) if installed else False
+        run_error = getattr(_RUN_STATE, "error_code", None)
+        duration_ms = round((time.monotonic() - started) * 1000)
+        if run_error and not installed:
+            result = _error_result(
+                component,
+                duration_ms,
+                run_error,
+                "The component check did not complete successfully.",
+                timed_out=run_error == "subprocess_timeout",
+            )
+        else:
+            restart_required = bool(component.get("restart_required")) and installed
+            status = "Restart required" if restart_required else "Installed" if installed else "Missing"
+            result = {
+                "id": component["id"],
+                "name": component["name"],
+                "description": component["description"],
+                "category": component["category"],
+                "action_label": component["action_label"],
+                "status": status,
+                "installed": bool(installed),
+                "version": str(version).replace("\r", " ").replace("\n", " ")[:120] if installed else "",
+                "path": "",
+                "up_to_date": bool(up_to_date),
+                "required": component["category"] == "Required",
+                "min_version": _minimum_version(component),
+                "can_auto_install": False,
+                "timed_out": False,
+                "error_code": None,
+                "message": "Update required." if installed and not up_to_date else "",
+                "duration_ms": duration_ms,
+            }
+    except Exception:
+        duration_ms = round((time.monotonic() - started) * 1000)
+        result = _error_result(
+            component,
+            duration_ms,
+            "check_failed",
+            "The component check failed.",
+        )
 
-        results.append({
-            "id": c["id"],
-            "name": c["name"],
-            "installed": installed,
-            "version": version,
-            "path": path,
-            "up_to_date": up_to_date,
-            "required": c["required"],
-            "min_version": str(min_ver) if min_ver else "",
-            "can_auto_install": c.get("can_auto_install", False),
-        })
-    return results
+    with lock:
+        if component["id"] not in closed:
+            results[component["id"]] = result
+
+
+def check_all(component_timeout=COMPONENT_CHECK_TIMEOUT_SECONDS):
+    started = time.monotonic()
+    unique_components = _user_components()
+
+    results = {}
+    closed = set()
+    lock = threading.Lock()
+    workers = []
+    for component in unique_components:
+        thread = threading.Thread(
+            target=_check_component,
+            args=(component, component_timeout, results, closed, lock),
+            name=f"component-check-{component['id']}",
+            daemon=True,
+        )
+        workers.append((component, thread, time.monotonic()))
+        thread.start()
+
+    for component, thread, component_started in workers:
+        remaining = max(0.0, component_timeout - (time.monotonic() - component_started))
+        thread.join(remaining)
+        if thread.is_alive():
+            with lock:
+                closed.add(component["id"])
+                results[component["id"]] = _error_result(
+                    component,
+                    round(component_timeout * 1000),
+                    "timeout",
+                    "The component check timed out.",
+                    timed_out=True,
+                )
+
+    ordered_results = [results[component["id"]] for component in unique_components]
+    summary = {
+        "total": len(ordered_results),
+        "installed": sum(result["status"] == "Installed" for result in ordered_results),
+        "missing": sum(result["status"] == "Missing" for result in ordered_results),
+        "error": sum(result["status"] == "Error" for result in ordered_results),
+        "restart_required": sum(result["status"] == "Restart required" for result in ordered_results),
+        "duration_ms": round((time.monotonic() - started) * 1000),
+    }
+    for result in ordered_results:
+        logger.info(
+            "system_component_check id=%s status=%s duration_ms=%d",
+            result["id"],
+            result["status"],
+            result["duration_ms"],
+        )
+    logger.info(
+        "system_component_check_summary total=%d installed=%d missing=%d error=%d restart_required=%d duration_ms=%d",
+        summary["total"],
+        summary["installed"],
+        summary["missing"],
+        summary["error"],
+        summary["restart_required"],
+        summary["duration_ms"],
+    )
+    return {"results": ordered_results, "summary": summary}
 
 
 def install_component(component_id):
-    for c in COMPONENTS:
-        if c["id"] == component_id:
-            try:
-                success, message = c["install"]()
-                return {"success": success, "message": message}
-            except Exception as e:
-                return {"success": False, "message": str(e)}
-    return {"success": False, "message": f"Unknown component: {component_id}"}
+    return {
+        "success": False,
+        "status": "disabled",
+        "message": f"Automatic installation is disabled for {component_id}. Use the official component action.",
+    }

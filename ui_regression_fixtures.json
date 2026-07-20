@@ -1,0 +1,34 @@
+{
+  "check_components": [
+    {"id": "python", "name": "Python", "category": "Recommended", "description": "Backend runtime", "action_label": "Download Python", "required": false, "can_auto_install": false},
+    {"id": "nodejs", "name": "Node.js", "category": "Recommended", "description": "Frontend runtime", "action_label": "Download Node.js", "required": false, "can_auto_install": false},
+    {"id": "opencode", "name": "OpenCode", "category": "Required", "description": "AI coding runtime", "action_label": "Download OpenCode", "required": true, "can_auto_install": false},
+    {"id": "git", "name": "Git", "category": "Recommended", "description": "Version control", "action_label": "Download Git", "required": false, "can_auto_install": false}
+  ],
+  "check_results": {
+    "results": [
+      {"id": "python", "name": "Python", "description": "Backend runtime", "status": "Installed", "installed": true, "up_to_date": true, "version": "3.12.4", "duration_ms": 8},
+      {"id": "nodejs", "name": "Node.js", "description": "Frontend runtime", "status": "Missing", "installed": false, "up_to_date": false, "duration_ms": 11},
+      {"id": "opencode", "name": "OpenCode", "description": "AI coding runtime", "status": "Error", "installed": false, "error_code": "timeout", "timed_out": true, "message": "The component check timed out.", "duration_ms": 12000},
+      {"id": "git", "name": "Git", "description": "Version control", "status": "Restart required", "installed": true, "up_to_date": true, "duration_ms": 14},
+      {"id": "python", "name": "Duplicate Python", "status": "Missing", "installed": false}
+    ],
+    "summary": {"total": 4, "installed": 1, "missing": 1, "error": 1, "restart_required": 1, "duration_ms": 251}
+  },
+  "component_registry": [
+    {"id": "python", "name": "Python", "category": "Recommended", "description": "Runs Python projects", "action_label": "Download Python"},
+    {"id": "pip", "name": "Pip", "category": "Recommended", "description": "Installs Python dependencies", "action_label": "Install Instructions"},
+    {"id": "nodejs", "name": "Node.js", "category": "Recommended", "description": "Runs JavaScript projects", "action_label": "Download Node.js"},
+    {"id": "npm", "name": "npm", "category": "Recommended", "description": "Installs JavaScript dependencies", "action_label": "Node.js Instructions"},
+    {"id": "opencode", "name": "OpenCode", "category": "Required", "description": "Mandatory coding runtime", "action_label": "Download OpenCode"},
+    {"id": "git", "name": "Git", "category": "Recommended", "description": "Version control", "action_label": "Download Git"},
+    {"id": "github-cli", "name": "GitHub CLI", "category": "Optional", "description": "GitHub workflows", "action_label": "Download GitHub CLI"},
+    {"id": "vscode", "name": "VS Code", "category": "Recommended", "description": "Code editor", "action_label": "Download VS Code"},
+    {"id": "pycharm", "name": "PyCharm", "category": "Recommended", "description": "Python editor", "action_label": "Download PyCharm"},
+    {"id": "android-platform-tools", "name": "Android Platform Tools / ADB", "category": "Optional", "description": "Android tooling", "action_label": "Download Platform Tools"},
+    {"id": "docker", "name": "Docker", "category": "Optional", "description": "Container runtime", "action_label": "Download Docker"},
+    {"id": "ollama", "name": "Ollama", "category": "Optional", "description": "Local model runtime", "action_label": "Download Ollama"},
+    {"id": "expo", "name": "Expo / React Native", "category": "Optional", "description": "Mobile tooling", "action_label": "Install Instructions"},
+    {"id": "ios_simulator", "name": "iOS Simulator", "category": "Optional", "description": "Xcode simulator", "action_label": "Install Instructions"}
+  ]
+}

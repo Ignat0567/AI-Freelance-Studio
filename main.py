@@ -27,7 +27,6 @@ import config_storage
 import project_state
 import secret_store
 from repair_scope import SUPPORTED_LOCK_FILES, walk_repairable_files
-import opencode_provider as opencode_provider_module
 from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
 from api.accounts import router as accounts_router
 from api.android import router as android_router
@@ -43,7 +42,7 @@ from system_settings import (
 
 # OpenCode bridge (optional — for real AI-assisted code generation)
 try:
-    from opencode_bridge import ensure_opencode, stop_opencode, sync_opencode_config, get_opencode_status, start_opencode_web, start_opencode_auth_login, get_bridge as _get_oc_bridge
+    from opencode_bridge import ensure_opencode, stop_opencode, sync_opencode_config, get_opencode_status, get_opencode_onboarding_dependencies, start_opencode_web, start_opencode_auth_terminal, test_opencode_readiness, get_bridge as _get_oc_bridge
     _HAS_OPENCODE = True
 except ImportError:
     _HAS_OPENCODE = False
@@ -343,11 +342,6 @@ class OpenCodeConnectionPayload(BaseModel):
     enabled: bool = True
     capabilities: Dict[str, Any] = {}
     last_checked_at: str = ""
-
-
-class OpenCodeLoginPayload(BaseModel):
-    provider: str = ""
-    method: str = ""
 
 
 class ChatPayload(BaseModel):
@@ -795,6 +789,7 @@ _PROVIDER_CONNECTION_CREDENTIAL_FIELDS = {
     "authorization",
     "credential",
     "credentials",
+    "devicecode",
     "privatekey",
 }
 
@@ -982,8 +977,9 @@ def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
         configured = safe.get("configured_model") or ""
         raw_models = safe.get("available_models") if isinstance(safe.get("available_models"), list) else []
         bridge_capabilities = safe.get("capabilities", {}) if isinstance(safe.get("capabilities"), dict) else {}
+        readiness_passed = safe.get("readiness_status") == "ready"
         model_capabilities = {
-            "text_input": bridge_capabilities.get("text_input", {}).get("status") == "supported",
+            "text_input": readiness_passed or bridge_capabilities.get("text_input", {}).get("status") == "supported",
             "image_input": bridge_capabilities.get("image_input", {}).get("status") == "supported",
             "structured_output": None,
             "streaming": False,
@@ -1015,6 +1011,8 @@ def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
         safe["authenticated"] = safe["tested_status"] == "passed"
         safe["tested"] = safe["tested_status"] == "passed"
         safe["last_test_status"] = safe["tested_status"]
+        if readiness_passed:
+            safe["capabilities"] = {"text_input": {"status": "supported", "evidence": "Backend readiness gate verified executable, server, provider authentication, and selected model."}}
     return safe
 
 
@@ -1177,54 +1175,77 @@ def refresh_provider_connection_models(connection_id: str):
 def save_opencode_connection(payload: OpenCodeConnectionPayload):
     if payload.transport_type not in {"auto", "cli", "local_service"}:
         raise HTTPException(400, "Unsupported OpenCode transport")
-    connection = OpenCodeBridgeConnection(
-        connection_id=f"opencode-{uuid.uuid4().hex[:12]}", name=payload.name.strip() or "My OpenCode",
-        configured_model=payload.configured_model.strip(), enabled=payload.enabled,
-        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
-        local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
-        capabilities=payload.capabilities, last_checked_at=payload.last_checked_at,
-    )
+    result = test_opencode_readiness(payload.executable_path.strip(), payload.configured_model.strip(), payload.local_endpoint.strip())
+    if result.get("ready") is not True:
+        raise HTTPException(409, {"error_code": result.get("error_code", "readiness_failed"), "message": result.get("message", "OpenCode readiness check failed"), "checks": result.get("checks", {})})
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    selection = result["checks"]["selection"]
+    server_url = result["server_url"]
+    connection = {
+        "connection_id": f"opencode-{uuid.uuid4().hex[:12]}",
+        "connection_type": "opencode_oauth_bridge",
+        "name": payload.name.strip() or "My OpenCode",
+        "enabled": bool(payload.enabled),
+        "executable_path": result["executable_path"],
+        "local_endpoint": server_url,
+        "server_port": int(server_url.rsplit(":", 1)[1]),
+        "configured_provider": selection["provider"],
+        "configured_model": selection["model"],
+        "auth_type": (result.get("selected_auth_types") or ["configured"])[0],
+        "auth_status": "authenticated",
+        "readiness_status": "ready",
+        "last_checked_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
     data = load_studio_keys()
     connections = _load_provider_connections(data)
-    connections.append(connection.to_dict())
-    connections[-1]["connection_type"] = "opencode_oauth_bridge"
+    connections.append(connection)
     _store_provider_connections(data, connections)
     save_studio_keys(data)
-    return {"status": "saved", "connection": connection.to_dict(), "message": "OpenCode authentication remains owned by OpenCode; no token was requested or stored."}
+    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "message": "OpenCode authentication remains owned by OpenCode; only verified connection metadata was stored."}
 
 
 @app.post("/api/provider-connections/opencode/detect")
 def detect_opencode_connection(payload: OpenCodeConnectionPayload):
     """Discover a local bridge without persisting or inspecting OpenCode credentials."""
+    dependencies = get_opencode_onboarding_dependencies()
+    opencode_dependency = dependencies["components"]["opencode"]
     connection = OpenCodeBridgeConnection(
         connection_id="transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
         configured_model=payload.configured_model.strip(), enabled=payload.enabled,
         transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
-        local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
+        local_endpoint=payload.local_endpoint.strip(), executable_path=opencode_dependency["path"],
     )
-    binary = connection.executable_path or opencode_provider_module._find_binary()
+    binary = connection.executable_path
     report = connection.capability_report()
     return {
         "status": "detected" if binary else "executable_not_found",
         "executable_path": binary,
-        "version": get_opencode_status().get("version", "") if _HAS_OPENCODE else "",
-        "available_models": connection.available_models(),
+        "version": opencode_dependency["version"],
+        "available_models": connection.available_models() if binary else [],
         "capabilities": report,
+        "dependencies": dependencies,
         "authentication": "Authentication is owned by OpenCode and is verified only by Test Connection.",
     }
 
 
 @app.post("/api/provider-connections/opencode/test")
 def test_transient_opencode_connection(payload: OpenCodeConnectionPayload):
-    """Run text and attached-image probes before the user chooses to save a connection."""
+    """Verify local OpenCode readiness without invoking a paid model request."""
     connection = OpenCodeBridgeConnection(
         connection_id="transient-opencode-test", name=payload.name.strip() or "My OpenCode",
         configured_model=payload.configured_model.strip(), enabled=payload.enabled,
         transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
         local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
     )
-    result = connection.test_connection(include_vision=True)
-    return {"status": "ok" if result["health_status"] == "available_authenticated" else "error", "connection": connection.to_dict(), **result}
+    result = test_opencode_readiness(connection.executable_path, connection.configured_model, connection.local_endpoint)
+    connection.executable_path = result.get("executable_path", connection.executable_path)
+    connection.local_endpoint = result.get("server_url", connection.local_endpoint)
+    connection.configured_provider = connection.configured_model.split("/", 1)[0] if "/" in connection.configured_model else ""
+    connection.last_checked_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {**result, "connection": connection.to_dict()}
 
 
 @app.post("/api/provider-connections/{connection_id}/test")
@@ -1244,11 +1265,15 @@ def test_provider_connection(connection_id: str):
         save_studio_keys(data)
         return {"status": "ok" if ok else "error", "connection": _sanitize_provider_connection(connection), "message": message}
     connection = OpenCodeBridgeConnection.from_dict(connections[index])
-    result = connection.test_connection(include_vision=True)
+    result = test_opencode_readiness(connection.executable_path, connection.configured_model, connection.local_endpoint)
+    connection.executable_path = result.get("executable_path", connection.executable_path)
+    connection.local_endpoint = result.get("server_url", connection.local_endpoint)
+    connection.configured_provider = connection.configured_model.split("/", 1)[0] if "/" in connection.configured_model else ""
+    connection.last_checked_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     connections[index] = connection.to_dict()
     _store_provider_connections(data, connections)
     save_studio_keys(data)
-    return {"status": "ok" if result["health_status"] == "available_authenticated" else "error", "connection": _sanitize_provider_connection(connections[index]), **result}
+    return {**result, "connection": _sanitize_provider_connection(connections[index])}
 
 
 @app.post("/api/config/ai")
@@ -1370,13 +1395,13 @@ def opencode_web_login():
     return result
 
 
-@app.post("/api/opencode/login")
-def opencode_auth_login(payload: OpenCodeLoginPayload):
+@app.post("/api/opencode/authenticate")
+def opencode_authenticate():
     if not _HAS_OPENCODE:
         raise HTTPException(500, "OpenCode bridge is not available")
-    result = start_opencode_auth_login(payload.provider.strip(), payload.method.strip())
+    result = start_opencode_auth_terminal(workdir=BASE_DIR)
     if result.get("status") == "error":
-        raise HTTPException(500, result.get("message", "Failed to start OpenCode login"))
+        raise HTTPException(500, result.get("message", "Failed to start OpenCode authentication"))
     return result
 
 
@@ -4492,6 +4517,42 @@ def _fix_requirements_txt(target_path, log_func=None, project_type="simple"):
                 pass
 
 
+_OPENCODE_RECOVERY_FLOW = "Open Settings -> AI Provider -> Download Node.js if Node.js or npm is missing -> Detect Again -> Download OpenCode if it is missing -> Detect Again -> Authenticate Provider -> complete the steps in the OpenCode terminal -> Start OpenCode Web or server -> Test Connection -> Save Connection -> Retry Generation."
+
+
+def _opencode_recovery_code(error: str) -> str:
+    text = str(error or "").lower()
+    if any(marker in text for marker in ("node.js", "npm_missing", "npm is required")):
+        return "nodejs_missing"
+    if any(marker in text for marker in ("not installed", "installation")):
+        return "opencode_not_installed"
+    if any(marker in text for marker in ("executable", "binary not found", "enoent")):
+        return "executable_not_detected"
+    if any(marker in text for marker in ("server", "connection refused", "unreachable")):
+        return "server_not_running"
+    if any(marker in text for marker in ("auth", "unauthorized", "credential")):
+        return "provider_not_authenticated"
+    if any(marker in text for marker in ("no model", "models unavailable", "model not available")):
+        return "models_unavailable"
+    if "not saved" in text:
+        return "connection_not_saved"
+    return "connection_test_failed"
+
+
+def _opencode_recovery_instruction(error_code: str) -> str:
+    reasons = {
+        "nodejs_missing": "Node.js is required to install OpenCode with npm. Download the official Windows LTS installer, install it, restart Studio, and select Detect Again.",
+        "opencode_not_installed": "Download OpenCode from the official website or install it with npm. Then return to Studio and select Detect Again.",
+        "executable_not_detected": "The OpenCode executable was not detected. Restart Studio if it was installed while Studio was open, then select Detect Again.",
+        "server_not_running": "The OpenCode local server is unavailable. Select Start OpenCode Web before testing.",
+        "provider_not_authenticated": "No authorized provider is available. Select Authenticate Provider and complete the terminal flow.",
+        "models_unavailable": "The provider is authorized, but no models are available. Complete provider setup, then run Test Connection again.",
+        "connection_test_failed": "OpenCode connection readiness was not confirmed. Run Test Connection and resolve the reported failed check.",
+        "connection_not_saved": "The tested OpenCode connection was not saved. Select Save Connection before retrying generation.",
+    }
+    return f"{reasons.get(error_code, reasons['connection_test_failed'])} {_OPENCODE_RECOVERY_FLOW}"
+
+
 def _pipeline_codex_fix(project, generated_data, target_path, feedback):
     project_id = project.get("project_id", "")
     project["logs"].append("Codex fixing issues based on review feedback...")
@@ -4505,6 +4566,7 @@ def _pipeline_codex_fix(project, generated_data, target_path, feedback):
     if not _HAS_OPENCODE:
         _set_project_status(project, "blocked", reason="OpenCode bridge unavailable during repair")
         project["logs"].append("[OpenCode]: Cannot fix review issues because OpenCode bridge is not available.")
+        project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('opencode_not_installed')}")
         clear_agent_status("codex")
         return generated_data
 
@@ -4512,7 +4574,7 @@ def _pipeline_codex_fix(project, generated_data, target_path, feedback):
         oc_bridge = _get_oc_bridge()
         if not oc_bridge.ensure_running(workdir=target_path):
             _set_project_status(project, "blocked", reason="OpenCode unavailable during repair")
-            project["logs"].append("[OpenCode]: Cannot fix review issues because OpenCode is unavailable. Complete OpenCode login and retry.")
+            project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('server_not_running')}")
             clear_agent_status("codex")
             return generated_data
         result = oc_bridge.execute_fix_task(
@@ -4523,6 +4585,7 @@ def _pipeline_codex_fix(project, generated_data, target_path, feedback):
         if not result.get("success"):
             _set_project_status(project, "blocked", reason="OpenCode repair task failed")
             project["logs"].append(f"[OpenCode]: Fix task failed: {result.get('error', 'unknown')}")
+            project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(_opencode_recovery_code(result.get('error', '')))}")
             clear_agent_status("codex")
             return generated_data
         refreshed = {"files": {}, "file_tree": generated_data.get("file_tree", {}) if isinstance(generated_data, dict) else {}}
@@ -4807,6 +4870,7 @@ def async_studio_production_pipeline(project_id: str):
             if not _HAS_OPENCODE:
                 _set_project_status(project, "blocked", reason="OpenCode bridge unavailable")
                 project["logs"].append("[System]: OpenCode bridge is not available. Code generation was not started.")
+                project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('opencode_not_installed')}")
                 clear_agent_status("codex")
                 return
 
@@ -4880,21 +4944,21 @@ def async_studio_production_pipeline(project_id: str):
                             _mark_generation_finished(project, False)
                             _set_project_status(project, "blocked", reason="OpenCode generation failed")
                             project["logs"].append(f"[OpenCode]: Generation failed: {oc_result.get('error','unknown')}")
-                            project["logs"].append("[OpenCode]: Check Settings -> AI Provider. If the error mentions auth, open OpenCode Login/Web. If it mentions DEGRADED/function calls, switch/apply an OpenCode-compatible coding model such as OpenAI.")
+                            project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(_opencode_recovery_code(oc_result.get('error', '')))}")
                             clear_agent_status("codex")
                             return
                     else:
                         _mark_generation_finished(project, False)
                         _set_project_status(project, "blocked", reason="OpenCode server unavailable")
                         project["logs"].append("[OpenCode]: Server unavailable. Code generation was not started.")
-                        project["logs"].append("[OpenCode]: Open Settings -> AI Provider -> Open OpenCode Login/Web, complete login, then retry generation.")
+                        project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('server_not_running')}")
                         clear_agent_status("codex")
                         return
                 except Exception as oc_e:
                     _mark_generation_finished(project, False)
                     _set_project_status(project, "blocked", reason="OpenCode exception")
                     project["logs"].append(f"[OpenCode]: Error: {oc_e}")
-                    project["logs"].append("[OpenCode]: Code generation requires OpenCode. Complete OpenCode login and retry.")
+                    project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(_opencode_recovery_code(str(oc_e)))}")
                     clear_agent_status("codex")
                     return
 
@@ -4902,6 +4966,7 @@ def async_studio_production_pipeline(project_id: str):
                 _mark_generation_finished(project, False)
                 _set_project_status(project, "blocked", reason="OpenCode generated no files")
                 project["logs"].append("[OpenCode]: No files were generated. Code generation requires OpenCode.")
+                project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('connection_test_failed')}")
                 clear_agent_status("codex")
                 return
 
@@ -5195,6 +5260,20 @@ def retry_project_qa(project_id: str, background_tasks: BackgroundTasks):
     project = active_projects[project_id]
     if project.get("status") in ("completed", "cancelled"):
         raise HTTPException(400, f"Cannot retry QA for project in terminal state: {project.get('status')}")
+    if project.get("status") == "blocked":
+        saved_phase = project.get("_phase")
+        if not saved_phase or saved_phase not in _PHASE_ORDER:
+            raise HTTPException(400, "Cannot retry generation without a saved pipeline phase")
+        project["cancel_requested"] = False
+        project.pop("needs_user_input", None)
+        project.pop("manual_steps", None)
+        project.pop("blocking_requirement_gaps", None)
+        _mark_generation_finished(project, False)
+        _set_project_status(project, saved_phase, reason="retrying blocked generation", force=True)
+        project["logs"].append(f"[System]: Generation retry started from phase '{saved_phase}'.")
+        _save_projects_state()
+        background_tasks.add_task(async_studio_production_pipeline, project_id)
+        return {"status": "retrying_generation", "message": f"Generation restarted from '{saved_phase}'."}
     if project.get("status") == "failed_final_audit":
         target_path = str(project.get("target_path") or os.path.join(DATA_DIR, "generated_projects", project['title'].replace(' ', '_').lower()))
         if _repair_final_audit_issues(project, target_path, project_id):
@@ -5963,15 +6042,12 @@ if os.path.isdir(FRONTEND_DIST):
     print(f"[Backend]: Frontend dist found at {FRONTEND_DIST}")
 
     @app.get("/", include_in_schema=False)
-    async def serve_index(request: Request):
+    async def serve_index():
         idx = os.path.join(FRONTEND_DIST, "index.html")
         if not os.path.isfile(idx):
             raise HTTPException(404)
         with open(idx, "r", encoding="utf-8") as f:
             html = f.read()
-        port = request.url.port
-        script = f'<script>window.BACKEND_PORT={port};</script>'
-        html = html.replace("</head>", f"{script}</head>")
         return HTMLResponse(html, media_type="text/html")
 
     MEDIA_TYPES = {".js": "application/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2", ".html": "text/html", ".map": "application/json"}

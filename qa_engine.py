@@ -1390,7 +1390,7 @@ asyncio.run(main())
             result["executable"] = _safe_repair_text(str(executable))
             result["executable_found"] = bool(executable)
             if not bridge.ensure_running(workdir=self.target_path):
-                self.log("[QA OpenCode Fix]: OpenCode is unavailable or not authenticated.")
+                self.log("[QA OpenCode Fix]: OpenCode is unavailable or not authenticated. Open Settings -> AI Provider -> Download Node.js if Node.js or npm is missing -> Detect Again -> Download OpenCode if it is missing -> Detect Again -> Authenticate Provider -> complete the steps in the OpenCode terminal -> Start OpenCode Web or server -> Test Connection -> Save Connection -> Retry Generation.")
                 result.update(status="executable_not_found" if not executable else "subprocess_start_failed", failure_stage="bridge_start", error_category="executable_not_found" if not executable else "bridge_unavailable")
                 return finish()
 

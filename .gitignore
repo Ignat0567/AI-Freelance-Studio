@@ -6,6 +6,14 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+!frontend/build/
+frontend/build/*
+!frontend/build/installer.nsh
+!frontend/build/icon.ico
+!frontend/build/branding/
+frontend/build/branding/*
+!frontend/build/branding/ai-freelance-studio-source.png
+!frontend/build/branding/icon-source-transparent.png
 *.egg
 
 # Virtual environment
@@ -30,6 +38,14 @@ test_project.json
 .env.local
 .env.*
 !.env.example
+
+# Code-signing material must only come from environment variables or CI secrets.
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
 
 # Logs
 *.log
@@ -59,3 +75,17 @@ Thumbs.db
 
 # Generated projects
 generated_projects/*/
+
+# Generated QA and packaged-runtime evidence
+/artifacts/
+
+# Timestamped local backup snapshots
+/backups/*_20[0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]/
+
+# Conventional tool outputs
+/frontend/dist-electron/
+/test-results/
+/playwright-report/
+
+# Unreferenced duplicate of the canonical branding source
+/AI_FreelanceStudio_Logo.png
