@@ -9,6 +9,13 @@ from typing import Any, Sequence
 
 from .capability import detect_sandbox_capability
 from .evidence import EvidenceError, validate_guest_evidence
+from .installer import (
+    ApplicationTestRequest,
+    InstallScope,
+    InstallationRecipe,
+    InstallerKind,
+    plan_installation,
+)
 from .models import RunStatus, SandboxRunRequest, validate_run_id
 from .runner import SandboxRunner
 from .workspace import SandboxWorkspaceManager, WorkspaceError
@@ -28,7 +35,7 @@ class ExitCode(IntEnum):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m sandbox_test_lab", description="Independent Windows Sandbox Test Lab Phase 1 harness")
+    parser = argparse.ArgumentParser(prog="python -m sandbox_test_lab", description="Independent Windows Sandbox Test Lab harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     capability = subparsers.add_parser("capability", help="Read-only Windows Sandbox capability detection")
@@ -44,6 +51,17 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--run-id", required=True)
     inspect.add_argument("--runtime-root", type=Path)
     inspect.add_argument("--json", action="store_true", dest="as_json")
+
+    plan_install = subparsers.add_parser("plan-install", help="Validate and print a dry-run installation plan")
+    plan_install.add_argument("--artifact", required=True, type=Path)
+    plan_install.add_argument("--sha256", required=True)
+    plan_install.add_argument("--installer-kind", required=True, choices=[kind.value for kind in InstallerKind])
+    plan_install.add_argument("--expected-executable")
+    plan_install.add_argument("--expected-process-name")
+    plan_install.add_argument("--install-scope", choices=[scope.value for scope in InstallScope], default=InstallScope.USER.value)
+    plan_install.add_argument("--install-timeout", type=int, default=300)
+    plan_install.add_argument("--launch-timeout", type=int, default=60)
+    plan_install.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -96,6 +114,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             capability = detect_sandbox_capability()
             _print(capability.to_dict(), args.as_json)
             return int(ExitCode.SUCCESS if capability.available else ExitCode.UNAVAILABLE)
+
+        if args.command == "plan-install":
+            recipe = InstallationRecipe(
+                installer_kind=args.installer_kind,
+                artifact_name=args.artifact.name,
+                artifact_sha256=args.sha256,
+                install_timeout_seconds=args.install_timeout,
+                launch_timeout_seconds=args.launch_timeout,
+                expected_executable=args.expected_executable,
+                expected_process_name=args.expected_process_name,
+                expected_install_scope=args.install_scope,
+            )
+            request = ApplicationTestRequest(
+                artifact=args.artifact,
+                expected_sha256=args.sha256,
+                installation_recipe=recipe,
+            )
+            plan = plan_installation(request)
+            _print(plan.to_dict(), args.as_json)
+            return int(ExitCode.SUCCESS if plan.supported else ExitCode.INVALID_INPUT)
 
         manager = SandboxWorkspaceManager(args.runtime_root)
         if args.command == "prepare":
