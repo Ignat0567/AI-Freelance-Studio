@@ -16,6 +16,12 @@ from .installer import (
     InstallerKind,
     plan_installation,
 )
+from .fixture_installation import (
+    FixtureInstallationRequest,
+    FixtureInstallationWorkspaceManager,
+    installation_external_opt_in_enabled,
+)
+from .installation_runner import InstallationSandboxRunner
 from .models import RunStatus, SandboxRunRequest, validate_run_id
 from .runner import SandboxRunner
 from .workspace import SandboxWorkspaceManager, WorkspaceError
@@ -62,6 +68,16 @@ def build_parser() -> argparse.ArgumentParser:
     plan_install.add_argument("--install-timeout", type=int, default=300)
     plan_install.add_argument("--launch-timeout", type=int, default=60)
     plan_install.add_argument("--json", action="store_true", dest="as_json")
+
+    run_install = subparsers.add_parser("run-install", help="Run the controlled NSIS fixture installation in Windows Sandbox")
+    run_install.add_argument("--artifact", required=True, type=Path)
+    run_install.add_argument("--sha256", required=True)
+    run_install.add_argument("--installer-kind", required=True, choices=[InstallerKind.NSIS_EXE.value])
+    run_install.add_argument("--expected-fixture-profile", required=True)
+    run_install.add_argument("--timeout", type=float, default=240.0)
+    run_install.add_argument("--runtime-root", type=Path)
+    run_install.add_argument("--external", action="store_true", help="Explicitly allow the external controlled fixture run")
+    run_install.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -134,6 +150,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             plan = plan_installation(request)
             _print(plan.to_dict(), args.as_json)
             return int(ExitCode.SUCCESS if plan.supported else ExitCode.INVALID_INPUT)
+
+        if args.command == "run-install":
+            if not installation_external_opt_in_enabled(args.external):
+                raise ValueError("run-install requires --external and the installation external opt-in environment variable")
+            install_timeout = min(180, int(args.timeout) - 30)
+            recipe = InstallationRecipe(
+                installer_kind=args.installer_kind,
+                artifact_name=args.artifact.name,
+                artifact_sha256=args.sha256,
+                install_timeout_seconds=install_timeout,
+                launch_timeout_seconds=1,
+                success_requirements=("artifact_hash_verified", "installer_exit_zero"),
+            )
+            application_request = ApplicationTestRequest(
+                artifact=args.artifact,
+                expected_sha256=args.sha256,
+                installation_recipe=recipe,
+            )
+            request = FixtureInstallationRequest(
+                application_request=application_request,
+                expected_fixture_profile=args.expected_fixture_profile,
+                timeout_seconds=args.timeout,
+            )
+            result = InstallationSandboxRunner(
+                workspace_manager=FixtureInstallationWorkspaceManager(args.runtime_root)
+            ).run(request)
+            _print(result.to_dict(), args.as_json)
+            return int(_result_exit_code(result.status, result.exit_reason))
 
         manager = SandboxWorkspaceManager(args.runtime_root)
         if args.command == "prepare":
