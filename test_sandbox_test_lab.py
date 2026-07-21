@@ -13,7 +13,8 @@ from sandbox_test_lab.capability import CommandResult, detect_sandbox_capability
 from sandbox_test_lab.cli import ExitCode, build_parser, main as cli_main
 from sandbox_test_lab.evidence import EvidenceError, validate_completion, validate_guest_evidence
 from sandbox_test_lab.models import RunStatus, SandboxCapability, SandboxRunRequest, validate_transition
-from sandbox_test_lab.runner import SandboxRunner
+from sandbox_test_lab.runner import SandboxRunner, launch_sandbox, validate_sandbox_argv
+import sandbox_test_lab.runner as runner_module
 from sandbox_test_lab.workspace import SandboxWorkspaceManager, WorkspaceError, atomic_write_json, sha256_file
 from sandbox_test_lab.wsb_config import BOOTSTRAP_COMMAND, build_wsb_xml, write_wsb_config
 import sandbox_test_lab.workspace as workspace_module
@@ -229,6 +230,7 @@ def test_wsb_xml_has_secure_defaults_and_mount_permissions(tmp_path):
     mappings = root.findall("./MappedFolders/MappedFolder")
     assert [mapping.findtext("ReadOnly") for mapping in mappings] == ["true", "true", "false"]
     assert root.findtext("./LogonCommand/Command") == BOOTSTRAP_COMMAND
+    assert root.findtext("MemoryInMB") == "4096"
 
 
 def test_wsb_xml_escapes_host_paths(tmp_path):
@@ -717,4 +719,33 @@ def test_subprocess_policy_never_uses_shell_true():
     package = Path(capability_module.__file__).parent
     python_sources = "\n".join(path.read_text(encoding="utf-8") for path in package.glob("*.py"))
     assert "shell=True" not in python_sources
-    assert "taskkill" not in python_sources.lower()
+
+
+@pytest.mark.parametrize(
+    "executable",
+    ["taskkill", "TASKKILL.EXE", r"C:\Windows\System32\taskkill", r"C:\Windows\System32\taskkill.exe"],
+)
+def test_sandbox_argv_guard_rejects_taskkill_before_popen(monkeypatch, executable):
+    called = False
+
+    def popen(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("Popen must not be called")
+
+    monkeypatch.setattr(runner_module.subprocess, "Popen", popen)
+    with pytest.raises(ValueError, match="taskkill"):
+        launch_sandbox([executable, "/PID", "1"])
+    assert called is False
+
+    with pytest.raises(ValueError, match="taskkill"):
+        launch_sandbox([r"C:\Windows\System32\WindowsSandbox.exe", executable])
+    assert called is False
+
+
+def test_sandbox_argv_guard_allows_evidence_name_and_windows_sandbox(monkeypatch):
+    expected = [r"C:\Windows\System32\WindowsSandbox.exe", "production_taskkill_observed.wsb"]
+    process = object()
+    monkeypatch.setattr(runner_module.subprocess, "Popen", lambda argv, **_kwargs: process if argv == expected else None)
+    assert validate_sandbox_argv(expected) == expected
+    assert launch_sandbox(expected) is process

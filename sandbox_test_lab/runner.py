@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import ntpath
 from pathlib import Path
 import subprocess
 import threading
@@ -31,11 +32,19 @@ class ProcessHandle(Protocol):
     def wait(self, timeout: float | None = None) -> int: ...
 
 
-def launch_sandbox(argv: Sequence[str]) -> ProcessHandle:
+def validate_sandbox_argv(argv: Sequence[str]) -> list[str]:
     if not argv or isinstance(argv, (str, bytes)):
         raise ValueError("sandbox launch requires argv")
+    validated = list(argv)
+    if any(ntpath.basename(str(token)).casefold() in {"taskkill", "taskkill.exe"} for token in validated):
+        raise ValueError("sandbox launcher may not invoke taskkill")
+    return validated
+
+
+def launch_sandbox(argv: Sequence[str]) -> ProcessHandle:
+    validated = validate_sandbox_argv(argv)
     return subprocess.Popen(
-        list(argv),
+        validated,
         shell=False,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
