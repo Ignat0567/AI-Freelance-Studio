@@ -30,7 +30,7 @@ from sandbox_test_lab.installation_evidence import (
 from sandbox_test_lab.installation_runner import InstallationSandboxRunner
 from sandbox_test_lab.installer import ApplicationTestRequest, InstallationRecipe, InstallerKind, plan_installation
 from sandbox_test_lab.models import RunStatus, SandboxCapability, SandboxRunRequest
-from sandbox_test_lab.workspace import SandboxWorkspaceManager, atomic_write_json, sha256_file
+from sandbox_test_lab.workspace import SandboxWorkspaceManager, WorkspaceError, atomic_write_json, sha256_file
 
 
 pytestmark = pytest.mark.unit
@@ -94,6 +94,7 @@ def _controlled_request(tmp_path: Path, monkeypatch, *, host_timeout=60.0, insta
     digest = sha256_file(artifact)
     monkeypatch.setattr(fixture_module, "fixture_output_path", lambda: artifact)
     monkeypatch.setattr(fixture_module, "verify_fixture_provenance", lambda _artifact, _digest: None)
+    monkeypatch.setattr(fixture_module, "ensure_no_active_windows_sandbox_session", lambda: None)
     recipe = InstallationRecipe(
         installer_kind=InstallerKind.NSIS_EXE,
         artifact_name=artifact.name,
@@ -131,7 +132,8 @@ def _status_payload(run_id: str, digest: str, *, status="passed", outcome="passe
         "expected_install_root": FIXTURE_INSTALL_ROOT,
         "installed_marker_found": marker,
         "installed_payload_found": payload,
-        "installed_executable_found": None,
+        "installed_executable_found": True,
+        "installed_executable_sha256": builder_module.TRUSTED_FIXTURE_GUI_SHA256,
         "first_launch_verified": False,
         "errors": [] if passed else ["controlled_installation_failed"],
         "warnings": [],
@@ -218,15 +220,20 @@ def test_fixture_provenance_detects_canonical_artifact_replacement(tmp_path, mon
     artifact = tmp_path / builder_module.FIXTURE_EXECUTABLE_NAME
     artifact.write_bytes(b"controlled build")
     digest = sha256_file(artifact)
+    gui_artifact = tmp_path / builder_module.FIXTURE_GUI_EXECUTABLE_NAME
+    gui_artifact.write_bytes(b"controlled GUI build")
+    gui_digest = sha256_file(gui_artifact)
     provenance = tmp_path / builder_module.FIXTURE_PROVENANCE_NAME
     atomic_write_json(
         provenance,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "profile": CONTROLLED_FIXTURE_PROFILE,
             "compiler_version": "v3.04",
             "compiler_sha256": builder_module.TRUSTED_MAKENSIS_SHA256,
             "source_sha256": dict(builder_module.TRUSTED_FIXTURE_SOURCE_SHA256),
+            "gui_artifact_name": builder_module.FIXTURE_GUI_EXECUTABLE_NAME,
+            "gui_artifact_sha256": gui_digest,
             "artifact_name": builder_module.FIXTURE_EXECUTABLE_NAME,
             "artifact_sha256": digest,
         },
@@ -234,6 +241,9 @@ def test_fixture_provenance_detects_canonical_artifact_replacement(tmp_path, mon
     monkeypatch.setattr(builder_module, "fixture_output_path", lambda: artifact)
     monkeypatch.setattr(builder_module, "fixture_provenance_path", lambda: provenance)
     monkeypatch.setattr(builder_module, "TRUSTED_FIXTURE_ARTIFACT_SHA256", digest)
+    monkeypatch.setattr(builder_module, "TRUSTED_FIXTURE_GUI_SHA256", gui_digest)
+    with pytest.raises(ValueError, match="pinned artifact"):
+        builder_module.verify_fixture_provenance(artifact, "179773764ae8843d27dbde78b9162a94fc9c924f30bb3e9d2f3a02a0722aa79f")
     builder_module.verify_fixture_provenance(artifact, digest)
     artifact.write_bytes(b"arbitrary replacement")
     replacement_hash = sha256_file(artifact)
@@ -261,6 +271,7 @@ def test_fixture_source_is_user_scope_inert_and_contains_no_launch():
     assert '$LOCALAPPDATA\\Programs\\AIFS Sandbox Fixture' in source
     assert 'File "/oname=fixture-manifest.json"' in source
     assert 'File "/oname=payload.txt"' in source
+    assert 'File "/oname=AIFS Sandbox Fixture.exe"' in source
     for forbidden in ("Exec ", "ExecWait", "ShellExec", "WriteReg", "CreateShortCut", "WriteUninstaller", "Reboot"):
         assert forbidden.lower() not in source.lower()
 
@@ -275,7 +286,7 @@ def test_valid_installation_evidence_requires_marker_payload_and_no_launch(tmp_p
     assert validated.installed_marker_found is True
     assert validated.installed_payload_found is True
     assert validated.raw["first_launch_verified"] is False
-    assert validated.raw["installed_executable_found"] is None
+    assert validated.raw["installed_executable_found"] is True
     assert set(path.name for path in tmp_path.iterdir()) == EXPECTED_INSTALLATION_EVIDENCE_FILES
 
 
@@ -345,7 +356,7 @@ def test_timed_out_evidence_is_never_passed(tmp_path):
         ("status.json", lambda value: value.update(run_id="wrong"), "run_id"),
         ("status.json", lambda value: value.update(phase="installing"), "terminal"),
         ("status.json", lambda value: value.update(expected_install_root=r"C:\escape"), "install root"),
-        ("status.json", lambda value: value.update(installed_executable_found=True), "installed executable"),
+        ("status.json", lambda value: value.update(installed_executable_found=False), "installed executable"),
         ("status.json", lambda value: value.update(first_launch_verified=True), "first launch"),
     ],
 )
@@ -511,6 +522,24 @@ def test_installation_runner_host_cancellation_is_terminal(tmp_path, monkeypatch
     assert process.terminated is True
 
 
+def test_phase2b_active_sandbox_session_blocks_before_launcher(tmp_path, monkeypatch):
+    request = _controlled_request(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        fixture_module,
+        "ensure_no_active_windows_sandbox_session",
+        lambda: (_ for _ in ()).throw(WorkspaceError("active_windows_sandbox_session")),
+    )
+    launched = []
+    result = InstallationSandboxRunner(
+        workspace_manager=FixtureInstallationWorkspaceManager(tmp_path / "runtime"),
+        capability_detector=_available_capability,
+        launcher=lambda argv: launched.append(argv),
+    ).run(request)
+    assert result.status == RunStatus.INFRASTRUCTURE_ERROR
+    assert result.errors == ("active_windows_sandbox_session",)
+    assert launched == []
+
+
 def test_uncooperative_owned_broker_does_not_break_cancellation_result(tmp_path, monkeypatch):
     request = _controlled_request(tmp_path, monkeypatch)
     cancellation = threading.Event()
@@ -619,6 +648,38 @@ def test_installation_external_opt_in_requires_environment_and_explicit_flag(mon
     monkeypatch.setenv(fixture_module.INSTALL_EXTERNAL_OPT_IN, "1")
     assert installation_external_opt_in_enabled(False) is False
     assert installation_external_opt_in_enabled(True) is True
+
+
+def test_active_session_detection_is_fresh_read_only_and_not_pid_based(tmp_path, monkeypatch):
+    powershell = tmp_path / "powershell.exe"
+    powershell.write_bytes(b"trusted test powershell")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(fixture_module.os, "name", "nt")
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    monkeypatch.setattr(fixture_module, "validate_source_artifact", lambda _path: powershell)
+    monkeypatch.setattr(fixture_module.subprocess, "run", run)
+    fixture_module.ensure_no_active_windows_sandbox_session()
+    assert len(calls) == 1
+    argv, kwargs = calls[0]
+    query = argv[-1]
+    assert "WindowsSandboxRemoteSession.exe" in query
+    assert "WindowsSandboxServer.exe" in query
+    assert "ProcessId" not in query
+    assert "Stop-Process" not in query and "taskkill" not in query.lower()
+    assert kwargs["shell"] is False
+
+    monkeypatch.setattr(
+        fixture_module.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 10})(),
+    )
+    with pytest.raises(WorkspaceError, match="active_windows_sandbox_session"):
+        fixture_module.ensure_no_active_windows_sandbox_session()
 
 
 def test_external_fixture_test_requires_environment_and_exact_marker(monkeypatch):

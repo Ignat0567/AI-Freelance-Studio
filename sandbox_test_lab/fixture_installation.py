@@ -4,9 +4,16 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import subprocess
 from typing import Any
 
-from .fixture_builder import fixture_output_path, fixture_source_root, verify_fixture_provenance
+from .fixture_builder import (
+    FIXTURE_GUI_EXECUTABLE_NAME,
+    TRUSTED_FIXTURE_GUI_SHA256,
+    fixture_output_path,
+    fixture_source_root,
+    verify_fixture_provenance,
+)
 from .installer import (
     ApplicationTestRequest,
     InstallScope,
@@ -15,7 +22,7 @@ from .installer import (
     RebootPolicy,
 )
 from .models import SandboxRunPaths
-from .workspace import SandboxWorkspaceManager, WorkspaceError, atomic_write_json, sha256_file
+from .workspace import SandboxWorkspaceManager, WorkspaceError, atomic_write_json, sha256_file, validate_source_artifact
 
 
 INSTALL_EXECUTION_SCHEMA_VERSION = 2
@@ -24,9 +31,15 @@ CONTROLLED_FIXTURE_PROFILE = "aifs_sandbox_fixture_v1"
 FIXTURE_INSTALL_ROOT = r"sandbox_user_local_app_data\Programs\AIFS Sandbox Fixture"
 FIXTURE_MARKER_NAME = "fixture-manifest.json"
 FIXTURE_PAYLOAD_NAME = "payload.txt"
+FIXTURE_GUI_NAME = FIXTURE_GUI_EXECUTABLE_NAME
 MIN_HOST_TIMEOUT_SECONDS = 60
 MAX_HOST_TIMEOUT_SECONDS = 600
 INSTALL_EXTERNAL_OPT_IN = "FREELANCERSTUDIO_RUN_WINDOWS_SANDBOX_NSIS_INSTALL_EXTERNAL"
+_ACTIVE_SANDBOX_QUERY = (
+    "$active = @(Get-CimInstance -Query \"SELECT Name FROM Win32_Process WHERE "
+    "Name='WindowsSandboxRemoteSession.exe' OR Name='WindowsSandboxServer.exe'\" -ErrorAction Stop); "
+    "if ($active.Count -gt 0) { exit 10 }; exit 0"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +97,42 @@ def installation_external_opt_in_enabled(explicit_external: bool) -> bool:
     return explicit_external and os.environ.get(INSTALL_EXTERNAL_OPT_IN) == "1"
 
 
+def ensure_no_active_windows_sandbox_session() -> None:
+    if os.name != "nt":
+        return
+    system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR")
+    if not system_root:
+        raise WorkspaceError("windows_system_root_unavailable")
+    powershell = validate_source_artifact(
+        Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    )
+    controlled_environment = {
+        key: value
+        for key in ("SystemRoot", "WINDIR", "TEMP", "TMP")
+        if (value := os.environ.get(key))
+    }
+    result = subprocess.run(
+        [
+            str(powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            _ACTIVE_SANDBOX_QUERY,
+        ],
+        shell=False,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env=controlled_environment,
+    )
+    if result.returncode == 10:
+        raise WorkspaceError("active_windows_sandbox_session")
+    if result.returncode != 0:
+        raise WorkspaceError("windows_sandbox_session_detection_failed")
+
+
 def _fixture_content_hash(name: str) -> str:
     return sha256_file(fixture_source_root() / name)
 
@@ -118,6 +167,8 @@ def build_installation_guest_request(
         "expected_marker_sha256": _fixture_content_hash(FIXTURE_MARKER_NAME),
         "expected_payload_name": FIXTURE_PAYLOAD_NAME,
         "expected_payload_sha256": _fixture_content_hash(FIXTURE_PAYLOAD_NAME),
+        "expected_gui_name": FIXTURE_GUI_NAME,
+        "expected_gui_sha256": TRUSTED_FIXTURE_GUI_SHA256,
     }
 
 
@@ -152,3 +203,4 @@ class FixtureInstallationWorkspaceManager(SandboxWorkspaceManager):
         payload = json.loads((paths.guest_directory / "request.json").read_text(encoding="utf-8"))
         if payload.get("schema_version") != INSTALL_EXECUTION_SCHEMA_VERSION or payload.get("protocol") != INSTALL_EXECUTION_PROTOCOL or payload.get("run_id") != request.run_id:
             raise WorkspaceError("controlled fixture guest request identity is invalid")
+        ensure_no_active_windows_sandbox_session()

@@ -63,6 +63,7 @@ _STATUS_FIELDS = {
     "installed_marker_found",
     "installed_payload_found",
     "installed_executable_found",
+    "installed_executable_sha256",
     "first_launch_verified",
     "errors",
     "warnings",
@@ -205,8 +206,14 @@ def _validate_status(payload: dict[str, Any], run_id: str, artifact_sha256: str)
         raise InstallationEvidenceError("installation evidence installer_kind is invalid")
     if payload.get("expected_install_root") != FIXTURE_INSTALL_ROOT:
         raise InstallationEvidenceError("installation evidence install root is invalid")
-    if payload.get("installed_executable_found") is not None:
-        raise InstallationEvidenceError("Phase 2B may not report an installed executable")
+    installed_executable_found = payload.get("installed_executable_found")
+    if not isinstance(installed_executable_found, bool):
+        raise InstallationEvidenceError("Phase 2B installed executable evidence is invalid")
+    installed_hash_value = payload.get("installed_executable_sha256")
+    installed_executable_sha256 = None if status == "failed" and installed_hash_value == "" else _sha256(installed_hash_value, "installed_executable_sha256")
+    from .fixture_builder import TRUSTED_FIXTURE_GUI_SHA256
+    if status == "passed" and (not installed_executable_found or installed_executable_sha256 != TRUSTED_FIXTURE_GUI_SHA256):
+        raise InstallationEvidenceError("Phase 2B installed executable hash is invalid")
     if payload.get("first_launch_verified") is not False:
         raise InstallationEvidenceError("Phase 2B may not report first launch verification")
 

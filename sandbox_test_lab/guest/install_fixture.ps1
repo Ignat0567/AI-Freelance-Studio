@@ -78,6 +78,8 @@ $InstallDurationSeconds = $null
 $RebootRequired = $false
 $InstalledMarkerFound = $false
 $InstalledPayloadFound = $false
+$InstalledExecutableFound = $false
+$InstalledExecutableHash = ""
 $FirstLaunchVerified = $false
 $Errors = New-Object System.Collections.Generic.List[string]
 $Warnings = New-Object System.Collections.Generic.List[string]
@@ -88,6 +90,8 @@ $ExpectedMarkerName = ""
 $ExpectedMarkerHash = ""
 $ExpectedPayloadName = ""
 $ExpectedPayloadHash = ""
+$ExpectedGuiName = ""
+$ExpectedGuiHash = ""
 $GuestSystem = [ordered]@{
     os_version = [Environment]::OSVersion.VersionString
     architecture = [Environment]::Is64BitOperatingSystem.ToString()
@@ -105,7 +109,8 @@ try {
     Assert-ExactProperties -Value $Request -Name "request" -Expected @(
         "schema_version", "protocol", "run_id", "artifact_name", "artifact_sha256_host",
         "controlled_fixture_profile", "installation_recipe", "expected_install_root",
-        "expected_marker_name", "expected_marker_sha256", "expected_payload_name", "expected_payload_sha256"
+        "expected_marker_name", "expected_marker_sha256", "expected_payload_name", "expected_payload_sha256",
+        "expected_gui_name", "expected_gui_sha256"
     )
     if ($Request.schema_version -ne $SchemaVersion -or $Request.protocol -ne $Protocol) {
         throw "guest_request_schema_unsupported"
@@ -156,10 +161,12 @@ try {
     $ExpectedMarkerHash = ([string]$Request.expected_marker_sha256).ToLowerInvariant()
     $ExpectedPayloadName = [string]$Request.expected_payload_name
     $ExpectedPayloadHash = ([string]$Request.expected_payload_sha256).ToLowerInvariant()
-    if ($ExpectedMarkerName -ne "fixture-manifest.json" -or $ExpectedPayloadName -ne "payload.txt") {
+    $ExpectedGuiName = [string]$Request.expected_gui_name
+    $ExpectedGuiHash = ([string]$Request.expected_gui_sha256).ToLowerInvariant()
+    if ($ExpectedMarkerName -ne "fixture-manifest.json" -or $ExpectedPayloadName -ne "payload.txt" -or $ExpectedGuiName -ne "AIFS Sandbox Fixture.exe") {
         throw "controlled_fixture_evidence_names_invalid"
     }
-    if ($ExpectedMarkerHash -notmatch "^[0-9a-f]{64}$" -or $ExpectedPayloadHash -notmatch "^[0-9a-f]{64}$") {
+    if ($ExpectedMarkerHash -notmatch "^[0-9a-f]{64}$" -or $ExpectedPayloadHash -notmatch "^[0-9a-f]{64}$" -or $ExpectedGuiHash -notmatch "^[0-9a-f]{64}$") {
         throw "controlled_fixture_evidence_hash_invalid"
     }
 
@@ -178,7 +185,8 @@ try {
 
     $MarkerPath = Join-Path $ActualInstallRoot "fixture-manifest.json"
     $PayloadPath = Join-Path $ActualInstallRoot "payload.txt"
-    if ((Test-Path -LiteralPath $MarkerPath) -or (Test-Path -LiteralPath $PayloadPath)) {
+    $GuiPath = Join-Path $ActualInstallRoot "AIFS Sandbox Fixture.exe"
+    if ((Test-Path -LiteralPath $MarkerPath) -or (Test-Path -LiteralPath $PayloadPath) -or (Test-Path -LiteralPath $GuiPath)) {
         throw "fixture_install_root_not_clean"
     }
 
@@ -238,12 +246,21 @@ try {
     if (Test-Path -LiteralPath $PayloadPath -PathType Leaf) {
         $InstalledPayloadFound = ((Get-FileHash -LiteralPath $PayloadPath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $ExpectedPayloadHash)
     }
-    if (-not $InstalledMarkerFound -or -not $InstalledPayloadFound) {
+    if (Test-Path -LiteralPath $GuiPath -PathType Leaf) {
+        $GuiItem = Get-Item -LiteralPath $GuiPath -Force
+        $ExpectedGuiPath = [System.IO.Path]::GetFullPath((Join-Path $ActualInstallRoot "AIFS Sandbox Fixture.exe"))
+        $ActualGuiPath = [System.IO.Path]::GetFullPath($GuiItem.FullName)
+        if (($GuiItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 -and -not $GuiItem.PSIsContainer -and $ActualGuiPath -ceq $ExpectedGuiPath) {
+            $InstalledExecutableHash = (Get-FileHash -LiteralPath $GuiPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $InstalledExecutableFound = $InstalledExecutableHash -eq $ExpectedGuiHash
+        }
+    }
+    if (-not $InstalledMarkerFound -or -not $InstalledPayloadFound -or -not $InstalledExecutableFound) {
         $Outcome = "failed"
         $Errors.Add("fixture_installation_evidence_missing")
         throw "fixture_installation_evidence_missing"
     }
-    $UnexpectedExecutables = @(Get-ChildItem -LiteralPath $ActualInstallRoot -File -Recurse | Where-Object { $_.Extension -ieq ".exe" })
+    $UnexpectedExecutables = @(Get-ChildItem -LiteralPath $ActualInstallRoot -File -Recurse | Where-Object { $_.Extension -ieq ".exe" -and $_.FullName -cne $GuiPath })
     if ($UnexpectedExecutables.Count -ne 0) {
         $Outcome = "failed"
         $Errors.Add("unexpected_installed_executable")
@@ -296,7 +313,8 @@ finally {
             expected_install_root = $LogicalInstallRoot
             installed_marker_found = $InstalledMarkerFound
             installed_payload_found = $InstalledPayloadFound
-            installed_executable_found = $null
+            installed_executable_found = $InstalledExecutableFound
+            installed_executable_sha256 = $InstalledExecutableHash
             first_launch_verified = $FirstLaunchVerified
             errors = @($Errors)
             warnings = @($Warnings)

@@ -14,14 +14,15 @@ Source files are under `sandbox_test_lab/fixtures/nsis/`:
 - `fixture-manifest.json`
 - `payload.txt`
 
-The fixture uses `RequestExecutionLevel user` and installs only these inert files:
+The fixture uses `RequestExecutionLevel user` and installs only these controlled files:
 
 ```text
 %LOCALAPPDATA%\Programs\AIFS Sandbox Fixture\fixture-manifest.json
 %LOCALAPPDATA%\Programs\AIFS Sandbox Fixture\payload.txt
+%LOCALAPPDATA%\Programs\AIFS Sandbox Fixture\AIFS Sandbox Fixture.exe
 ```
 
-It does not contain an executable payload, process launch, service, scheduled task, autorun, shortcut, registry change, file association, firewall rule, driver, network operation, uninstaller, or reboot instruction.
+The GUI executable is pinned for Phase 2C. Phase 2B verifies its regular non-reparse identity and hash but never launches it. The fixture does not perform a process launch, service, scheduled task, autorun, shortcut, registry change, file association, firewall rule, driver, network operation, uninstaller, or reboot instruction.
 
 The fixture binary is built into ignored `sandbox_test_lab/fixtures/nsis/build/` and is never committed. The builder resolves only electron-builder's pinned local NSIS cache and never searches `PATH` or downloads dependencies:
 
@@ -80,8 +81,8 @@ The guest performs these steps:
 6. On timeout, attempts to kill only that process and never uses process-name-wide `taskkill`.
 7. Treats NSIS exit codes `1641` and `3010` as `reboot_required` and never reboots the Sandbox.
 8. Requires exit code zero plus matching marker and payload hashes. Exit code alone is not success evidence.
-9. Rejects any installed `.exe` in the fixture root.
-10. Never launches the installed payload and reports `first_launch_verified=false` and `installed_executable_found=null`.
+9. Requires exactly the pinned controlled GUI executable and rejects any additional installed `.exe` in the fixture root.
+10. Never launches the installed GUI and reports `first_launch_verified=false` and `installed_executable_found=true` only after hash verification.
 
 The controlled fixture has no reboot behavior. Phase 2B uses explicit installer exit codes as the supported reboot signal; it does not make ambiguous claims from generic pending-reboot registry state.
 
@@ -116,12 +117,13 @@ expected_install_root
 installed_marker_found
 installed_payload_found
 installed_executable_found
+installed_executable_sha256
 first_launch_verified
 errors
 warnings
 ```
 
-The host rejects missing or unexpected files, symlinks, reparse points, non-regular files, executable/script additions, duplicate JSON keys, oversized JSON/log/aggregate evidence, invalid UTF-8, unknown fields, identity/schema mismatches, invalid controlled path fields, error messages containing Windows separators or URL-style path prefixes, inconsistent timestamps/status/outcome, hash mismatch, missing marker/payload, unexpected executable evidence, launch claims, and reboot inconsistencies.
+The host rejects missing or unexpected files, symlinks, reparse points, non-regular files, executable/script evidence additions, duplicate JSON keys, oversized JSON/log/aggregate evidence, invalid UTF-8, unknown fields, identity/schema mismatches, invalid controlled path fields, error messages containing Windows separators or URL-style path prefixes, inconsistent timestamps/status/outcome, hash mismatch, missing marker/payload/GUI verification, unexpected executable evidence, launch claims, and reboot inconsistencies.
 
 The evidence mapping is treated as untrusted. Validated evidence is atomically copied as JSON to the host-only `logs/validated-installation-evidence.json`; `host-result.json` is also written atomically outside the writable guest mapping. Installed files are never copied back to the host.
 

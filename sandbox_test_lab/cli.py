@@ -22,6 +22,15 @@ from .fixture_installation import (
     installation_external_opt_in_enabled,
 )
 from .installation_runner import InstallationSandboxRunner
+from .fixture_builder import FIXTURE_GUI_EXECUTABLE_NAME
+from .fixture_launch import (
+    CONTROLLED_LAUNCH_PROFILE,
+    LAUNCH_TIMEOUT_SECONDS,
+    FixtureLaunchRequest,
+    FixtureLaunchWorkspaceManager,
+    launch_external_opt_in_enabled,
+)
+from .launch_runner import InstallLaunchSandboxRunner
 from .models import RunStatus, SandboxRunRequest, validate_run_id
 from .runner import SandboxRunner
 from .workspace import SandboxWorkspaceManager, WorkspaceError
@@ -78,6 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_install.add_argument("--runtime-root", type=Path)
     run_install.add_argument("--external", action="store_true", help="Explicitly allow the external controlled fixture run")
     run_install.add_argument("--json", action="store_true", dest="as_json")
+
+    run_install_launch = subparsers.add_parser("run-install-launch", help="Install and launch the controlled GUI fixture in Windows Sandbox")
+    run_install_launch.add_argument("--artifact", required=True, type=Path)
+    run_install_launch.add_argument("--sha256", required=True)
+    run_install_launch.add_argument("--launch-profile", required=True, choices=[CONTROLLED_LAUNCH_PROFILE])
+    run_install_launch.add_argument("--timeout", type=float, default=300.0)
+    run_install_launch.add_argument("--runtime-root", type=Path)
+    run_install_launch.add_argument("--external", action="store_true", help="Explicitly allow the external controlled GUI run")
+    run_install_launch.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -175,6 +193,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             result = InstallationSandboxRunner(
                 workspace_manager=FixtureInstallationWorkspaceManager(args.runtime_root)
+            ).run(request)
+            _print(result.to_dict(), args.as_json)
+            return int(_result_exit_code(result.status, result.exit_reason))
+
+        if args.command == "run-install-launch":
+            if not launch_external_opt_in_enabled(args.external):
+                raise ValueError("run-install-launch requires --external and the GUI external opt-in environment variable")
+            install_timeout = min(180, int(args.timeout) - 73)
+            recipe = InstallationRecipe(
+                installer_kind=InstallerKind.NSIS_EXE,
+                artifact_name=args.artifact.name,
+                artifact_sha256=args.sha256,
+                install_timeout_seconds=install_timeout,
+                launch_timeout_seconds=LAUNCH_TIMEOUT_SECONDS,
+                expected_executable=FIXTURE_GUI_EXECUTABLE_NAME,
+                expected_process_name=FIXTURE_GUI_EXECUTABLE_NAME,
+                success_requirements=(
+                    "artifact_hash_verified", "installer_exit_zero", "expected_executable_found",
+                    "process_started", "first_launch_verified",
+                ),
+            )
+            application_request = ApplicationTestRequest(args.artifact, args.sha256, recipe)
+            request = FixtureLaunchRequest(application_request, args.launch_profile, args.timeout)
+            result = InstallLaunchSandboxRunner(
+                workspace_manager=FixtureLaunchWorkspaceManager(args.runtime_root)
             ).run(request)
             _print(result.to_dict(), args.as_json)
             return int(_result_exit_code(result.status, result.exit_reason))

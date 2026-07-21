@@ -87,5 +87,6 @@ def test_windows_sandbox_phase2b_controlled_nsis_fixture(tmp_path: Path, request
     assert evidence["installed_marker_found"] is True
     assert evidence["installed_payload_found"] is True
     assert evidence["reboot_required"] is False
-    assert evidence["installed_executable_found"] is None
+    assert evidence["installed_executable_found"] is True
+    assert evidence["installed_executable_sha256"] == build.gui_sha256
     assert evidence["first_launch_verified"] is False

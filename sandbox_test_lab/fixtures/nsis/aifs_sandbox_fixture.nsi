@@ -16,5 +16,6 @@ Section "Fixture" SEC_FIXTURE
   SetOutPath "$INSTDIR"
   File "/oname=fixture-manifest.json" "${__FILEDIR__}\fixture-manifest.json"
   File "/oname=payload.txt" "${__FILEDIR__}\payload.txt"
+  File "/oname=AIFS Sandbox Fixture.exe" "${__FILEDIR__}\build\AIFS Sandbox Fixture.exe"
   SetErrorLevel 0
 SectionEnd
