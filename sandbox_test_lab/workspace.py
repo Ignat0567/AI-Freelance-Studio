@@ -91,9 +91,17 @@ def validate_source_artifact(source: Path) -> Path:
 
 
 class SandboxWorkspaceManager:
-    def __init__(self, runtime_root: Path | None = None, bootstrap_source: Path | None = None):
+    def __init__(
+        self,
+        runtime_root: Path | None = None,
+        bootstrap_source: Path | None = None,
+        bootstrap_destination_name: str = "bootstrap.ps1",
+    ):
         self.runtime_root = (runtime_root or default_runtime_root()).expanduser().absolute()
         self.bootstrap_source = bootstrap_source or Path(__file__).with_name("guest") / "bootstrap.ps1"
+        if not bootstrap_destination_name or Path(bootstrap_destination_name).name != bootstrap_destination_name:
+            raise WorkspaceError("guest bootstrap destination name is invalid")
+        self.bootstrap_destination_name = bootstrap_destination_name
 
     def paths_for(self, run_id: str) -> SandboxRunPaths:
         validate_run_id(run_id)
@@ -125,7 +133,11 @@ class SandboxWorkspaceManager:
             raise WorkspaceError("copied artifact SHA-256 does not match expected_sha256")
         if not self.bootstrap_source.is_file():
             raise WorkspaceError("guest bootstrap resource is missing")
-        shutil.copyfile(self.bootstrap_source, paths.guest_directory / "bootstrap.ps1", follow_symlinks=False)
+        shutil.copyfile(
+            self.bootstrap_source,
+            paths.guest_directory / self.bootstrap_destination_name,
+            follow_symlinks=False,
+        )
         return paths, staged_artifact, copied_hash
 
     def write_guest_request(
@@ -165,7 +177,7 @@ class SandboxWorkspaceManager:
             _validate_no_path_indirection(directory, self.runtime_root)
         required_files = (
             paths.config_file,
-            paths.guest_directory / "bootstrap.ps1",
+            paths.guest_directory / self.bootstrap_destination_name,
             paths.guest_directory / "request.json",
         )
         input_files = tuple(paths.input_directory.iterdir())
