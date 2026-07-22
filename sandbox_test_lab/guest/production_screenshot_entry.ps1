@@ -6,9 +6,11 @@ $PayloadPath = Join-Path $GuestRoot "production_screenshot_self_test.ps1"
 $FailurePath = Join-Path $EvidenceRoot "entry-failure.json"
 $ResultPath = Join-Path $EvidenceRoot "entry-payload-result.json"
 $CanonicalPowerShell = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+$CanonicalShutdown = "C:\Windows\System32\shutdown.exe"
 $ExpectedPayloadHash = "fcce845efe5e54521a57eee79ac845c88db8339797f9a5ecd6d7381f856b110e"
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $RunId = ""
+$EntryExitCode = 1
 
 function Write-AtomicJson {
     param([string] $Path, [object] $Value)
@@ -66,7 +68,7 @@ try {
         exit_code = $PayloadExitCode
         status = $(if ($PayloadExitCode -eq 0) { "passed" } else { "failed" })
     })
-    exit $PayloadExitCode
+    $EntryExitCode = $PayloadExitCode
 }
 catch {
     $Reason = ([string]$_.Exception.Message -replace "[^A-Za-z0-9_]", "_")
@@ -80,5 +82,16 @@ catch {
             reason = $Reason
         })
     } catch { }
-    exit 1
+    $EntryExitCode = 1
 }
+
+# Terminal evidence is complete before the guest requests normal Sandbox shutdown.
+try {
+    $ShutdownInfo = New-Object Diagnostics.ProcessStartInfo
+    $ShutdownInfo.FileName = $CanonicalShutdown
+    $ShutdownInfo.Arguments = "/s /t 0"
+    $ShutdownInfo.UseShellExecute = $false
+    $ShutdownInfo.CreateNoWindow = $true
+    $ShutdownProcess = [Diagnostics.Process]::Start($ShutdownInfo)
+} catch { }
+exit $EntryExitCode

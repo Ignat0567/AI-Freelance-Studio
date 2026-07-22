@@ -17,6 +17,7 @@ from .production_self_test import (
     validate_production_deadline_configuration,
 )
 from .runner import ProcessHandle, complete_owned_sandbox_session, launch_sandbox, utc_now
+from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
 from .screenshot_self_test import (
     ENTRY_SCRIPT_FILENAME,
     ScreenshotEvidenceError,
@@ -51,6 +52,7 @@ class ScreenshotSelfTestRunner:
         poll_interval: float = 0.5,
         utc_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
+        session_factory: Callable[[int, datetime], OwnedSandboxSession] = capture_owned_sandbox_session,
     ):
         self.workspace_manager = workspace_manager or ScreenshotSelfTestWorkspaceManager()
         self.capability_detector = capability_detector
@@ -60,6 +62,7 @@ class ScreenshotSelfTestRunner:
         self.poll_interval = poll_interval
         self.utc_clock = utc_clock
         self.session_guard = session_guard
+        self.session_factory = session_factory
 
     def run(self, request: ScreenshotSelfTestRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         validate_production_deadline_configuration()
@@ -81,20 +84,32 @@ class ScreenshotSelfTestRunner:
         launcher_exit_elapsed_seconds: float | None = None
         launch_started_monotonic: float | None = None
         launcher_cleanup_attempted = False
+        owned_session: OwnedSandboxSession | None = None
 
         def complete_launcher() -> bool:
             nonlocal launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds, launcher_cleanup_attempted
             if process is None or launcher_cleanup_attempted:
-                return process is None or launcher_return_code is not None
+                return process is None or (launcher_return_code is not None and owned_session is not None)
             launcher_cleanup_attempted = True
+            if owned_session is None:
+                errors.append("owned_sandbox_session_identity_missing")
+                return False
             try:
                 launcher_return_code, launcher_exited_at = complete_owned_sandbox_session(
                     process,
+                    session=owned_session,
                     session_guard=self.session_guard,
                     monotonic=self.monotonic,
                     sleeper=self.sleeper,
                 )
             except (WorkspaceError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                observed_code = process.poll()
+                if observed_code is not None and launcher_return_code is None:
+                    launcher_return_code = observed_code
+                    launcher_exited_at = utc_now()
+                    launcher_exit_elapsed_seconds = round(
+                        max(0.0, self.monotonic() - (launch_started_monotonic or started_monotonic)), 3,
+                    )
                 errors.append(f"owned_sandbox_session_cleanup_failed_{type(exc).__name__}")
                 return False
             launcher_exit_elapsed_seconds = round(
@@ -149,8 +164,10 @@ class ScreenshotSelfTestRunner:
                 return self._finish(paths, request.run_id, status, started_at, started_monotonic, "insufficient_execution_budget_before_launch", None, errors, warnings)
             transition(RunStatus.LAUNCHING)
             launch_started_monotonic = self.monotonic()
+            launcher_started_utc = self.utc_clock().astimezone(timezone.utc)
             entry_deadline = min(deadline, launch_started_monotonic + ENTRY_MARKER_TIMEOUT_SECONDS)
             process = self.launcher([capability.executable_path, str(paths.config_file)])
+            owned_session = self.session_factory(process.pid, launcher_started_utc)
             completion = paths.evidence_directory / "completion.json"
             heartbeat = paths.evidence_directory / "heartbeat.json"
             entry_marker = paths.evidence_directory / startup_marker_filename("entry", "entry_script_started")

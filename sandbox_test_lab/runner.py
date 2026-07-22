@@ -12,13 +12,17 @@ from typing import Any, Callable, Protocol, Sequence
 from .capability import detect_sandbox_capability
 from .evidence import EvidenceError, read_heartbeat, validate_completion, validate_guest_evidence
 from .models import RunStatus, SandboxCapability, SandboxRunRequest, SandboxRunResult, validate_transition
+from .sandbox_session import OwnedSandboxSession
 from .workspace import SandboxWorkspaceManager, WorkspaceError, atomic_write_json
 from .wsb_config import WsbConfigError, write_wsb_config
 
 
 logger = logging.getLogger(__name__)
 
-OWNED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS = 15.0
+GUEST_SANDBOX_SHUTDOWN_GRACE_SECONDS = 15.0
+SOFT_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS = 5.0
+FORCED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS = 15.0
+SANDBOX_SESSION_INACTIVE_STABLE_SECONDS = 1.0
 
 
 def utc_now() -> str:
@@ -68,30 +72,51 @@ def _stop_owned_process(process: ProcessHandle) -> None:
 def complete_owned_sandbox_session(
     process: ProcessHandle,
     *,
+    session: OwnedSandboxSession,
     session_guard: Callable[[], None],
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
-    timeout_seconds: float = OWNED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS,
 ) -> tuple[int, str]:
-    """Stop only the retained launcher and wait for its Sandbox session to disappear."""
-    if timeout_seconds <= 0:
-        raise ValueError("owned Sandbox session exit timeout must be positive")
+    """Wait for guest shutdown, then close only the exact client owned by this run."""
+
+    def wait_until_inactive(timeout_seconds: float) -> bool:
+        deadline = monotonic() + timeout_seconds
+        inactive_since: float | None = None
+        while True:
+            try:
+                session_guard()
+            except WorkspaceError as exc:
+                if str(exc) != "active_windows_sandbox_session":
+                    raise
+                inactive_since = None
+            else:
+                if inactive_since is None:
+                    inactive_since = monotonic()
+                if monotonic() - inactive_since >= SANDBOX_SESSION_INACTIVE_STABLE_SECONDS:
+                    return True
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return False
+            stable_remaining = (
+                SANDBOX_SESSION_INACTIVE_STABLE_SECONDS
+                if inactive_since is None
+                else SANDBOX_SESSION_INACTIVE_STABLE_SECONDS - (monotonic() - inactive_since)
+            )
+            sleeper(min(0.25, remaining, max(0.0, stable_remaining)))
+
     _stop_owned_process(process)
     return_code = process.poll()
     if return_code is None:
-        raise RuntimeError("owned Sandbox launcher did not exit")
-    deadline = monotonic() + timeout_seconds
-    while True:
+        raise RuntimeError("Sandbox launcher diagnostic exit was not observed")
+    if not wait_until_inactive(GUEST_SANDBOX_SHUTDOWN_GRACE_SECONDS):
         try:
-            session_guard()
-            break
-        except WorkspaceError as exc:
-            if str(exc) != "active_windows_sandbox_session":
-                raise
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                raise WorkspaceError("owned_windows_sandbox_session_did_not_exit") from exc
-            sleeper(min(0.25, remaining))
+            session.request_close()
+        except WorkspaceError:
+            pass
+        if not wait_until_inactive(SOFT_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS):
+            session.terminate()
+            if not wait_until_inactive(FORCED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS):
+                raise WorkspaceError("owned_windows_sandbox_session_did_not_exit")
     return return_code, utc_now()
 
 

@@ -25,6 +25,7 @@ from .production_self_test import (
     ensure_no_active_windows_sandbox_session,
 )
 from .runner import ProcessHandle, complete_owned_sandbox_session, launch_sandbox, utc_now
+from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
 from .screenshot_runner import ENTRY_MARKER_TIMEOUT_SECONDS, PAYLOAD_ENTRY_TIMEOUT_SECONDS
 from .screenshot_self_test import (
     ENTRY_SCRIPT_FILENAME,
@@ -192,6 +193,7 @@ class PayloadLoadProbeRunner:
         sleeper: Callable[[float], None] = time.sleep,
         utc_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
+        session_factory: Callable[[int, datetime], OwnedSandboxSession] = capture_owned_sandbox_session,
     ):
         self.workspace_manager = workspace_manager
         self.capability_detector = capability_detector
@@ -200,6 +202,7 @@ class PayloadLoadProbeRunner:
         self.sleeper = sleeper
         self.utc_clock = utc_clock
         self.session_guard = session_guard
+        self.session_factory = session_factory
 
     def run(self, request: SandboxRunRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         started_at = utc_now()
@@ -214,20 +217,30 @@ class PayloadLoadProbeRunner:
         process: ProcessHandle | None = None
         launch_started: float | None = None
         cleanup_attempted = False
+        owned_session: OwnedSandboxSession | None = None
 
         def complete_launcher() -> tuple[bool, str | None]:
             nonlocal broker_code, broker_exited_at, broker_elapsed, cleanup_attempted
             if process is None or cleanup_attempted:
-                return process is None or broker_code is not None, None
+                complete = process is None or (broker_code is not None and owned_session is not None)
+                return complete, None
             cleanup_attempted = True
+            if owned_session is None:
+                return False, "owned_sandbox_session_identity_missing"
             try:
                 broker_code, broker_exited_at = complete_owned_sandbox_session(
                     process,
+                    session=owned_session,
                     session_guard=self.session_guard,
                     monotonic=self.monotonic,
                     sleeper=self.sleeper,
                 )
             except (OSError, RuntimeError, ValueError) as exc:
+                observed_code = process.poll()
+                if observed_code is not None and broker_code is None:
+                    broker_code = observed_code
+                    broker_exited_at = utc_now()
+                    broker_elapsed = round(max(0.0, self.monotonic() - (launch_started or started)), 3)
                 return False, f"owned_sandbox_session_cleanup_failed_{type(exc).__name__}"
             broker_elapsed = round(max(0.0, self.monotonic() - (launch_started or started)), 3)
             return True, None
@@ -260,10 +273,12 @@ class PayloadLoadProbeRunner:
             if cancellation is not None and cancellation.is_set():
                 return self._result(request.run_id, RunStatus.CANCELLED, started_at, started, "cancelled_before_launch", ())
             launch_started = self.monotonic()
+            launcher_started_utc = self.utc_clock().astimezone(timezone.utc)
             entry_deadline = launch_started + ENTRY_MARKER_TIMEOUT_SECONDS
             overall_deadline = launch_started + PAYLOAD_LOAD_PROBE_TIMEOUT_SECONDS
             payload_deadline = None
             process = self.launcher([capability.executable_path, str(paths.config_file)])
+            owned_session = self.session_factory(process.pid, launcher_started_utc)
             entry_marker = paths.evidence_directory / startup_marker_filename("entry", "entry_script_started")
             payload_marker = paths.evidence_directory / startup_marker_filename("payload", "payload_interpreter_entered")
             completion = paths.evidence_directory / PAYLOAD_LOAD_PROBE_COMPLETION
