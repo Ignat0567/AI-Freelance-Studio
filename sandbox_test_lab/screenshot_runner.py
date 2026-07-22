@@ -11,8 +11,12 @@ from typing import Callable, Sequence
 from .capability import detect_sandbox_capability
 from .models import RunStatus, SandboxCapability, SandboxRunResult, validate_transition
 from .production_runner import TERMINAL_EVIDENCE_GRACE_SECONDS
-from .production_self_test import HOST_TERMINAL_EVIDENCE_MARGIN_SECONDS, validate_production_deadline_configuration
-from .runner import ProcessHandle, _stop_owned_process, launch_sandbox, utc_now
+from .production_self_test import (
+    HOST_TERMINAL_EVIDENCE_MARGIN_SECONDS,
+    ensure_no_active_windows_sandbox_session,
+    validate_production_deadline_configuration,
+)
+from .runner import ProcessHandle, complete_owned_sandbox_session, launch_sandbox, utc_now
 from .screenshot_self_test import (
     ENTRY_SCRIPT_FILENAME,
     ScreenshotEvidenceError,
@@ -35,13 +39,6 @@ ENTRY_MARKER_TIMEOUT_SECONDS = 30.0
 PAYLOAD_ENTRY_TIMEOUT_SECONDS = 30.0
 
 
-def _stop_broker(process: ProcessHandle, warnings: list[str]) -> None:
-    try:
-        _stop_owned_process(process)
-    except (OSError, subprocess.SubprocessError) as exc:
-        warnings.append(f"owned_sandbox_broker_cleanup_failed_{type(exc).__name__}")
-
-
 class ScreenshotSelfTestRunner:
     def __init__(
         self,
@@ -53,6 +50,7 @@ class ScreenshotSelfTestRunner:
         sleeper: Callable[[float], None] = time.sleep,
         poll_interval: float = 0.5,
         utc_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
     ):
         self.workspace_manager = workspace_manager or ScreenshotSelfTestWorkspaceManager()
         self.capability_detector = capability_detector
@@ -61,6 +59,7 @@ class ScreenshotSelfTestRunner:
         self.sleeper = sleeper
         self.poll_interval = poll_interval
         self.utc_clock = utc_clock
+        self.session_guard = session_guard
 
     def run(self, request: ScreenshotSelfTestRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         validate_production_deadline_configuration()
@@ -80,6 +79,35 @@ class ScreenshotSelfTestRunner:
         launcher_return_code: int | None = None
         launcher_exited_at: str | None = None
         launcher_exit_elapsed_seconds: float | None = None
+        launch_started_monotonic: float | None = None
+        launcher_cleanup_attempted = False
+
+        def complete_launcher() -> bool:
+            nonlocal launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds, launcher_cleanup_attempted
+            if process is None or launcher_cleanup_attempted:
+                return process is None or launcher_return_code is not None
+            launcher_cleanup_attempted = True
+            try:
+                launcher_return_code, launcher_exited_at = complete_owned_sandbox_session(
+                    process,
+                    session_guard=self.session_guard,
+                    monotonic=self.monotonic,
+                    sleeper=self.sleeper,
+                )
+            except (WorkspaceError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                errors.append(f"owned_sandbox_session_cleanup_failed_{type(exc).__name__}")
+                return False
+            launcher_exit_elapsed_seconds = round(
+                max(0.0, self.monotonic() - (launch_started_monotonic or started_monotonic)), 3,
+            )
+            return True
+
+        def finish(reason: str, evidence_path: str | None = None) -> SandboxRunResult:
+            complete_launcher()
+            return self._finish(
+                paths, request.run_id, status, started_at, started_monotonic, reason, evidence_path,
+                errors, warnings, launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
+            )
 
         def transition(target: RunStatus) -> None:
             nonlocal status
@@ -137,9 +165,8 @@ class ScreenshotSelfTestRunner:
             while True:
                 if cancellation is not None and cancellation.is_set():
                     transition(RunStatus.CANCELLED)
-                    _stop_broker(process, warnings)
                     warnings.append("sandbox_broker_termination_does_not_prove_guest_tree_termination")
-                    return self._finish(paths, request.run_id, status, started_at, started_monotonic, "cancelled", None, errors, warnings)
+                    return finish("cancelled")
                 validate_partial_screenshot_evidence_directory(paths.evidence_directory)
                 if entry_marker.is_file():
                     read_startup_marker(entry_marker, request.run_id, allow_pending_run_id=True)
@@ -169,36 +196,24 @@ class ScreenshotSelfTestRunner:
                     terminal_reason = reason_map.get(failure_reason, "entry_script_failed")
                     transition(RunStatus.INFRASTRUCTURE_ERROR)
                     errors.append(str(failure_reason or "entry_script_failed"))
-                    return self._finish(
-                        paths, request.run_id, status, started_at, started_monotonic,
-                        terminal_reason, None, errors, warnings,
-                        launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
-                    )
+                    return finish(terminal_reason)
                 if initialization_failure.is_file():
                     failure = read_payload_initialization_failure(initialization_failure, request.run_id)
                     transition(RunStatus.INFRASTRUCTURE_ERROR)
                     errors.append(f"payload_initialization_failed_{failure['stage']}")
-                    return self._finish(
-                        paths, request.run_id, status, started_at, started_monotonic,
-                        "payload_initialization_failed", None, errors, warnings,
-                        launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
-                    )
+                    return finish("payload_initialization_failed")
                 if entry_payload_result_exists(payload_result):
                     early_result = read_entry_payload_result(payload_result, request.run_id)
                     if not payload_seen or early_result["exit_code"] != 0:
                         terminal_reason = "payload_process_exited_before_entry" if not payload_seen else "payload_parse_or_start_failure"
                         transition(RunStatus.INFRASTRUCTURE_ERROR)
                         errors.append(terminal_reason)
-                        return self._finish(
-                            paths, request.run_id, status, started_at, started_monotonic,
-                            terminal_reason, None, errors, warnings,
-                            launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
-                        )
+                        return finish(terminal_reason)
                 if completion.is_file():
                     if self.monotonic() >= deadline:
                         transition(RunStatus.TIMED_OUT)
-                        _stop_broker(process, warnings)
-                        return self._finish(paths, request.run_id, status, started_at, started_monotonic, "timeout", None, [*errors, "screenshot_completion_after_deadline"], warnings)
+                        errors.append("screenshot_completion_after_deadline")
+                        return finish("timeout")
                     validated = validate_screenshot_evidence_directory(
                         paths.evidence_directory,
                         request.run_id,
@@ -207,16 +222,18 @@ class ScreenshotSelfTestRunner:
                     )
                     if self.monotonic() >= deadline:
                         transition(RunStatus.TIMED_OUT)
-                        _stop_broker(process, warnings)
                         errors.append("screenshot_evidence_validation_exceeded_host_deadline")
-                        return self._finish(paths, request.run_id, status, started_at, started_monotonic, "timeout", None, errors, warnings)
+                        return finish("timeout")
                     # Written only after PNG validation and Phase 3A cleanup validation both succeeded.
                     snapshot = paths.logs_directory / "validated-screenshot-evidence.json"
                     write_validated_screenshot_snapshot(snapshot, validated)
                     if status is RunStatus.LAUNCHING:
                         transition(RunStatus.RUNNING)
+                    if not complete_launcher():
+                        transition(RunStatus.INFRASTRUCTURE_ERROR)
+                        return finish("sandbox_session_cleanup_failed", str(snapshot))
                     transition(RunStatus.PASSED)
-                    return self._finish(paths, request.run_id, status, started_at, started_monotonic, "production_window_screenshot_validated", str(snapshot), errors, warnings)
+                    return finish("production_window_screenshot_validated", str(snapshot))
                 if heartbeat.is_file():
                     try:
                         heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
@@ -230,7 +247,7 @@ class ScreenshotSelfTestRunner:
                         elif self.monotonic() - terminal_heartbeat_seen_at >= TERMINAL_EVIDENCE_GRACE_SECONDS:
                             transition(RunStatus.INFRASTRUCTURE_ERROR)
                             errors.append("terminal_evidence_missing_after_completed_heartbeat")
-                            return self._finish(paths, request.run_id, status, started_at, started_monotonic, "terminal_evidence_missing_after_completed_heartbeat", None, errors, warnings)
+                            return finish("terminal_evidence_missing_after_completed_heartbeat")
                 return_code = process.poll()
                 if return_code is not None and launcher_return_code is None:
                     launcher_return_code = return_code
@@ -255,48 +272,39 @@ class ScreenshotSelfTestRunner:
                         "broker_exit_elapsed_seconds": launcher_exit_elapsed_seconds,
                     }
                     atomic_write_json(paths.logs_directory / "startup-diagnostics.json", diagnostics)
-                    return self._finish(
-                        paths, request.run_id, status, started_at, started_monotonic,
-                        "logon_command_not_observed", None, errors, warnings,
-                        launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
-                    )
+                    return finish("logon_command_not_observed")
                 if entry_seen and not payload_seen and payload_deadline is not None and self.monotonic() >= payload_deadline:
                     transition(RunStatus.INFRASTRUCTURE_ERROR)
                     terminal_reason = "payload_start_timeout"
                     if not payload_process_started.is_file():
                         terminal_reason = "entry_script_failed"
                     errors.append("payload_interpreter_entered_marker_absent")
-                    return self._finish(
-                        paths, request.run_id, status, started_at, started_monotonic,
-                        terminal_reason, None, errors, warnings,
-                        launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
-                    )
+                    return finish(terminal_reason)
                 if self.monotonic() >= deadline:
                     transition(RunStatus.TIMED_OUT)
-                    _stop_broker(process, warnings)
                     warnings.append("sandbox_broker_termination_does_not_prove_guest_tree_termination")
-                    return self._finish(paths, request.run_id, status, started_at, started_monotonic, "timeout", None, errors, warnings)
+                    return finish("timeout")
                 self.sleeper(self.poll_interval)
         except KeyboardInterrupt:
             if status in {RunStatus.CREATED, RunStatus.LAUNCHING, RunStatus.RUNNING}:
                 transition(RunStatus.CANCELLED)
             if process is not None:
-                _stop_broker(process, warnings)
-            return self._finish(paths, request.run_id, status, started_at, started_monotonic, "keyboard_interrupt", None, errors, warnings)
+                complete_launcher()
+            return finish("keyboard_interrupt")
         except ScreenshotEvidenceError as exc:
             errors.append(str(exc))
             if status in {RunStatus.LAUNCHING, RunStatus.RUNNING}:
                 transition(RunStatus.FAILED)
             if process is not None:
-                _stop_broker(process, warnings)
-            return self._finish(paths, request.run_id, status, started_at, started_monotonic, "invalid_screenshot_evidence", None, errors, warnings)
+                complete_launcher()
+            return finish("invalid_screenshot_evidence")
         except (WorkspaceError, WsbConfigError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append(str(exc))
             if status in {RunStatus.CREATED, RunStatus.LAUNCHING, RunStatus.RUNNING}:
                 transition(RunStatus.INFRASTRUCTURE_ERROR)
             if process is not None:
-                _stop_broker(process, warnings)
-            return self._finish(paths, request.run_id, status, started_at, started_monotonic, "infrastructure_error", None, errors, warnings)
+                complete_launcher()
+            return finish("infrastructure_error")
 
     def _result(self, run_id, status, started_at, started_monotonic, reason, evidence_path, errors, warnings, launcher_return_code=None, launcher_exited_at=None, launcher_exit_elapsed_seconds=None):
         return SandboxRunResult(

@@ -18,6 +18,8 @@ from .wsb_config import WsbConfigError, write_wsb_config
 
 logger = logging.getLogger(__name__)
 
+OWNED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS = 15.0
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -61,6 +63,36 @@ def _stop_owned_process(process: ProcessHandle) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
+
+
+def complete_owned_sandbox_session(
+    process: ProcessHandle,
+    *,
+    session_guard: Callable[[], None],
+    monotonic: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+    timeout_seconds: float = OWNED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS,
+) -> tuple[int, str]:
+    """Stop only the retained launcher and wait for its Sandbox session to disappear."""
+    if timeout_seconds <= 0:
+        raise ValueError("owned Sandbox session exit timeout must be positive")
+    _stop_owned_process(process)
+    return_code = process.poll()
+    if return_code is None:
+        raise RuntimeError("owned Sandbox launcher did not exit")
+    deadline = monotonic() + timeout_seconds
+    while True:
+        try:
+            session_guard()
+            break
+        except WorkspaceError as exc:
+            if str(exc) != "active_windows_sandbox_session":
+                raise
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise WorkspaceError("owned_windows_sandbox_session_did_not_exit") from exc
+            sleeper(min(0.25, remaining))
+    return return_code, utc_now()
 
 
 class SandboxRunner:

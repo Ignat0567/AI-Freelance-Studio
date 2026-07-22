@@ -18,6 +18,8 @@ The host allows 30 seconds from launch for the entry marker and at most 30 addit
 
 The host snapshot is written atomically only after normative terminal, screenshot, production, and cleanup validation succeeds. A diagnostic result published after that race cannot revise or replace the already validated snapshot.
 
+After terminal evidence has been completely validated and the host snapshot has been atomically published, the host terminates only the retained `WindowsSandbox.exe` launcher using the canonical owned-process lifecycle. It then waits up to 15 seconds for that launcher to exit and for the existing active-session guard to report no Sandbox server or remote session. Success is not returned until a launcher return code and exit timing are recorded. The same bounded cleanup runs after malformed evidence, nonzero payload results, timeout, cancellation, and handled exceptions; it never uses process-name cleanup or terminates an unretained launcher.
+
 ## Capture Gate
 
 Capture is blocked unless all of these are true:

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import threading
 import time
 from typing import Callable, Sequence
 
@@ -23,7 +24,7 @@ from .production_self_test import (
     TRUSTED_PROFILE_NAME,
     ensure_no_active_windows_sandbox_session,
 )
-from .runner import ProcessHandle, launch_sandbox, utc_now
+from .runner import ProcessHandle, complete_owned_sandbox_session, launch_sandbox, utc_now
 from .screenshot_runner import ENTRY_MARKER_TIMEOUT_SECONDS, PAYLOAD_ENTRY_TIMEOUT_SECONDS
 from .screenshot_self_test import (
     ENTRY_SCRIPT_FILENAME,
@@ -190,6 +191,7 @@ class PayloadLoadProbeRunner:
         monotonic: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
         utc_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
     ):
         self.workspace_manager = workspace_manager
         self.capability_detector = capability_detector
@@ -197,8 +199,9 @@ class PayloadLoadProbeRunner:
         self.monotonic = monotonic
         self.sleeper = sleeper
         self.utc_clock = utc_clock
+        self.session_guard = session_guard
 
-    def run(self, request: SandboxRunRequest) -> SandboxRunResult:
+    def run(self, request: SandboxRunRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         started_at = utc_now()
         started = self.monotonic()
         capability = self.capability_detector()
@@ -208,7 +211,42 @@ class PayloadLoadProbeRunner:
         broker_code = None
         broker_exited_at = None
         broker_elapsed = None
+        process: ProcessHandle | None = None
+        launch_started: float | None = None
+        cleanup_attempted = False
+
+        def complete_launcher() -> tuple[bool, str | None]:
+            nonlocal broker_code, broker_exited_at, broker_elapsed, cleanup_attempted
+            if process is None or cleanup_attempted:
+                return process is None or broker_code is not None, None
+            cleanup_attempted = True
+            try:
+                broker_code, broker_exited_at = complete_owned_sandbox_session(
+                    process,
+                    session_guard=self.session_guard,
+                    monotonic=self.monotonic,
+                    sleeper=self.sleeper,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                return False, f"owned_sandbox_session_cleanup_failed_{type(exc).__name__}"
+            broker_elapsed = round(max(0.0, self.monotonic() - (launch_started or started)), 3)
+            return True, None
+
+        def finish(
+            reason: str,
+            *,
+            error: str | None = None,
+            status: RunStatus = RunStatus.INFRASTRUCTURE_ERROR,
+        ) -> SandboxRunResult:
+            _, cleanup_error = complete_launcher()
+            return self._finish(
+                paths, request, started_at, started, reason, broker_code, broker_exited_at, broker_elapsed,
+                error=cleanup_error or error, status=status,
+            )
+
         try:
+            if cancellation is not None and cancellation.is_set():
+                return self._result(request.run_id, RunStatus.CANCELLED, started_at, started, "cancelled_before_launch", ())
             paths, artifact, digest = self.workspace_manager.create(request)
             guest_deadline = (
                 self.utc_clock().astimezone(timezone.utc)
@@ -219,6 +257,8 @@ class PayloadLoadProbeRunner:
             )
             write_wsb_config(paths, network_enabled=False, bootstrap_command=SCREENSHOT_ENTRY_COMMAND)
             self.workspace_manager.validate_for_launch(request, paths)
+            if cancellation is not None and cancellation.is_set():
+                return self._result(request.run_id, RunStatus.CANCELLED, started_at, started, "cancelled_before_launch", ())
             launch_started = self.monotonic()
             entry_deadline = launch_started + ENTRY_MARKER_TIMEOUT_SECONDS
             overall_deadline = launch_started + PAYLOAD_LOAD_PROBE_TIMEOUT_SECONDS
@@ -230,6 +270,8 @@ class PayloadLoadProbeRunner:
             initialization_failure = paths.evidence_directory / "payload-initialization-failure.json"
             payload_result = paths.evidence_directory / "entry-payload-result.json"
             while self.monotonic() < overall_deadline:
+                if cancellation is not None and cancellation.is_set():
+                    return finish("cancelled", status=RunStatus.CANCELLED)
                 if entry_marker.is_file() and payload_deadline is None:
                     read_startup_marker(entry_marker, request.run_id, allow_pending_run_id=True)
                     payload_deadline = min(overall_deadline, self.monotonic() + PAYLOAD_ENTRY_TIMEOUT_SECONDS)
@@ -237,19 +279,15 @@ class PayloadLoadProbeRunner:
                     read_startup_marker(payload_marker, request.run_id)
                 if initialization_failure.is_file():
                     failure = read_payload_initialization_failure(initialization_failure, request.run_id)
-                    return self._finish(
-                        paths, request, started_at, started,
-                        "payload_initialization_failed", broker_code, broker_exited_at, broker_elapsed,
+                    return finish(
+                        "payload_initialization_failed",
                         error=f"payload_initialization_failed_{failure['stage']}",
                     )
                 if entry_payload_result_exists(payload_result):
                     result_payload = read_entry_payload_result(payload_result, request.run_id)
                     if not payload_marker.is_file() or result_payload["exit_code"] != 0:
                         reason = "payload_process_exited_before_entry" if not payload_marker.is_file() else "payload_initialization_failed"
-                        return self._finish(
-                            paths, request, started_at, started, reason,
-                            broker_code, broker_exited_at, broker_elapsed,
-                        )
+                        return finish(reason)
                 try:
                     completion.lstat()
                 except FileNotFoundError:
@@ -260,7 +298,16 @@ class PayloadLoadProbeRunner:
                     timeline = self._validate_timeline(paths.evidence_directory, request.run_id)
                     snapshot = paths.logs_directory / "validated-payload-load-timeline.json"
                     atomic_write_json(snapshot, {"schema_version": 1, "run_id": request.run_id, "timeline": timeline})
-                    result = self._result(request.run_id, RunStatus.PASSED, started_at, started, "payload_load_probe_completed", ())
+                    cleanup_ok, cleanup_error = complete_launcher()
+                    if not cleanup_ok:
+                        return self._finish(
+                            paths, request, started_at, started, "sandbox_session_cleanup_failed",
+                            broker_code, broker_exited_at, broker_elapsed, error=cleanup_error,
+                        )
+                    result = self._result(
+                        request.run_id, RunStatus.PASSED, started_at, started, "payload_load_probe_completed", (),
+                        broker_code, broker_exited_at, broker_elapsed,
+                    )
                     atomic_write_json(paths.run_root / "host-result.json", result.to_dict())
                     return result
                 code = process.poll()
@@ -269,13 +316,18 @@ class PayloadLoadProbeRunner:
                     broker_exited_at = utc_now()
                     broker_elapsed = round(self.monotonic() - launch_started, 3)
                 if payload_deadline is None and self.monotonic() >= entry_deadline:
-                    return self._finish(paths, request, started_at, started, "logon_command_not_observed", broker_code, broker_exited_at, broker_elapsed)
+                    return finish("logon_command_not_observed")
                 if payload_deadline is not None and not payload_marker.is_file() and self.monotonic() >= payload_deadline:
-                    return self._finish(paths, request, started_at, started, "payload_start_timeout", broker_code, broker_exited_at, broker_elapsed)
+                    return finish("payload_start_timeout")
                 self.sleeper(0.25)
-            return self._finish(paths, request, started_at, started, "payload_load_probe_timeout", broker_code, broker_exited_at, broker_elapsed)
+            return finish("payload_load_probe_timeout")
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            result = self._result(request.run_id, RunStatus.INFRASTRUCTURE_ERROR, started_at, started, "infrastructure_error", (str(exc),))
+            _, cleanup_error = complete_launcher()
+            result = self._result(
+                request.run_id, RunStatus.INFRASTRUCTURE_ERROR, started_at, started, "infrastructure_error",
+                tuple(item for item in (str(exc), cleanup_error) if item),
+                broker_code, broker_exited_at, broker_elapsed,
+            )
             if paths is not None:
                 atomic_write_json(paths.run_root / "host-result.json", result.to_dict())
             return result
@@ -301,9 +353,12 @@ class PayloadLoadProbeRunner:
             raise WorkspaceError("payload load probe completion precedes its startup timeline")
         return timeline
 
-    def _finish(self, paths, request, started_at, started, reason, broker_code, broker_exited_at, broker_elapsed, *, error=None):
+    def _finish(
+        self, paths, request, started_at, started, reason, broker_code, broker_exited_at,
+        broker_elapsed, *, error=None, status=RunStatus.INFRASTRUCTURE_ERROR,
+    ):
         result = self._result(
-            request.run_id, RunStatus.INFRASTRUCTURE_ERROR, started_at, started, reason, (error or reason,),
+            request.run_id, status, started_at, started, reason, (error or reason,),
             broker_code, broker_exited_at, broker_elapsed,
         )
         atomic_write_json(paths.run_root / "host-result.json", result.to_dict())

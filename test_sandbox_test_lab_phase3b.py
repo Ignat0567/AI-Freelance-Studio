@@ -8,12 +8,14 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+import threading
 import zlib
 
 import pytest
 
 import sandbox_test_lab.production_self_test as production_module
 import sandbox_test_lab.payload_load_probe as payload_probe_module
+import sandbox_test_lab.runner as runner_module
 import sandbox_test_lab.screenshot_runner as screenshot_runner_module
 import sandbox_test_lab.screenshot_self_test as screenshot_module
 import test_sandbox_test_lab_phase3b_external as external_module
@@ -221,15 +223,23 @@ class _Clock:
 
 
 class _Process:
-    def __init__(self, return_code=None):
+    def __init__(self, return_code=None, on_terminate=None):
         self.return_code = return_code
+        self.on_terminate = on_terminate
         self.terminate_calls = 0
         self.kill_calls = 0
 
     def poll(self): return self.return_code
-    def terminate(self): self.terminate_calls += 1; self.return_code = 0
+    def terminate(self):
+        if self.on_terminate is not None: self.on_terminate()
+        self.terminate_calls += 1; self.return_code = 0
     def kill(self): self.kill_calls += 1; self.return_code = 0
     def wait(self, timeout=None): return self.return_code or 0
+
+
+def _no_active_session_for(process: _Process) -> None:
+    if process.poll() is None:
+        raise WorkspaceError("active_windows_sandbox_session")
 
 
 def test_exact_contract_filename_and_fields(tmp_path):
@@ -764,7 +774,8 @@ def test_payload_marker_absent_times_out_without_restarting_host_deadline(tmp_pa
     assert result.status == RunStatus.INFRASTRUCTURE_ERROR
     assert result.exit_reason == "payload_start_timeout"
     assert result.duration_seconds == 59.0
-    assert process.terminate_calls == 0
+    assert process.terminate_calls == 1
+    assert result.launcher_return_code == 0
 
 
 def test_payload_process_exit_before_entry_is_immediate(tmp_path, monkeypatch):
@@ -840,7 +851,33 @@ def test_zero_exit_result_before_completion_cannot_authorize_success(tmp_path, m
     ).run(request)
     assert result.status == RunStatus.TIMED_OUT
     assert result.exit_reason == "timeout"
+    assert result.launcher_return_code == 0
+    assert process.terminate_calls == 1
     assert not (manager.paths_for(request.run_id).logs_directory / "validated-screenshot-evidence.json").exists()
+
+
+def test_production_runner_cancellation_cleans_owned_session(tmp_path, monkeypatch):
+    request = _request(tmp_path, monkeypatch)
+    manager = ScreenshotSelfTestWorkspaceManager(tmp_path / "runtime")
+    process = _Process()
+    cancellation = threading.Event()
+
+    def sleep(seconds):
+        cancellation.set()
+
+    result = ScreenshotSelfTestRunner(
+        workspace_manager=manager,
+        capability_detector=_capability,
+        launcher=lambda argv: process,
+        sleeper=sleep,
+        session_guard=lambda: _no_active_session_for(process),
+    ).run(request, cancellation)
+
+    assert result.status == RunStatus.CANCELLED
+    assert result.exit_reason == "cancelled"
+    assert result.launcher_return_code == 0
+    assert process.terminate_calls == 1
+    _no_active_session_for(process)
 
 
 def test_payload_initialization_failure_reports_exact_stage(tmp_path, monkeypatch):
@@ -1024,8 +1061,47 @@ def test_full_payload_load_probe_runner_validates_terminal_entry_result(
     if expected_status == RunStatus.PASSED:
         timeline = json.loads(snapshot.read_text(encoding="utf-8"))
         assert [item["stage"] for item in timeline["timeline"]] == [*ENTRY_STARTUP_STAGES, *PROBE_PAYLOAD_STAGES]
+        assert result.launcher_return_code == 0
+        assert process.terminate_calls == 1
+        _no_active_session_for(process)
     else:
         assert not snapshot.exists()
+
+
+def test_payload_probe_timeout_and_cancellation_cleanup_owned_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(payload_probe_module, "ensure_no_active_windows_sandbox_session", lambda: None)
+
+    for cancelled in (False, True):
+        request = payload_load_probe_request()
+        manager = PayloadLoadProbeWorkspaceManager(tmp_path / str(cancelled) / "runtime")
+        process = _Process()
+        clock = _Clock()
+        cancellation = threading.Event()
+
+        def sleep(seconds):
+            clock.value += 100 if not cancelled else seconds
+            if cancelled:
+                cancellation.set()
+
+        result = PayloadLoadProbeRunner(
+            workspace_manager=manager,
+            capability_detector=_capability,
+            launcher=lambda argv: process,
+            monotonic=clock,
+            sleeper=sleep,
+            session_guard=lambda: _no_active_session_for(process),
+        ).run(request, cancellation)
+
+        assert result.status == (RunStatus.CANCELLED if cancelled else RunStatus.INFRASTRUCTURE_ERROR)
+        assert result.exit_reason == ("cancelled" if cancelled else "payload_load_probe_timeout")
+        assert result.launcher_return_code == 0
+        assert process.terminate_calls == 1
+        _no_active_session_for(process)
+
+
+def test_phase3b_runners_share_canonical_owned_session_lifecycle_contract():
+    assert screenshot_runner_module.complete_owned_sandbox_session is runner_module.complete_owned_sandbox_session
+    assert payload_probe_module.complete_owned_sandbox_session is runner_module.complete_owned_sandbox_session
 
 
 def test_payload_probe_plain_pytest_skips_before_sandbox(monkeypatch, tmp_path):
@@ -1048,7 +1124,8 @@ def test_entry_script_is_small_static_and_has_no_raw_command_surface():
 def test_runner_snapshot_has_full_contract_bounds_dpi_summary_and_provenance(tmp_path, monkeypatch):
     request = _request(tmp_path, monkeypatch)
     manager = ScreenshotSelfTestWorkspaceManager(tmp_path / "runtime")
-    process = type("FakeProcess", (), {"poll": lambda self: None, "terminate": lambda self: None, "kill": lambda self: None, "wait": lambda self, timeout=None: 0})()
+    expected_snapshot = manager.paths_for(request.run_id).logs_directory / "validated-screenshot-evidence.json"
+    process = _Process(on_terminate=lambda: expected_snapshot.read_bytes())
     capability = SandboxCapability(supported_os=True, windows_edition="Professional", windows_build=22631, virtualization_available=True, sandbox_feature_state="enabled", executable_found=True, available=True, executable_path=r"C:\Windows\System32\WindowsSandbox.exe", powershell_found=True)
     host_now = datetime.now(timezone.utc)
     host_started = host_now - timedelta(seconds=30)
@@ -1075,8 +1152,12 @@ def test_runner_snapshot_has_full_contract_bounds_dpi_summary_and_provenance(tmp
     result = ScreenshotSelfTestRunner(
         workspace_manager=manager, capability_detector=lambda: capability,
         launcher=launch, utc_clock=lambda: host_started,
+        session_guard=lambda: _no_active_session_for(process),
     ).run(request)
     assert result.status == RunStatus.PASSED, result
+    assert result.launcher_return_code == 0
+    assert process.terminate_calls == 1
+    _no_active_session_for(process)
     assert observed_deadlines == [expected_deadline]
     evidence_directory = manager.paths_for(request.run_id).evidence_directory
     assert not (evidence_directory / "entry-payload-result.json").exists()
@@ -1092,6 +1173,37 @@ def test_runner_snapshot_has_full_contract_bounds_dpi_summary_and_provenance(tmp
         "timestamp": _iso(datetime.now(timezone.utc))[:-1] + "0Z", "exit_code": 0, "status": "passed",
     })
     assert snapshot_path.read_bytes() == snapshot_bytes
+
+
+def test_production_runner_malformed_evidence_cleans_owned_session(tmp_path, monkeypatch):
+    request = _request(tmp_path, monkeypatch)
+    manager = ScreenshotSelfTestWorkspaceManager(tmp_path / "runtime")
+    process = _Process()
+    host_started = datetime.now(timezone.utc) - timedelta(seconds=30)
+    base = host_started + timedelta(seconds=10)
+    expected_deadline = _iso(host_started + timedelta(
+        seconds=request.timeout_seconds - production_module.HOST_TERMINAL_EVIDENCE_MARGIN_SECONDS,
+    ))
+
+    def launch(argv):
+        evidence = Path(argv[1]).parent / "evidence"
+        _evidence(evidence, base=base, production_updates={"guest_terminal_deadline_utc": expected_deadline})
+        (evidence / SCREENSHOT_MANIFEST_FILENAME).write_text('{"duplicate":1,"duplicate":2}', encoding="utf-8")
+        return process
+
+    result = ScreenshotSelfTestRunner(
+        workspace_manager=manager,
+        capability_detector=_capability,
+        launcher=launch,
+        utc_clock=lambda: host_started,
+        session_guard=lambda: _no_active_session_for(process),
+    ).run(request)
+
+    assert result.status == RunStatus.FAILED
+    assert result.exit_reason == "invalid_screenshot_evidence"
+    assert result.launcher_return_code == 0
+    assert process.terminate_calls == 1
+    _no_active_session_for(process)
 
 
 def test_phase3a_gate_does_not_authorize_phase3b(monkeypatch):
