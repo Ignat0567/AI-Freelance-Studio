@@ -52,7 +52,11 @@ def test_app_cors_does_not_combine_wildcard_origins_with_credentials():
     assert options["allow_origins"]
     assert "*" not in options["allow_origins"]
     assert options["allow_methods"] == ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    assert options["allow_headers"] == ["Content-Type", "X-FreelancerStudio-Token"]
+    assert options["allow_headers"] == [
+        "Content-Type",
+        "Idempotency-Key",
+        "X-FreelancerStudio-Token",
+    ]
     assert "808[0-9]" in options["allow_origin_regex"]
 
 

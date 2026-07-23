@@ -13,12 +13,13 @@ The existing routes are classified as follows:
 | Public bootstrap/health | `/`, static assets, `/health`, `/health/owner` | No secret or local state disclosure; owner route proves token possession with HMAC |
 | Authenticated read | `/api/**` GET routes | Token, loopback client, exact active Host |
 | Privileged mutation | `/api/**` POST/PUT/PATCH/DELETE | Read policy plus exact Origin and strict media type |
+| Sandbox Test Lab | `/api/sandbox-test-lab/**` | Common authenticated policy plus mandatory local-only dependency; unavailable for network binds |
 | WebSocket | `/ws/projects/{project_id}/logs` | Token header, loopback client, exact Host and Origin before accept |
 | Legacy unsafe mutation | Multipart uploads and host-control routes | Authenticated; uploads are the only multipart exceptions |
 
 `GET /api/system/open-path` is removed. AI configuration verification is POST because it may regenerate OpenCode configuration. Provider-list reads no longer persist normalization changes.
 
-Local-only capabilities, including future Sandbox Test Lab operations, are unavailable whenever the configured bind address is not an IP loopback address or `localhost`. A hostname that merely resolves to loopback is not trusted for this classification.
+Local-only capabilities, including Sandbox Test Lab operations, are unavailable whenever the configured bind address is not an IP loopback address or `localhost`. A hostname that merely resolves to loopback is not trusted for this classification. Test Lab capability requests in network mode return the existing `403 network_bind_disallowed` policy response rather than an availability document.
 
 ## Threat Model
 

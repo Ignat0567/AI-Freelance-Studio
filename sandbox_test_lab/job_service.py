@@ -5,6 +5,7 @@ from enum import Enum
 import json
 from pathlib import Path
 from threading import Event, RLock, Thread
+from time import monotonic
 from typing import Callable, Protocol
 from uuid import uuid4
 
@@ -198,6 +199,7 @@ class SandboxTestLabJobService:
         self._thread_factory = thread_factory
         self._records: dict[str, _JobRecord] = {}
         self._active_run_id: str | None = None
+        self._accepting = True
         self._lock = RLock()
         self._restore()
 
@@ -208,6 +210,8 @@ class SandboxTestLabJobService:
         if self._adapter_factory is None:
             raise SandboxJobError("sandbox_job_backend_not_configured")
         with self._lock:
+            if not self._accepting:
+                raise SandboxJobError("sandbox_job_service_stopping")
             if self._active_run_id is not None:
                 raise SandboxJobError("sandbox_job_already_active")
             run_id = str(uuid4())
@@ -220,16 +224,19 @@ class SandboxTestLabJobService:
                 SandboxProgress.NOT_STARTED,
             )
             record = _JobRecord(snapshot=snapshot, cancellation=Event())
+            try:
+                worker = self._thread_factory(
+                    target=self._run_job,
+                    args=(run_id,),
+                    name=f"sandbox-test-lab-{run_id}",
+                    daemon=True,
+                )
+            except Exception:
+                raise SandboxJobError("sandbox_job_worker_start_failed") from None
+            record.worker = worker
+            self._save(snapshot)
             self._records[run_id] = record
             self._active_run_id = run_id
-            self._save(snapshot)
-            worker = self._thread_factory(
-                target=self._run_job,
-                args=(run_id,),
-                name=f"sandbox-test-lab-{run_id}",
-                daemon=True,
-            )
-            record.worker = worker
             try:
                 worker.start()
             except Exception:
@@ -288,6 +295,55 @@ class SandboxTestLabJobService:
         if worker is not None:
             worker.join(timeout)
         return self.snapshot(normalized_run_id)
+
+    def shutdown(self, timeout: float = 2.0) -> None:
+        """Stop new jobs and request cooperative cancellation without an unbounded wait."""
+        if timeout < 0:
+            raise ValueError("timeout must not be negative")
+        with self._lock:
+            self._accepting = False
+            record = self._records.get(self._active_run_id) if self._active_run_id else None
+            if record is None or record.snapshot.status in _TERMINAL_JOB_STATUSES:
+                return
+            record.cancellation.set()
+            self._set_status_locked(
+                record,
+                SandboxJobStatus.CANCELLING,
+                SandboxProgress.CANCELLING,
+                manual_close_required=record.snapshot.manual_close_required,
+            )
+            worker = record.worker
+            should_send = (
+                record.adapter is not None
+                and record.backend_run_id is not None
+                and not record.cancel_sent
+            )
+            if should_send:
+                record.cancel_sent = True
+                adapter = record.adapter
+                backend_run_id = record.backend_run_id
+            else:
+                adapter = None
+                backend_run_id = None
+        deadline = monotonic() + timeout
+        cancel_worker = None
+        if adapter is not None and backend_run_id is not None:
+            try:
+                cancel_worker = Thread(
+                    target=self._send_cancel,
+                    args=(record.snapshot.run_id, adapter, backend_run_id),
+                    name=f"sandbox-test-lab-shutdown-{record.snapshot.run_id}",
+                    daemon=True,
+                )
+                cancel_worker.start()
+            except Exception:
+                with self._lock:
+                    if record.snapshot.status not in _TERMINAL_JOB_STATUSES:
+                        record.cancel_sent = False
+                cancel_worker = None
+        for active_worker in (cancel_worker, worker):
+            if active_worker is not None:
+                active_worker.join(max(0.0, deadline - monotonic()))
 
     def _restore(self) -> None:
         for snapshot in self._state_store.load():

@@ -38,6 +38,7 @@ from repair_scope import SUPPORTED_LOCK_FILES, walk_repairable_files
 from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
 from api.accounts import router as accounts_router
 from api.android import router as android_router
+from api.sandbox_test_lab import install_sandbox_test_lab_api, router as sandbox_test_lab_router
 from api.system import router as system_router
 from system_settings import (
     ALLOWED_SYSTEM_KEYS,
@@ -172,12 +173,14 @@ app.add_middleware(
     allow_origin_regex=r"^http://(?:127\.0\.0\.1|localhost):(?:3000|5173|808[0-9]|809[0-9])$",
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-FreelancerStudio-Token"],
+    allow_headers=["Content-Type", "Idempotency-Key", "X-FreelancerStudio-Token"],
 )
 app.add_middleware(LocalSecurityMiddleware)
+install_sandbox_test_lab_api(app)
 
 app.include_router(accounts_router)
 app.include_router(android_router)
+app.include_router(sandbox_test_lab_router)
 app.include_router(system_router)
 
 

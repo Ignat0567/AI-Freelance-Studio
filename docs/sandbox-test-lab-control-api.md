@@ -1,0 +1,38 @@
+# Sandbox Test Lab Control API
+
+## Boundary
+
+All routes require the process bearer token, a loopback client, the exact active Host, and the shared `require_local_only_request` dependency. POST routes also require the existing exact Origin or trusted Electron-main transport policy and `application/json`. Network-bound backends receive `403 network_bind_disallowed`; the API is never available over LAN mode.
+
+The token and ownership internals are headers-only security material and are never accepted or returned in API payloads. Renderer code does not receive the token.
+
+## Routes
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/sandbox-test-lab/capabilities` | Report loopback Test Lab readiness and supported operations |
+| `POST` | `/api/sandbox-test-lab/runs` | Queue one allow-listed operation and return `202` |
+| `GET` | `/api/sandbox-test-lab/runs/{run_id}` | Return an immutable, sanitized run snapshot |
+| `POST` | `/api/sandbox-test-lab/runs/{run_id}/cancel` | Request cooperative cancellation of an owned run |
+
+Run listing is omitted because the Job Service has no bounded retention/listing contract. Evidence retrieval is omitted because the Job Service intentionally does not retain a safe public evidence manifest. The API never accepts paths and does not serve evidence contents.
+
+## Operations And States
+
+The only accepted operations are `production_self_test` and `production_screenshot`, each with a required empty `parameters` object. Commands, PowerShell, executable paths, arguments, environment variables, and arbitrary installer settings are rejected as extra or unknown fields.
+
+Public lifecycle statuses are `queued`, `preparing`, `launching`, `running`, `cancelling`, `succeeded`, `failed`, `cancelled`, and `infrastructure_error`. Internal states are explicitly mapped; raw enum names, backend run IDs, process details, paths, and exception text are not returned.
+
+Cancellation is cooperative. Queued and active runs accept cancellation. Repeated cancellation while cancelling is accepted without another service call, an already cancelled run returns `accepted=false`, and other terminal runs return `409 run_already_terminal`. Completion wins a cancellation race and terminal Job Service states remain absorbing.
+
+## Idempotency
+
+Launch requires one canonical UUID in the `Idempotency-Key` header. Exact retries while the key is retained return the original launch response without starting another job. Reusing a retained key with a different strict payload returns `409 idempotency_conflict`. The process-local registry retains the 256 most recent keys, so clients must not retry an evicted request; it is not authorization or persistent identity.
+
+## Availability And Execution
+
+Capability reasons are stable and limited to `test_lab_disabled`, `sandbox_capability_unavailable`, and `job_service_unavailable`. Capability detection reuses the existing Windows Sandbox checks and does not launch Sandbox.
+
+The application-owned Job Service is default-off and has no production runner bridge in this phase. Tests inject deterministic offline services. Existing explicit external-execution opt-ins remain unchanged; the control API does not enable them, mutate environment variables, or run Windows Sandbox, Store CLI, installers, packaging, or signing by itself.
+
+Known limits are deliberate: there is one active run, no history API, no evidence download, no arbitrary executor, and no full Electron Test Lab UI. Shutdown waits are bounded and cancellation remains cooperative; an already blocked serialized runner call can delay backend cancellation delivery until that call returns.
