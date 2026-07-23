@@ -13,6 +13,15 @@ const {
     isAllowedStudioNavigation,
     isAllowedDownloadSender,
 } = require('./official-downloads');
+const { authorizeRendererRequest } = require('./backend-request-policy');
+const {
+    ALLOWED_OPERATIONS,
+    isCanonicalUuid,
+    getSandboxTestLabCapabilities,
+    launchSandboxTestLabRun,
+    getSandboxTestLabRun,
+    cancelSandboxTestLabRun,
+} = require('./sandbox-test-lab-transport');
 
 let mainWindow = null;
 let backendProcess = null;
@@ -26,6 +35,8 @@ let backendLaunchId = '';
 let backendDescriptor = null;
 let backendHost = '127.0.0.1';
 let requestAuthorizationConfigured = false;
+const sandboxLaunchInstances = new Map();
+const MAX_SANDBOX_LAUNCH_INSTANCES = 256;
 
 ipcMain.handle('open-official-download', async (event, downloadId) => {
     if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) {
@@ -46,6 +57,58 @@ ipcMain.handle('get-app-version', (event) => {
     if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) return '';
     return app.getVersion();
 });
+
+function sandboxTestLabBackendContext() {
+    return {
+        ready: Boolean(backendProcess && backendOwnedByElectron && backendDescriptor && backendToken),
+        restarting: backendStarting,
+        host: backendHost,
+        port: backendDescriptor?.port,
+        token: backendToken,
+    };
+}
+
+function trustedSandboxTestLabCall(event, callback) {
+    if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) {
+        return { ok: false, status: 0, error: { code: 'untrusted_renderer' } };
+    }
+    return callback(sandboxTestLabBackendContext());
+}
+
+ipcMain.handle('sandbox-test-lab-capabilities', event => (
+    trustedSandboxTestLabCall(event, getSandboxTestLabCapabilities)
+));
+
+ipcMain.handle('sandbox-test-lab-launch', (event, operation, idempotencyKey) => (
+    trustedSandboxTestLabCall(
+        event,
+        context => {
+            if (!ALLOWED_OPERATIONS.has(operation) || !isCanonicalUuid(idempotencyKey)) {
+                return launchSandboxTestLabRun(context, operation, idempotencyKey);
+            }
+            const instanceId = backendDescriptor?.instance_id;
+            const existingInstance = sandboxLaunchInstances.get(idempotencyKey);
+            if (existingInstance && existingInstance !== instanceId) {
+                return { ok: false, status: 0, error: { code: 'backend_restarted' } };
+            }
+            if (!existingInstance && typeof instanceId === 'string') {
+                sandboxLaunchInstances.set(idempotencyKey, instanceId);
+                while (sandboxLaunchInstances.size > MAX_SANDBOX_LAUNCH_INSTANCES) {
+                    sandboxLaunchInstances.delete(sandboxLaunchInstances.keys().next().value);
+                }
+            }
+            return launchSandboxTestLabRun(context, operation, idempotencyKey);
+        },
+    )
+));
+
+ipcMain.handle('sandbox-test-lab-status', (event, runId) => (
+    trustedSandboxTestLabCall(event, context => getSandboxTestLabRun(context, runId))
+));
+
+ipcMain.handle('sandbox-test-lab-cancel', (event, runId) => (
+    trustedSandboxTestLabCall(event, context => cancelSandboxTestLabRun(context, runId))
+));
 
 function appendBoundedLog(prefix, chunk) {
     const text = String(chunk || '')
@@ -340,34 +403,15 @@ async function createWindow(backendPort) {
 
     if (!requestAuthorizationConfigured) {
         mainWindow.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
-            const requestHeaders = { ...details.requestHeaders };
-            for (const name of Object.keys(requestHeaders)) {
-                if (name.toLowerCase() === 'x-freelancerstudio-token') delete requestHeaders[name];
-            }
-            let target;
-            try {
-                target = new URL(details.url);
-            } catch (error) {
-                callback({ requestHeaders });
-                return;
-            }
-            const targetBackendOrigin = target.protocol === 'ws:'
-                ? `http://${target.host}`
-                : target.origin;
-            const trustedTarget = details.webContentsId === mainWindow?.webContents.id
-                && targetBackendOrigin === expectedRendererOrigin
-                && (target.pathname.startsWith('/api/') || target.pathname.startsWith('/ws/'));
-            if (!trustedTarget) {
-                callback({ requestHeaders });
-                return;
-            }
-            requestHeaders['X-FreelancerStudio-Token'] = backendToken;
-            if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(details.method)) {
-                requestHeaders.Origin = expectedRendererOrigin;
-                if (!requestHeaders['Content-Type'] && !requestHeaders['content-type']) {
-                    requestHeaders['Content-Type'] = 'application/json';
-                }
-            }
+            const requestHeaders = authorizeRendererRequest({
+                url: details.url,
+                method: details.method,
+                requestHeaders: details.requestHeaders,
+                webContentsId: details.webContentsId,
+                trustedWebContentsId: mainWindow?.webContents.id,
+                expectedOrigin: expectedRendererOrigin,
+                backendToken,
+            });
             callback({ requestHeaders });
         });
         requestAuthorizationConfigured = true;

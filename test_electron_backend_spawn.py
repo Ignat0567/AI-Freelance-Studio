@@ -128,15 +128,19 @@ def test_electron_transfers_process_token_over_stdin_and_not_preload():
 
 def test_electron_injects_auth_only_for_trusted_renderer_and_owned_endpoint():
     source = _source()
+    policy = Path("frontend/backend-request-policy.js").read_text(encoding="utf-8")
 
-    assert "details.webContentsId === mainWindow?.webContents.id" in source
-    assert "targetBackendOrigin === expectedRendererOrigin" in source
-    assert "target.protocol === 'ws:'" in source
-    assert "target.pathname.startsWith('/api/') || target.pathname.startsWith('/ws/')" in source
-    assert "requestHeaders['X-FreelancerStudio-Token'] = backendToken" in source
-    assert "requestHeaders.Origin = expectedRendererOrigin" in source
-    assert "name.toLowerCase() === 'x-freelancerstudio-token'" in source
-    assert "delete requestHeaders[name]" in source
+    assert "authorizeRendererRequest({" in source
+    assert "webContentsId: details.webContentsId" in source
+    assert "trustedWebContentsId: mainWindow?.webContents.id" in source
+    assert "webContentsId === trustedWebContentsId" in policy
+    assert "targetBackendOrigin === expectedOrigin" in policy
+    assert "target.protocol === 'ws:'" in policy
+    assert "normalizedPath.startsWith('/api/') || normalizedPath.startsWith('/ws/')" in policy
+    assert "headers['X-FreelancerStudio-Token'] = backendToken" in policy
+    assert "headers.Origin = expectedOrigin" in policy
+    assert "x-freelancerstudio-transport" in policy
+    assert "delete headers[name]" in policy
 
 
 def test_electron_removes_stale_port_file_before_spawn():

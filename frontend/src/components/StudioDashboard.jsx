@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PipelineDetailContent } from './PipelineDetailModal.jsx';
+import SandboxTestLabPage from '../features/sandbox-test-lab/SandboxTestLabPage.jsx';
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'OV' },
@@ -10,6 +11,7 @@ const navItems = [
   { id: 'team', label: 'AI Team', icon: 'AI' },
   { id: 'issues', label: 'Issues', icon: 'IS' },
   { id: 'logs', label: 'Logs', icon: 'LG' },
+  { id: 'sandbox', label: 'Sandbox Test Lab', icon: 'TL' },
   { id: 'settings', label: 'Settings', icon: 'ST' },
 ];
 
@@ -122,6 +124,7 @@ export default function StudioDashboard({
 }) {
   const [tasks, setTasks] = useState([]);
   const [activeView, setActiveView] = useState('overview');
+  const [sandboxOpened, setSandboxOpened] = useState(false);
   const [chatOpen, setChatOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 1160);
   const agentEntries = getAgentEntries(agents);
   const chatTabs = agentEntries.length ? agentEntries.filter(agent => agent.enabled !== false).slice(0, 6) : [];
@@ -152,6 +155,7 @@ export default function StudioDashboard({
 
   const selectNav = (id) => {
     setActiveView(id);
+    if (id === 'sandbox') setSandboxOpened(true);
     if (id === 'projects') onProjects();
     if (id === 'pipeline') onPipeline();
   };
@@ -221,7 +225,7 @@ export default function StudioDashboard({
 
         <div className="fs-body">
           <main className={`fs-workspace ${activeView === 'overview' ? 'fs-overview-workspace' : ''} ${activeView === 'settings' ? 'fs-settings-workspace' : ''} ${activeView === 'info' ? 'fs-info-workspace' : ''}`} tabIndex={0} aria-label="Central workspace content">
-            {!['settings', 'info'].includes(activeView) && <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />}
+            {!['settings', 'info', 'sandbox'].includes(activeView) && <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />}
             {activeView === 'overview' && (
               <>
                 <PipelineSummary pipeline={pipeline} project={project} workingAgent={workingAgent} criteria={criteria} passedCriteria={passedCriteria} onPipeline={() => setActiveView('pipeline')} />
@@ -238,9 +242,10 @@ export default function StudioDashboard({
             {activeView === 'mobile' && <MobilePreviewPanel activePort={activePort} project={project} />}
             {activeView === 'issues' && <AttentionPanel issues={openIssues} project={project} onRetry={onRetry} onContinueDone={onContinueDone} expanded />}
             {activeView === 'logs' && <LogPanel logs={logs} />}
+            {sandboxOpened && <section className="fs-test-lab-host" hidden={activeView !== 'sandbox'}><SandboxTestLabPage active={activeView === 'sandbox'} /></section>}
             {activeView === 'settings' && <section className="fs-panel fs-settings-page">{settingsContent}</section>}
             {activeView === 'info' && <section className="fs-panel fs-info-page">{infoContent}</section>}
-            {activeView !== 'overview' && !['team', 'projects', 'features', 'pipeline', 'mobile', 'issues', 'logs', 'settings', 'info'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
+            {activeView !== 'overview' && !['team', 'projects', 'features', 'pipeline', 'mobile', 'issues', 'logs', 'sandbox', 'settings', 'info'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
             <div className="fs-workspace-bottom-sentinel" data-testid="workspace-bottom-sentinel" aria-hidden="true" />
           </main>
 

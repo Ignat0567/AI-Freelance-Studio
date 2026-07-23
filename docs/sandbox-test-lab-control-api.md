@@ -35,4 +35,10 @@ Capability reasons are stable and limited to `test_lab_disabled`, `sandbox_capab
 
 The application-owned Job Service is default-off and has no production runner bridge in this phase. Tests inject deterministic offline services. Existing explicit external-execution opt-ins remain unchanged; the control API does not enable them, mutate environment variables, or run Windows Sandbox, Store CLI, installers, packaging, or signing by itself.
 
-Known limits are deliberate: there is one active run, no history API, no evidence download, no arbitrary executor, and no full Electron Test Lab UI. Shutdown waits are bounded and cancellation remains cooperative; an already blocked serialized runner call can delay backend cancellation delivery until that call returns.
+Known limits are deliberate: there is one active run, no history API, no evidence download, and no arbitrary executor. Shutdown waits are bounded and cancellation remains cooperative; an already blocked serialized runner call can delay backend cancellation delivery until that call returns.
+
+## Trusted Desktop UI
+
+The Studio page uses four semantic preload operations backed by fixed Electron-main requests. Renderer code cannot provide a URL, HTTP method, headers, arbitrary body, command, path, or environment value. Electron main validates the exact main frame and owned renderer origin, builds the fixed Test Lab request, adds authorization from process memory, rejects redirects, bounds response size and time, and returns only allow-listed response fields.
+
+Direct renderer requests to `/api/sandbox-test-lab/**`, including encoded path forms, are deliberately excluded from normal browser token injection. Renderer-supplied authorization and trusted-transport headers are stripped on every request and redirect hop. The UI holds only the current run and a pending idempotency key in memory; neither is persisted as run history. Electron binds a pending launch key to the current backend instance and rejects reuse after an instance change.
