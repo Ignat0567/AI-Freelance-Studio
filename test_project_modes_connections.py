@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import config_storage
 import main
+from test_security_support import authorized_test_client
 from project_spec import ensure_project_spec_bundle
 
 
@@ -24,7 +25,7 @@ def _client(monkeypatch, tmp_path, config=None):
     main.SYSTEM_SETTINGS.clear()
     main.SYSTEM_SETTINGS.update(main._get_saved_system_settings(config or {}))
     main.agent_configs = main.load_agent_configs()
-    return TestClient(main.app), config_path, state_path
+    return authorized_test_client(main.app), config_path, state_path
 
 
 def _opencode_connection():

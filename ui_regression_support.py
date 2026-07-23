@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import pytest
 from playwright.sync_api import sync_playwright
 
+from test_security_support import TEST_LOCAL_TOKEN
+
 
 ROOT = Path(__file__).resolve().parent
 FIXTURE_PATH = ROOT / "ui_regression_fixtures.json"
@@ -49,7 +51,7 @@ def studio_server(tmp_path_factory):
     environment["FREELANCERSTUDIO_RUNTIME_DIR"] = str(runtime_dir)
     port = 8080
     process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(port)],
+        [sys.executable, "-m", "uvicorn", "ui_regression_server:app", "--host", "127.0.0.1", "--port", str(port)],
         cwd=ROOT,
         env=environment,
         stdout=subprocess.DEVNULL,
@@ -102,6 +104,7 @@ def browser_session(request):
             context = browser.new_context(
                 viewport=viewport or {"width": 1280, "height": 720},
                 device_scale_factor=device_scale_factor,
+                extra_http_headers={"X-FreelancerStudio-Token": TEST_LOCAL_TOKEN},
             )
             context.route("**/*", _route_offline)
             context.tracing.start(screenshots=True, snapshots=True, sources=True)

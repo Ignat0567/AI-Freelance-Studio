@@ -1,6 +1,8 @@
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
+
+from backend_security import StrictRequestModel
 
 import connected_accounts
 
@@ -14,16 +16,22 @@ sync_account_fn = connected_accounts.sync_account
 PLATFORMS_LIST = connected_accounts.PLATFORMS
 
 
+class AccountCreatePayload(StrictRequestModel):
+    platform: str = ""
+    label: str = ""
+    credentials: Any | None = None
+
+
 @router.get("/api/accounts")
 def list_accounts():
     return {"accounts": get_accounts(), "platforms": PLATFORMS_LIST}
 
 
 @router.post("/api/accounts")
-def create_account(payload: Dict[str, Any]):
-    platform = payload.get("platform", "")
-    label = payload.get("label", "")
-    credentials_ignored = "credentials" in payload
+def create_account(payload: AccountCreatePayload):
+    platform = payload.platform
+    label = payload.label
+    credentials_ignored = payload.credentials is not None
     if platform not in PLATFORMS_LIST:
         raise HTTPException(400, f"Unknown platform: {platform}")
     acc_id = add_account_fn(platform, label)

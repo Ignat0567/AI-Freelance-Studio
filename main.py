@@ -15,14 +15,22 @@ import glob
 import subprocess
 import urllib.request
 import urllib.error
+import hmac
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, UploadFile, File as FastAPIFile, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, FileResponse, HTMLResponse
-from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import threading as _threading
+from backend_security import (
+    LocalSecurityContext,
+    LocalSecurityMiddleware,
+    StrictRequestModel as BaseModel,
+    authorize_websocket,
+    set_app_security_context,
+)
 import config_storage
 import project_state
 import secret_store
@@ -148,6 +156,8 @@ def get_cors_origins(settings: dict | None = None) -> list[str]:
 def get_backend_bind_host(settings: dict | None = None) -> str:
     source = settings if settings is not None else os.environ
     requested = str(source.get("BACKEND_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    if requested.lower().rstrip(".") == "localhost":
+        requested = "127.0.0.1"
     allow_network = str(source.get("BACKEND_ALLOW_NETWORK") or source.get("FREELANCERSTUDIO_ALLOW_NETWORK_BIND") or "").strip().lower() in {"1", "true", "yes", "on"}
     if requested in {"0.0.0.0", "::"} and not allow_network:
         return "127.0.0.1"
@@ -159,10 +169,12 @@ app = FastAPI(title="FreelancerStudio")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origin_regex=r"^http://(?:127\.0\.0\.1|localhost):(?:3000|5173|808[0-9]|809[0-9])$",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-FreelancerStudio-Token"],
 )
+app.add_middleware(LocalSecurityMiddleware)
 
 app.include_router(accounts_router)
 app.include_router(android_router)
@@ -171,8 +183,25 @@ app.include_router(system_router)
 
 def _backend_health_available() -> tuple[bool, str]:
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8080/health", timeout=3) as resp:
-            if resp.status == 200:
+        from backend_security import get_app_security_context
+
+        context = get_app_security_context(app)
+        challenge = secrets.token_urlsafe(32)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{context.port}/health/owner",
+            headers={
+                "X-FreelancerStudio-Challenge": challenge,
+            },
+        )
+        with urllib.request.urlopen(request, timeout=3) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            expected = context.owner_challenge_response(challenge)
+            if (
+                resp.status == 200
+                and payload.get("instance_id") == context.instance_id
+                and isinstance(payload.get("proof"), str)
+                and hmac.compare_digest(payload["proof"], expected["proof"])
+            ):
                 return True, "ok"
             return False, f"HTTP {resp.status}"
     except Exception as e:
@@ -283,7 +312,6 @@ def _save_projects_state(preserve_missing: bool = True):
 
 class KeysUpdatePayload(BaseModel):
     keys: Dict[str, str] = {}
-    model_config = {"extra": "allow"}
 
 
 class AISettingsPayload(BaseModel):
@@ -316,6 +344,10 @@ class AgentAIConfigPayload(BaseModel):
     top_p: float | None = None
     top_k: int | None = None
     max_tokens: int | None = None
+    use_global: bool | None = None
+    enabled: bool | None = None
+    custom_prompt: str | None = None
+    save_path: str | None = None
 
 
 class ProviderTestPayload(BaseModel):
@@ -344,6 +376,15 @@ class OpenCodeConnectionPayload(BaseModel):
     last_checked_at: str = ""
 
 
+class ProposalGeneratePayload(BaseModel):
+    job_description: str
+
+
+class ProposalRefinePayload(BaseModel):
+    original_job: str
+    client_answers: str
+
+
 class ChatPayload(BaseModel):
     model_config = {"protected_namespaces": ()}
     message: str
@@ -365,7 +406,6 @@ class AgentChatPayload(BaseModel):
 
 
 class ManualProjectPayload(BaseModel):
-    model_config = {"extra": "allow"}
     platform: str = "manual"
     jobTitle: str = ""
     title: str = ""
@@ -380,13 +420,11 @@ class ManualProjectPayload(BaseModel):
 
 
 class ProjectApprovePayload(BaseModel):
-    model_config = {"extra": "allow"}
     approved: bool = True
     autonomous_mode: bool = True
 
 
 class ProjectClaimPayload(BaseModel):
-    model_config = {"extra": "allow"}
     platform: str = "unknown"
     job_id: str = ""
     title: str = ""
@@ -489,6 +527,11 @@ class TaskUpdateModel(BaseModel):
     due_date: Optional[str] = None
 
 
+class TaskCommentPayload(BaseModel):
+    text: str = ""
+    author: str = ""
+
+
 def get_next_task_id(project_id: str) -> str:
     return f"task_{uuid.uuid4().hex[:8]}"
 
@@ -561,15 +604,15 @@ def delete_task(project_id: str, task_id: str):
 
 
 @app.post("/api/projects/{project_id}/tasks/{task_id}/comments")
-def add_task_comment(project_id: str, task_id: str, payload: dict):
+def add_task_comment(project_id: str, task_id: str, payload: TaskCommentPayload):
     """Add a comment to a task."""
     tasks = PROJECT_TASKS.get(project_id, [])
     for task in tasks:
         if task["id"] == task_id:
             comment = {
                 "id": f"comment_{len(task['comments']) + 1}",
-                "text": payload.get("text", ""),
-                "author": payload.get("author", ""),
+                "text": payload.text,
+                "author": payload.author,
                 "created_at": datetime.now().isoformat(),
             }
             task["comments"].append(comment)
@@ -1018,9 +1061,7 @@ def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
 
 def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
     source = data if data is not None else load_studio_keys()
-    changed = _ensure_provider_connection_records(source)
-    if data is None and changed:
-        save_studio_keys(source)
+    _ensure_provider_connection_records(source)
     return [_sanitize_provider_connection(item) for item in _load_provider_connections(source)]
 
 
@@ -1405,7 +1446,7 @@ def opencode_authenticate():
     return result
 
 
-@app.get("/api/config/ai/verify")
+@app.post("/api/config/ai/verify")
 def verify_ai_settings():
     data = load_studio_keys()
     system = _get_saved_system_settings(data)
@@ -1433,8 +1474,8 @@ def verify_ai_settings():
 
 
 @app.post("/api/proposals/generate")
-def create_proposal(payload: Dict[str, Any]):
-    job_desc = payload.get("job_description", "").strip()
+def create_proposal(payload: ProposalGeneratePayload):
+    job_desc = payload.job_description.strip()
     if not job_desc:
         raise HTTPException(400, "job_description is required")
     agent_data = agent_configs.get("goldie", {})
@@ -1449,9 +1490,9 @@ def create_proposal(payload: Dict[str, Any]):
 
 
 @app.post("/api/proposals/refine")
-def refine_project_spec(payload: Dict[str, Any]):
-    original = payload.get("original_job", "").strip()
-    answers = payload.get("client_answers", "").strip()
+def refine_project_spec(payload: ProposalRefinePayload):
+    original = payload.original_job.strip()
+    answers = payload.client_answers.strip()
     if not original or not answers:
         raise HTTPException(400, "original_job and client_answers are required")
     agent_data = agent_configs.get("maya", {})
@@ -2380,14 +2421,12 @@ def _agent_meta(agent_id: str) -> dict:
 
 
 @app.post("/api/agents/{agent_id}/config")
-def update_agent_config(agent_id: str, payload: Dict[str, Any]):
+def update_agent_config(agent_id: str, payload: AgentAIConfigPayload):
     if agent_id not in _all_agent_ids():
         raise HTTPException(status_code=404, detail="Agent not found")
     current = agent_configs.get(agent_id, {})
-    allowed_keys = ("provider", "model", "temperature", "top_p", "top_k", "max_tokens", "use_global", "use_global_connection", "use_global_model", "use_global_generation_parameters", "enabled", "custom_prompt", "save_path", "connection_id")
-    for key in allowed_keys:
-        if key in payload:
-            current[key] = payload[key]
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        current[key] = value
     agent_configs[agent_id] = current
     save_agent_configs(agent_configs)
     return {"status": "success", "agent_id": agent_id}
@@ -2656,6 +2695,8 @@ def get_active_projects():
 
 @app.websocket("/ws/projects/{project_id}/logs")
 async def project_logs_ws(websocket: WebSocket, project_id: str):
+    if await authorize_websocket(websocket) is None:
+        return
     await websocket.accept()
     last_count = 0
     sent_snapshot = False
@@ -5823,17 +5864,18 @@ def sanitize_filename(name: str) -> str:
     return "".join(c for c in name if c.isprintable() and c not in '<>:"|?*')
 
 
-def _get_project_dir(project_id: str) -> str:
+def _get_project_dir(project_id: str, *, create: bool = True) -> str:
     """Get the filesystem path for a project's uploaded files."""
     safe_id = "".join(c for c in project_id if c.isalnum() or c in "-_.")
     path = os.path.join(PROJECTS_DATA_DIR, safe_id)
-    os.makedirs(path, exist_ok=True)
+    if create:
+        os.makedirs(path, exist_ok=True)
     return path
 
 
-def resolve_path(project_id: str, relative_path: str) -> str:
+def resolve_path(project_id: str, relative_path: str, *, create: bool = True) -> str:
     """Resolve a relative path within a project directory, blocking traversal."""
-    base = os.path.realpath(_get_project_dir(project_id))
+    base = os.path.realpath(_get_project_dir(project_id, create=create))
     target = os.path.realpath(os.path.join(base, relative_path.lstrip("/")))
     if not target.startswith(base + os.sep) and target != base:
         raise HTTPException(400, "Path traversal denied")
@@ -5845,7 +5887,7 @@ def list_project_files(project_id: str, path: str = Query("", alias="path")):
     proj = active_projects.get(project_id)
     if not proj:
         raise HTTPException(404, "Project not found")
-    target = resolve_path(project_id, path)
+    target = resolve_path(project_id, path, create=False)
     if not os.path.exists(target):
         raise HTTPException(404, "Path not found")
     if not os.path.isdir(target):
@@ -5973,7 +6015,7 @@ def download_project_file(project_id: str, path: str):
     proj = active_projects.get(project_id)
     if not proj:
         raise HTTPException(404, "Project not found")
-    target = resolve_path(project_id, path)
+    target = resolve_path(project_id, path, create=False)
     if not os.path.exists(target):
         raise HTTPException(404, "File not found")
     if os.path.isdir(target):
@@ -6073,8 +6115,9 @@ def run_backend():
     import socket
 
     def find_free_port(start_port: int = 8080, max_attempts: int = 20, host: str = "127.0.0.1") -> int:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
         for port in range(start_port, start_port + max_attempts):
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
                 try:
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     s.bind((host, port))
@@ -6086,6 +6129,38 @@ def run_backend():
     start_port = int(os.environ.get("BACKEND_START_PORT", "8080"))
     bind_host = get_backend_bind_host()
     free_port = find_free_port(start_port=start_port, host=bind_host)
+    startup_token = None
+    launch_id = None
+    if os.environ.pop("FREELANCERSTUDIO_AUTH_STDIN", "") == "1":
+        try:
+            startup_payload = json.loads(sys.stdin.readline(4096))
+            startup_token = str(startup_payload.get("token") or "")
+            launch_id = str(startup_payload.get("launch_id") or "")
+        except (AttributeError, json.JSONDecodeError, OSError, ValueError):
+            raise RuntimeError("Trusted backend authorization bootstrap failed") from None
+    security_context = LocalSecurityContext.create(
+        token=startup_token,
+        bind_host=bind_host,
+        port=free_port,
+        launch_id=launch_id,
+        allowed_origins=get_cors_origins(),
+    )
+    set_app_security_context(app, security_context)
+    control_fd = os.environ.pop("FREELANCERSTUDIO_CONTROL_FD", "")
+    if control_fd:
+        connect_host = "::1" if bind_host == "::" else "127.0.0.1" if bind_host == "0.0.0.0" else bind_host
+        descriptor = {
+            "port": free_port,
+            "bind_host": bind_host,
+            "connect_host": connect_host,
+            "launch_id": security_context.launch_id,
+            "instance_id": security_context.instance_id,
+        }
+        try:
+            os.write(int(control_fd), (json.dumps(descriptor, separators=(",", ":")) + "\n").encode("utf-8"))
+            os.close(int(control_fd))
+        except (OSError, ValueError):
+            raise RuntimeError("Trusted backend control channel failed") from None
     print(f"[Backend Boot]: Network cluster allocated securely on {bind_host}:{free_port}")
 
     os.makedirs(RUNTIME_DIR, exist_ok=True)

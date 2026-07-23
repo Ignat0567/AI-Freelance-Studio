@@ -34,9 +34,24 @@ def test_electron_backend_uses_absolute_paths_and_explicit_cwd():
 def test_electron_backend_waits_for_health_check_with_timeout():
     source = _source()
 
-    assert "checkBackend(port" in source
+    assert "checkBackend(host, port" in source
     assert "waitForBackend(15000, backendProcess)" in source
     assert "Backend health check timed out" in source
+
+
+def test_electron_backend_uses_authenticated_correlated_owner_health():
+    source = _source()
+
+    assert "path: '/health/owner'" in source
+    assert "'X-FreelancerStudio-Challenge': challenge" in source
+    assert "crypto.createHmac('sha256', backendToken)" in source
+    assert "payload.proof === expectedProof" in source
+    assert "payload.launch_id === launchId" in source
+    assert "payload.instance_id === instanceId" in source
+    assert "res.statusCode === 200" in source
+    assert "res.statusCode >= 200" not in source
+    owner_probe = source.split("function checkBackend", 1)[1].split("function waitForBackend", 1)[0]
+    assert "X-FreelancerStudio-Token" not in owner_probe
 
 
 def test_electron_backend_handles_error_exit_and_cleanup():
@@ -95,3 +110,52 @@ def test_electron_backend_does_not_pass_secrets_as_command_arguments():
     assert "token" not in spawn_call.lower()
     assert "secret" not in spawn_call.lower()
     assert "password" not in spawn_call.lower()
+
+
+def test_electron_transfers_process_token_over_stdin_and_not_preload():
+    source = _source()
+    preload = Path("frontend/preload.js").read_text(encoding="utf-8")
+
+    assert "crypto.randomBytes(32)" in source
+    assert "stdio: ['pipe', 'pipe', 'pipe', 'pipe']" in source
+    assert "backendProcess.stdin.end(JSON.stringify" in source
+    assert "FREELANCERSTUDIO_AUTH_STDIN: '1'" in source
+    assert "FREELANCERSTUDIO_CONTROL_FD: '3'" in source
+    assert "backendProcess.stdio[3]" in source
+    assert "Token" not in preload
+    assert "token" not in preload
+
+
+def test_electron_injects_auth_only_for_trusted_renderer_and_owned_endpoint():
+    source = _source()
+
+    assert "details.webContentsId === mainWindow?.webContents.id" in source
+    assert "targetBackendOrigin === expectedRendererOrigin" in source
+    assert "target.protocol === 'ws:'" in source
+    assert "target.pathname.startsWith('/api/') || target.pathname.startsWith('/ws/')" in source
+    assert "requestHeaders['X-FreelancerStudio-Token'] = backendToken" in source
+    assert "requestHeaders.Origin = expectedRendererOrigin" in source
+    assert "name.toLowerCase() === 'x-freelancerstudio-token'" in source
+    assert "delete requestHeaders[name]" in source
+
+
+def test_electron_removes_stale_port_file_before_spawn():
+    source = _source()
+
+    assert "fs.unlinkSync(stalePortFile)" in source
+    assert "readPortFile" not in source
+    assert "const descriptor = backendDescriptor" in source
+    assert "descriptor.connect_host" in source
+    assert "['127.0.0.1', '::1'].includes(descriptor.connect_host)" in source
+
+
+def test_renderer_transport_normalizes_legacy_urls_to_owned_same_origin():
+    transport = Path("frontend/src/studio-transport.js").read_text(encoding="utf-8")
+
+    assert "window.location.origin" in transport
+    assert "parsed.hostname === 'localhost'" in transport
+    assert "parsed.port === window.location.port" in transport
+    assert "parsed.pathname.startsWith('/api/')" in transport
+    assert "parsed.pathname.startsWith('/ws/')" in transport
+    assert "Token" not in transport
+    assert "token" not in transport

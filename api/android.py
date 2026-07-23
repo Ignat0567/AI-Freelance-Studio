@@ -1,7 +1,7 @@
 import subprocess
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from backend_security import StrictRequestModel as BaseModel
 
 import android_device_control
 

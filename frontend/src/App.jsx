@@ -401,7 +401,7 @@ function App() {
 
     const handleExport = (port, project) => {
         if (!project || !project.project_id) { addLog('[Export]: No active project.'); return; }
-        const url = `http://localhost:${port}/api/projects/${project.project_id}/export?fmt=markdown`;
+        const url = `${window.location.origin}/api/projects/${project.project_id}/export?fmt=markdown`;
         window.open(url, '_blank');
         addLog(`[Export]: Download started for ${project.title}.`);
     };
@@ -454,13 +454,6 @@ function App() {
                 body: JSON.stringify({ path: dirData.path })
             });
             if (!openRes.ok) {
-                if (openRes.status === 405) {
-                    const fallbackRes = await fetch(`http://localhost:${port}/api/system/open-path?path=${encodeURIComponent(dirData.path)}`);
-                    if (fallbackRes.ok) {
-                        addLog('[Explorer]: Opened folder.');
-                        return;
-                    }
-                }
                 const errData = await openRes.json().catch(() => ({}));
                 throw new Error(errData.detail || 'Backend could not open folder');
             }

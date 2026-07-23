@@ -5,7 +5,9 @@ import subprocess
 import sys
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Request
+
+from backend_security import StrictRequestModel, get_app_security_context
 
 from requirements_checker import check_all, get_components
 from system_settings import (
@@ -23,8 +25,21 @@ SYSTEM_CONFIG_ALLOWED_KEYS = ALLOWED_SYSTEM_KEYS
 
 
 @router.get("/health")
-def health_check():
-    return {"status": "ok", "service": "FreelancerStudio", "port": 8080}
+def health_check(request: Request):
+    context = get_app_security_context(request.app)
+    return {"status": "ok", "service": "FreelancerStudio", "port": context.port}
+
+
+@router.get("/health/owner")
+def owner_health_check(request: Request):
+    challenges = [
+        value.decode("latin-1")
+        for key, value in request.scope.get("headers", [])
+        if key.lower() == b"x-freelancerstudio-challenge"
+    ]
+    if len(challenges) != 1 or not 32 <= len(challenges[0]) <= 256:
+        raise HTTPException(status_code=400, detail="invalid_ownership_challenge")
+    return get_app_security_context(request.app).owner_challenge_response(challenges[0])
 
 
 @router.get("/api/system/requirements")
@@ -46,14 +61,31 @@ def install_requirement(component_id: str):
     )
 
 
+class SystemConfigPayload(StrictRequestModel):
+    global_provider: Any | None = None
+    global_model: Any | None = None
+    theme: Any | None = None
+    accent_color: Any | None = None
+    animation_speed: Any | None = None
+    font_size: Any | None = None
+    language: Any | None = None
+    auto_save: Any | None = None
+    notifications_enabled: Any | None = None
+    default_budget: Any | None = None
+    polling_interval: Any | None = None
+    log_detail: Any | None = None
+    vscode_path: Any | None = None
+    pycharm_path: Any | None = None
+
+
 @router.get("/api/config/system")
 def get_system_config():
     return get_current_system_config()
 
 
 @router.post("/api/config/system")
-def update_system_config(payload: dict[str, Any]):
-    return update_system_settings(payload)
+def update_system_config(payload: SystemConfigPayload):
+    return update_system_settings(payload.model_dump(exclude_unset=True))
 
 
 def _open_local_path(raw_path: str):
@@ -143,16 +175,20 @@ def _open_editor(editor: str, raw_path: str):
         raise HTTPException(status_code=500, detail=f"Failed to open editor: {e}")
 
 
+class OpenPathPayload(StrictRequestModel):
+    path: str
+
+
+class OpenEditorPayload(StrictRequestModel):
+    editor: str
+    path: str
+
+
 @router.post("/api/system/open-path")
-def open_system_path(payload: dict):
-    return _open_local_path(payload.get("path", ""))
-
-
-@router.get("/api/system/open-path")
-def open_system_path_get(path: str = Query(...)):
-    return _open_local_path(path)
+def open_system_path(payload: OpenPathPayload):
+    return _open_local_path(payload.path)
 
 
 @router.post("/api/system/open-editor")
-def open_system_editor(payload: dict):
-    return _open_editor(payload.get("editor", ""), payload.get("path", ""))
+def open_system_editor(payload: OpenEditorPayload):
+    return _open_editor(payload.editor, payload.path)

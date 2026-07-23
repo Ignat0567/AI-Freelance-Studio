@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 import config_storage
 import main
+from test_security_support import authorized_test_client
 from agent_contracts import ROLE_CONTRACTS, apply_agent_artifact, recommended_defaults_for, validate_agent_output
 
 
@@ -35,7 +36,7 @@ def _client(monkeypatch, tmp_path, config):
     main.SYSTEM_SETTINGS.clear()
     main.SYSTEM_SETTINGS.update(main._get_saved_system_settings(config))
     main.agent_configs = main.load_agent_configs()
-    return TestClient(main.app), config_path
+    return authorized_test_client(main.app), config_path
 
 
 def _alex_output():

@@ -5,13 +5,14 @@ from fastapi.testclient import TestClient
 
 import config_storage
 import main
+from test_security_support import authorized_test_client
 
 
 def _client(monkeypatch, tmp_path):
     config_path = tmp_path / "studio_config.json"
     config_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
-    return TestClient(main.app), config_path
+    return authorized_test_client(main.app), config_path
 
 
 def _ready_result(model="openai/gpt-5.5"):
@@ -73,10 +74,6 @@ def test_successful_save_persists_only_verified_safe_metadata(monkeypatch, tmp_p
         "local_endpoint": "http://127.0.0.1:45123",
         "capabilities": {"text_input": {"status": "supported", "token": "do-not-store"}},
         "last_checked_at": "forged",
-        "api_key": "do-not-store",
-        "oauth_token": "do-not-store",
-        "device_code": "do-not-store",
-        "auth_file_contents": "do-not-store",
     })
 
     assert response.status_code == 200
@@ -98,6 +95,20 @@ def test_successful_save_persists_only_verified_safe_metadata(monkeypatch, tmp_p
     assert "do-not-store" not in serialized
     assert "capabilities" not in stored
     assert "available_models" not in stored
+
+
+def test_save_rejects_secret_and_unknown_extra_fields(monkeypatch, tmp_path):
+    client, config_path = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(main, "test_opencode_readiness", lambda *args: _ready_result())
+
+    response = client.post("/api/provider-connections/opencode", json={
+        "name": "Rejected extras",
+        "configured_model": "openai/gpt-5.5",
+        "api_key": "do-not-store",
+    })
+
+    assert response.status_code == 422
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {}
 
 
 def test_frontend_invalidates_readiness_and_sends_no_test_claims():

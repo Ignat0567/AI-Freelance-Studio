@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import config_storage
 import main
+from test_security_support import authorized_test_client
 
 
 def _write(path: Path, data: dict):
@@ -43,7 +44,7 @@ def _client(monkeypatch, tmp_path, config):
     main.SYSTEM_SETTINGS.clear()
     main.SYSTEM_SETTINGS.update(main._get_saved_system_settings(config))
     main.agent_configs = main.load_agent_configs()
-    return TestClient(main.app), config_path
+    return authorized_test_client(main.app), config_path
 
 
 def test_all_agents_can_inherit_one_global_connection_model(monkeypatch, tmp_path):

@@ -5,9 +5,10 @@ from fastapi.testclient import TestClient
 import api.android as android_routes
 import android_device_control
 import main
+from test_security_support import authorized_test_client
 
 
-client = TestClient(main.app)
+client = authorized_test_client(main.app)
 
 
 def test_android_status_route_uses_router(monkeypatch):

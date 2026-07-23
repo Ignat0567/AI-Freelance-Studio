@@ -5,9 +5,10 @@ import api.system as system_routes
 import config_storage
 import main
 import system_settings
+from test_security_support import authorized_test_client
 
 
-client = TestClient(main.app)
+client = authorized_test_client(main.app)
 
 
 def test_system_router_uses_main_system_settings():
@@ -91,7 +92,7 @@ def test_system_config_get_preserves_existing_merge(monkeypatch, tmp_path):
         system_settings.SYSTEM_SETTINGS.update(original)
 
 
-def test_system_config_post_ignores_unknown_keys_and_mutates_in_place(monkeypatch, tmp_path):
+def test_system_config_post_rejects_unknown_keys(monkeypatch, tmp_path):
     original = dict(system_settings.SYSTEM_SETTINGS)
     original_id = id(system_settings.SYSTEM_SETTINGS)
     config_path = tmp_path / "studio_config.json"
@@ -99,15 +100,15 @@ def test_system_config_post_ignores_unknown_keys_and_mutates_in_place(monkeypatc
 
     try:
         monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+        previous_theme = system_settings.SYSTEM_SETTINGS["theme"]
         response = client.post("/api/config/system", json={"theme": "light", "unknown_key": "ignored"})
 
-        assert response.status_code == 200
-        assert response.json() == {"status": "saved"}
+        assert response.status_code == 422
         assert id(system_settings.SYSTEM_SETTINGS) == original_id
-        assert main.SYSTEM_SETTINGS["theme"] == "light"
-        assert system_routes.SYSTEM_SETTINGS["theme"] == "light"
+        assert main.SYSTEM_SETTINGS["theme"] == previous_theme
+        assert system_routes.SYSTEM_SETTINGS["theme"] == previous_theme
         saved = json.loads(config_path.read_text(encoding="utf-8"))
-        assert saved["_system"] == {"theme": "light"}
+        assert saved["_system"] == {"theme": "dark"}
     finally:
         system_settings.SYSTEM_SETTINGS.clear()
         system_settings.SYSTEM_SETTINGS.update(original)
@@ -143,6 +144,19 @@ def test_health_returns_existing_payload():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "FreelancerStudio", "port": 8080}
+
+
+def test_owner_health_requires_challenge_and_returns_no_token():
+    missing = client.get("/health/owner")
+    challenge = "system-route-owner-challenge-at-least-32"
+    response = client.get("/health/owner", headers={"X-FreelancerStudio-Challenge": challenge})
+
+    assert missing.status_code == 400
+    assert response.status_code == 200
+    assert response.json()["service"] == "FreelancerStudio"
+    assert response.json()["launch_id"]
+    assert response.json()["proof"]
+    assert "test-only-local-token" not in response.text
 
 
 def test_system_requirements_uses_router_dependency(monkeypatch):
@@ -188,8 +202,7 @@ def test_system_install_endpoint_rejects_automatic_installation():
 def test_system_open_path_requires_path():
     response = client.post("/api/system/open-path", json={})
 
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Path is required"}
+    assert response.status_code == 422
 
 
 def test_system_open_path_opens_existing_path(monkeypatch, tmp_path):
@@ -201,20 +214,39 @@ def test_system_open_path_opens_existing_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(system_routes.subprocess, "Popen", fake_popen)
 
-    response = client.get("/api/system/open-path", params={"path": str(tmp_path)})
+    response = client.post("/api/system/open-path", json={"path": str(tmp_path)})
 
     assert response.status_code == 200
     assert response.json() == {"status": "opened", "path": str(tmp_path.resolve())}
     assert str(tmp_path.resolve()) in captured["args"]
 
 
+def test_system_open_path_get_no_longer_performs_action(monkeypatch, tmp_path):
+    called = False
+
+    def fake_popen(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(system_routes.subprocess, "Popen", fake_popen)
+    response = client.get("/api/system/open-path", params={"path": str(tmp_path)})
+
+    assert response.status_code == 404
+    assert called is False
+
+
 def test_system_open_path_returns_404_for_missing_path(tmp_path):
     missing_path = tmp_path / "missing"
 
-    response = client.get("/api/system/open-path", params={"path": str(missing_path)})
+    response = client.post("/api/system/open-path", json={"path": str(missing_path)})
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Path not found"}
+
+
+def test_system_open_path_rejects_extra_fields(tmp_path):
+    response = client.post("/api/system/open-path", json={"path": str(tmp_path), "command": "not-allowed"})
+    assert response.status_code == 422
 
 
 def test_system_open_editor_uses_resolved_executable(monkeypatch, tmp_path):
