@@ -401,7 +401,11 @@ def test_undecided_elena_and_open_questions_block_approval_or_handoff():
 def test_approved_handoff_is_compact_deterministic_and_preserves_contract():
     _, briefs, handoffs, _, brief = _resolved_reference()
     approved = briefs.approve(brief, briefs.prepare_approval(brief))
-    handoff = handoffs.create_implementation_handoff(approved)
+    from order_workflow import DesignPreviewService
+
+    design_service = DesignPreviewService(id_factory=lambda: "clarification-preview", clock=lambda: NOW)
+    preview = design_service.approve(design_service.generate(approved), approved)
+    handoff = handoffs.create_implementation_handoff(approved, preview)
     serialized = handoff.to_json()
 
     assert handoff.source_agent == "alex"

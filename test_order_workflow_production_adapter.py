@@ -8,6 +8,7 @@ import pytest
 from order_workflow import (
     AgentHandoffService,
     AlexClarificationService,
+    DesignPreviewService,
     ExecutionMode,
     ExecutionRequest,
     ExecutionStatus,
@@ -59,7 +60,9 @@ def _approved_contract(order_id="order_pdf"):
     briefs = ProjectBriefService(id_factory=ids, clock=_clock)
     brief = briefs.generate(result.order, result.session)
     brief = briefs.approve(brief, briefs.prepare_approval(brief))
-    handoff = AgentHandoffService(id_factory=ids, clock=_clock).create_implementation_handoff(brief)
+    design_service = DesignPreviewService(id_factory=ids, clock=_clock)
+    preview = design_service.approve(design_service.generate(brief), brief)
+    handoff = AgentHandoffService(id_factory=ids, clock=_clock).create_implementation_handoff(brief, preview)
     return brief, handoff
 
 

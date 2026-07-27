@@ -7,8 +7,11 @@ from order_workflow import ExecutionMode
 from order_workflow.api_models import (
     AnswersRequest,
     ApproveBriefRequest,
+    ApproveDesignPreviewRequest,
     CreateOrderRequest,
+    DesignPreviewRequest,
     DefaultsRequest,
+    ReviseDesignPreviewRequest,
     ReviseBriefRequest,
     StartExecutionRequest,
 )
@@ -28,6 +31,11 @@ _STATUS_BY_CODE = {
     "brief_not_ready": 409,
     "brief_approval_stale": 409,
     "brief_not_approved": 409,
+    "design_preview_not_ready": 409,
+    "design_preview_not_required": 409,
+    "design_preview_not_approved": 409,
+    "design_preview_stale": 409,
+    "design_revision_note_required": 422,
     "handoff_blocked": 409,
     "execution_already_completed": 409,
     "execution_already_active": 409,
@@ -133,6 +141,29 @@ async def approve_brief(order_id: str, request: Request):
         revision=payload.revision,
         fingerprint=payload.fingerprint,
     )
+
+
+@router.get("/{order_id}/design-preview")
+def get_design_preview(order_id: str, request: Request):
+    return _call(get_order_workflow_service(request).get_design_preview, order_id)
+
+
+@router.post("/{order_id}/design-preview")
+async def generate_design_preview(order_id: str, request: Request):
+    payload = await _body(request, DesignPreviewRequest)
+    return _call(get_order_workflow_service(request).generate_design_preview, order_id, revision_note=payload.revision_note)
+
+
+@router.post("/{order_id}/design-preview/revise")
+async def revise_design_preview(order_id: str, request: Request):
+    payload = await _body(request, ReviseDesignPreviewRequest)
+    return _call(get_order_workflow_service(request).revise_design_preview, order_id, payload.note)
+
+
+@router.post("/{order_id}/design-preview/approve")
+async def approve_design_preview(order_id: str, request: Request):
+    payload = await _body(request, ApproveDesignPreviewRequest)
+    return _call(get_order_workflow_service(request).approve_design_preview, order_id, preview_id=payload.preview_id, brief_version=payload.brief_version)
 
 
 @router.get("/{order_id}/handoff")

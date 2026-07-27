@@ -121,9 +121,12 @@ export default function OrderWorkflowPage({ active }) {
 
   const approveBrief = brief => run(() => orderWorkflowApi.approveBrief(state.order.id, brief.revision, brief.approval_fingerprint));
   const reviseBrief = value => run(() => orderWorkflowApi.reviseBrief(state.order.id, [{ kind: 'add_requirement', value }]));
-  const canStartExecution = Boolean(state?.approval?.approved && state?.handoff_ready && !state?.execution);
+  const generateDesignPreview = () => run(() => orderWorkflowApi.generateDesignPreview(state.order.id));
+  const approveDesignPreview = preview => run(() => orderWorkflowApi.approveDesignPreview(state.order.id, preview.preview_id, preview.brief_version));
+  const reviseDesignPreview = note => run(() => orderWorkflowApi.reviseDesignPreview(state.order.id, note));
+  const canStartExecution = Boolean(state?.approval?.approved && state?.handoff_ready && !state?.execution && (!state?.design_preview_required || state?.design_preview?.approved));
   const startExecution = () => {
-    if (!canStartExecution) { setError('Approve the current brief before starting simulated execution.'); return; }
+    if (!canStartExecution) { setError('Approve the current brief and Elena design preview before starting simulated execution.'); return; }
     if (startInFlight.current) return;
     startInFlight.current = true;
     run(() => orderWorkflowApi.startExecution(state.order.id)).finally(() => { startInFlight.current = false; });
@@ -151,7 +154,7 @@ export default function OrderWorkflowPage({ active }) {
       </nav>
       {step === 'new-order' && <OrderCreatePanel form={form} setForm={setForm} pending={pending} onSubmit={submitOrder} />}
       {step === 'clarification' && <ClarificationPanel state={state} answers={answers} setAnswers={setAnswers} pending={pending} onSubmit={submitAnswers} onDefaults={() => run(() => orderWorkflowApi.applyDefaults(state.order.id))} onBack={() => setStep('new-order')} />}
-      {step === 'brief' && <ProjectBriefPanel state={state} pending={pending} onGenerate={() => run(() => orderWorkflowApi.generateBrief(state.order.id))} onApprove={approveBrief} onRevise={reviseBrief} onBack={() => setStep('clarification')} />}
+      {step === 'brief' && <ProjectBriefPanel state={state} pending={pending} onGenerate={() => run(() => orderWorkflowApi.generateBrief(state.order.id))} onApprove={approveBrief} onRevise={reviseBrief} onGeneratePreview={generateDesignPreview} onApprovePreview={approveDesignPreview} onRevisePreview={reviseDesignPreview} onBack={() => setStep('clarification')} />}
       {step === 'execution' && <ExecutionDashboard state={state} pending={pending} canStart={canStartExecution} onStart={startExecution} onCancel={() => run(() => orderWorkflowApi.cancelExecution(state.order.id))} onRefresh={() => loadOrder(state.order.id).catch(err => setError(cleanError(err)))} />}
       {step === 'result' && <ExecutionResultPanel state={state} onNewOrder={reset} onBackToBrief={() => setStep('brief')} />}
       {!state?.order && step !== 'new-order' && <div className="ow-callout warning">No current order is loaded. Use the new order screen to begin.</div>}

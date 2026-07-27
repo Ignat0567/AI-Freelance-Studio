@@ -21,6 +21,17 @@ from .clarification import (
     detect_requirement_gaps,
     infer_requirement_signals,
 )
+from .design_preview import (
+    DesignPreview,
+    DesignPreviewError,
+    DesignPreviewService,
+    DesignPreviewStatus,
+    LayoutArchetype,
+    PreviewLayout,
+    PreviewScreen,
+    design_preview_handoff_lines,
+    verify_design_preview_approval,
+)
 from .handoffs import AgentHandoffService
 from .execution import ExecutionServiceError, ProjectExecutionService, TERMINAL_EXECUTION_STATUSES
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
@@ -88,6 +99,10 @@ __all__ = [
     "ClarificationQuestion",
     "ClarificationResult",
     "ClarificationSession",
+    "DesignPreview",
+    "DesignPreviewError",
+    "DesignPreviewService",
+    "DesignPreviewStatus",
     "ElenaDesignChoice",
     "ElenaDesignConcept",
     "EventKind",
@@ -107,6 +122,7 @@ __all__ = [
     "FakeProjectExecutionAdapter",
     "GapAnalysis",
     "InvalidWorkflowTransition",
+    "LayoutArchetype",
     "InMemoryExecutionStateStore",
     "ProjectBrief",
     "ProjectBriefService",
@@ -118,6 +134,8 @@ __all__ = [
     "OrderWorkflowError",
     "OrderWorkflowService",
     "ProductType",
+    "PreviewLayout",
+    "PreviewScreen",
     "QuestionType",
     "RecommendedStack",
     "RequirementDimension",
@@ -129,6 +147,7 @@ __all__ = [
     "UserOrder",
     "UserOrderStatus",
     "append_bounded_event",
+    "design_preview_handoff_lines",
     "build_production_execution_package",
     "detect_requirement_gaps",
     "infer_requirement_signals",
@@ -138,5 +157,6 @@ __all__ = [
     "validate_execution_stage_transition",
     "validate_execution_transition",
     "validate_order_transition",
+    "verify_design_preview_approval",
     "verify_brief_approval",
 ]

@@ -337,8 +337,6 @@ class ProjectBrief(StrictDomainModel):
             raise ValueError("approval metadata must be complete")
         if self.approved_revision is not None and self.approved_revision != self.revision:
             raise ValueError("approval must bind the current brief revision")
-        if self.elena_design_choice is ElenaDesignChoice.SHOW_ELENA_CONCEPT and self.elena_design_concept is None:
-            raise ValueError("selected Elena concept is not ready")
         if self.elena_design_concept is not None and self.elena_design_choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT:
             raise ValueError("Elena concept is only valid when selected")
         return self
@@ -356,6 +354,8 @@ class AgentHandoff(StrictDomainModel):
     constraints: tuple[ShortText, ...] = ()
     acceptance_criteria: tuple[ShortText, ...]
     artifacts: tuple[OpaqueReference, ...] = ()
+    design_preview_id: PublicId | None = None
+    design_preview_summary: tuple[ShortText, ...] = ()
     open_questions: tuple[ShortText, ...] = ()
     requested_action: Literal["implement", "revise", "verify"] = "implement"
     created_at: datetime

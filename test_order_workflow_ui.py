@@ -125,9 +125,36 @@ def test_frontend_execution_start_is_approval_gated():
     assert "canStartExecution" in page
     assert "approval?.approved" in page
     assert "handoff_ready" in page
-    assert "Approve the current brief before starting simulated execution" in page
+    assert "Approve the current brief and Elena design preview before starting simulated execution" in page
     assert "Approval required" in dashboard
     assert "disabled={pending || !canStart}" in dashboard
+
+
+def test_design_preview_ui_and_api_are_wired_generically():
+    brief = _read("ProjectBriefPanel.jsx")
+    page = _read("OrderWorkflowPage.jsx")
+    api = _read("orderWorkflowApi.js")
+    css = _read("OrderWorkflow.css")
+
+    for expected in [
+        "Elena Design Preview",
+        "layout_type",
+        "User flows",
+        "Empty states",
+        "Error states",
+        "Accessibility notes",
+        "Implementation notes for Codex",
+        "Approve preview",
+        "Regenerate preview",
+    ]:
+        assert expected in brief
+    for route in ["/design-preview", "/design-preview/revise", "/design-preview/approve"]:
+        assert route in api
+    assert "approveDesignPreview" in page
+    assert "reviseDesignPreview" in page
+    assert "generateDesignPreview" in page
+    assert "left PDF library panel" not in brief
+    assert "ow-design-preview" in css
 
 
 def test_theme_accessibility_and_reduced_motion_hooks_exist():

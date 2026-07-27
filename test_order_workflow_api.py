@@ -113,7 +113,13 @@ def _approve(client):
         json={"revision": brief["revision"]},
     )
     assert approve.status_code == 200, approve.text
-    return order_id, approve.json()
+    preview = approve.json()["design_preview"]
+    preview_approval = client.post(
+        f"/api/orders/{order_id}/design-preview/approve",
+        json={"preview_id": preview["preview_id"], "brief_version": preview["brief_version"]},
+    )
+    assert preview_approval.status_code == 200, preview_approval.text
+    return order_id, preview_approval.json()
 
 
 def test_orders_api_requires_existing_local_security_boundary():
@@ -230,16 +236,23 @@ def test_stale_and_current_approval_and_handoff_flow():
     assert client.get(f"/api/orders/{order_id}/handoff").status_code == 409
     stale = client.post(f"/api/orders/{order_id}/brief/approve", json={"revision": brief["revision"] + 1})
     approved = client.post(f"/api/orders/{order_id}/brief/approve", json={"revision": brief["revision"]})
+    preview = approved.json()["design_preview"]
+    handoff_before_preview = client.get(f"/api/orders/{order_id}/handoff")
+    preview_approval = client.post(f"/api/orders/{order_id}/design-preview/approve", json={"preview_id": preview["preview_id"], "brief_version": preview["brief_version"]})
     handoff = client.get(f"/api/orders/{order_id}/handoff")
 
     assert stale.status_code == 409
     assert approved.status_code == 200
     assert approved.json()["approval"]["approved"] is True
+    assert approved.json()["design_preview"]["layout_type"] == "three_panel_workspace"
+    assert handoff_before_preview.status_code == 409
+    assert preview_approval.status_code == 200
     assert handoff.status_code == 200
     serialized = handoff.text.casefold()
     assert "chat_history" not in serialized
     assert "api_key" not in serialized
     assert handoff.json()["handoff"]["source_agent"] == "alex"
+    assert handoff.json()["handoff"]["design_preview_id"] == preview["preview_id"]
 
 
 def test_execution_requires_approval_then_fake_execution_exposes_events_artifacts_result():

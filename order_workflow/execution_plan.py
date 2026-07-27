@@ -55,6 +55,7 @@ def build_production_execution_package(
 
 
 def _build_prompt(brief: ProjectBrief, handoff: AgentHandoff, qa_commands: tuple[str, ...]) -> str:
+    design_lines = tuple(f"- {item}" for item in handoff.design_preview_summary) or ("- No approved Elena preview was attached.",)
     lines = [
         "Implement the approved AI Freelancer Studio project brief.",
         "",
@@ -69,6 +70,9 @@ def _build_prompt(brief: ProjectBrief, handoff: AgentHandoff, qa_commands: tuple
         "",
         "Constraints:",
         *[f"- {item}" for item in (*brief.technical_constraints, *handoff.constraints)],
+        "",
+        "Approved Elena design preview:",
+        *design_lines,
         "",
         "QA commands:",
         *[f"- {item}" for item in qa_commands],

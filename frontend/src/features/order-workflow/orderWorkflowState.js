@@ -41,6 +41,7 @@ export function nextStepFromState(state) {
   if (!state?.order) return 'new-order';
   if (state.execution && isTerminalExecution(state.execution)) return 'result';
   if (state.execution) return 'execution';
+  if (state.order.status === 'approved' && state.design_preview_required && !state.handoff_ready) return 'brief';
   if (state.order.status === 'approved' || state.handoff_ready) return 'execution';
   if (state.brief) return 'brief';
   if (state.order.status === 'brief_ready' || state.order.status === 'awaiting_approval') return 'brief';

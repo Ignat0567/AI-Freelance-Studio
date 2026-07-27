@@ -16,6 +16,7 @@ from .brief_service import (
     ProjectBriefService,
 )
 from .clarification import AlexClarificationService, ClarificationError, ClarificationSession
+from .design_preview import DesignPreview, DesignPreviewError, DesignPreviewService
 from .execution import ExecutionServiceError, ProjectExecutionService
 from .handoffs import AgentHandoffService
 from .models import (
@@ -55,11 +56,13 @@ class OrderWorkflowService:
         self._clock = clock
         self._clarification = AlexClarificationService(clock=clock)
         self._briefs = ProjectBriefService(id_factory=id_factory, clock=clock)
+        self._designs = DesignPreviewService(id_factory=id_factory, clock=clock)
         self._handoffs = AgentHandoffService(id_factory=id_factory, clock=clock)
         self._executions = execution_service or ProjectExecutionService(id_factory=id_factory, clock=clock)
         self._orders: dict[str, UserOrder] = {}
         self._sessions: dict[str, ClarificationSession] = {}
         self._brief_versions: dict[str, list[ProjectBrief]] = {}
+        self._design_previews: dict[str, list[DesignPreview]] = {}
         self._approval_bindings: dict[str, BriefApprovalBinding] = {}
         self._handoff_by_order: dict[str, AgentHandoff] = {}
         self._execution_by_order: dict[str, str] = {}
@@ -94,10 +97,11 @@ class OrderWorkflowService:
             order = self._order(order_id)
             session = self._sessions.get(order_id)
             brief = self._latest_brief(order_id)
+            design_preview = self._latest_design_preview(order_id)
             handoff = self._handoff_by_order.get(order_id)
             execution = self._current_execution(order_id)
         blockers = list(execution.blockers if execution else ())
-        next_action = self._next_action(order, session, brief, handoff, execution, blockers)
+        next_action = self._next_action(order, session, brief, design_preview, handoff, execution, blockers)
         return {
             "order": order.to_dict(),
             "questions": [item.to_dict() for item in order.questions],
@@ -106,6 +110,8 @@ class OrderWorkflowService:
             "recommended_defaults_available": bool(order.questions and session and session.remaining_dimensions),
             "brief": brief.to_dict() if brief else None,
             "approval": self._approval_payload(brief),
+            "design_preview": design_preview.to_dict() if design_preview else None,
+            "design_preview_required": self._design_preview_required(brief),
             "handoff_ready": handoff is not None,
             "handoff": handoff.to_dict() if handoff else None,
             "execution": execution.to_dict() if execution else None,
@@ -164,6 +170,9 @@ class OrderWorkflowService:
                 raise OrderWorkflowError(exc.code) from None
             with self._lock:
                 self._brief_versions.setdefault(order_id, []).append(brief)
+                preview = self._designs.generate(brief) if self._design_preview_required(brief) else None
+                if preview is not None:
+                    self._design_previews.setdefault(order_id, []).append(preview)
                 self._orders[order_id] = order.model_copy(update={"brief_id": brief.id, "status": UserOrderStatus.AWAITING_APPROVAL})
         return self.snapshot(order_id)
 
@@ -188,6 +197,7 @@ class OrderWorkflowService:
             raise OrderWorkflowError(code) from None
         with self._lock:
             self._brief_versions.setdefault(order_id, []).append(revised)
+            self._design_previews.pop(order_id, None)
             self._approval_bindings.pop(order_id, None)
             self._handoff_by_order.pop(order_id, None)
             self._orders[order_id] = self._orders[order_id].model_copy(update={"brief_id": revised.id, "status": UserOrderStatus.AWAITING_APPROVAL})
@@ -203,7 +213,8 @@ class OrderWorkflowService:
             if fingerprint is not None and fingerprint != binding.fingerprint:
                 raise OrderWorkflowError("brief_approval_stale", "Approval fingerprint is stale.")
             approved = self._briefs.approve(brief, binding)
-            handoff = self._handoffs.create_implementation_handoff(approved)
+            preview = self._latest_design_preview(order_id)
+            handoff = self._prepare_handoff(approved, preview)
         except OrderWorkflowError:
             raise
         except BriefServiceError as exc:
@@ -211,8 +222,63 @@ class OrderWorkflowService:
         with self._lock:
             self._brief_versions[order_id][-1] = approved
             self._approval_bindings[order_id] = binding
-            self._handoff_by_order[order_id] = handoff
+            if handoff is not None:
+                self._handoff_by_order[order_id] = handoff
             self._orders[order_id] = self._orders[order_id].model_copy(update={"status": UserOrderStatus.APPROVED})
+        return self.snapshot(order_id)
+
+    def get_design_preview(self, order_id: str) -> dict[str, Any]:
+        with self._lock:
+            self._order(order_id)
+            if self._latest_design_preview(order_id) is None:
+                raise OrderWorkflowError("design_preview_not_ready", "Generate a design preview after the brief is ready.")
+        return self.snapshot(order_id)
+
+    def generate_design_preview(self, order_id: str, *, revision_note: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            brief = self._require_brief(order_id)
+            previous = self._latest_design_preview(order_id)
+        if not self._design_preview_required(brief):
+            raise OrderWorkflowError("design_preview_not_required", "Elena preview was not selected for this brief.")
+        try:
+            preview = self._designs.generate(brief, revision_note=revision_note, previous=previous)
+        except DesignPreviewError as exc:
+            raise OrderWorkflowError(exc.code) from None
+        with self._lock:
+            self._design_previews.setdefault(order_id, []).append(preview)
+            self._handoff_by_order.pop(order_id, None)
+        return self.snapshot(order_id)
+
+    def revise_design_preview(self, order_id: str, note: str) -> dict[str, Any]:
+        with self._lock:
+            brief = self._require_brief(order_id)
+            preview = self._require_design_preview(order_id)
+        try:
+            requested = self._designs.request_revision(preview, brief, note)
+            regenerated = self._designs.generate(brief, previous=requested)
+        except DesignPreviewError as exc:
+            raise OrderWorkflowError(exc.code) from None
+        with self._lock:
+            self._design_previews.setdefault(order_id, []).append(regenerated)
+            self._handoff_by_order.pop(order_id, None)
+        return self.snapshot(order_id)
+
+    def approve_design_preview(self, order_id: str, *, preview_id: str, brief_version: int) -> dict[str, Any]:
+        with self._lock:
+            brief = self._require_brief(order_id)
+            preview = self._require_design_preview(order_id)
+        if preview.preview_id != preview_id or preview.brief_version != brief_version:
+            raise OrderWorkflowError("design_preview_stale", "Preview approval applies to an older design preview.")
+        try:
+            approved_preview = self._designs.approve(preview, brief)
+            handoff = self._handoffs.create_implementation_handoff(brief, approved_preview)
+        except BriefServiceError as exc:
+            raise OrderWorkflowError(exc.code) from None
+        except DesignPreviewError as exc:
+            raise OrderWorkflowError(exc.code) from None
+        with self._lock:
+            self._design_previews[order_id][-1] = approved_preview
+            self._handoff_by_order[order_id] = handoff
         return self.snapshot(order_id)
 
     def handoff(self, order_id: str) -> dict[str, Any]:
@@ -227,7 +293,7 @@ class OrderWorkflowService:
             brief = self._require_brief(order_id)
             handoff = self._handoff_by_order.get(order_id)
         if handoff is None:
-            raise OrderWorkflowError("brief_not_approved", "Approve the current brief before execution.")
+            raise OrderWorkflowError("design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved", "Approve the current brief and Elena preview before execution.")
         try:
             execution = self._executions.start(brief, handoff, mode=mode)
         except ExecutionServiceError as exc:
@@ -305,11 +371,28 @@ class OrderWorkflowService:
         versions = self._brief_versions.get(order_id, [])
         return versions[-1] if versions else None
 
+    def _latest_design_preview(self, order_id: str) -> DesignPreview | None:
+        versions = self._design_previews.get(order_id, [])
+        return versions[-1] if versions else None
+
     def _require_brief(self, order_id: str) -> ProjectBrief:
         brief = self._latest_brief(order_id)
         if brief is None:
             raise OrderWorkflowError("brief_not_ready")
         return brief
+
+    def _require_design_preview(self, order_id: str) -> DesignPreview:
+        preview = self._latest_design_preview(order_id)
+        if preview is None:
+            raise OrderWorkflowError("design_preview_not_ready")
+        return preview
+
+    def _prepare_handoff(self, brief: ProjectBrief, preview: DesignPreview | None) -> AgentHandoff | None:
+        if self._design_preview_required(brief):
+            if preview is None or not preview.approved:
+                return None
+            return self._handoffs.create_implementation_handoff(brief, preview)
+        return self._handoffs.create_implementation_handoff(brief)
 
     @staticmethod
     def _normalize_answer(value: Any) -> str | tuple[str, ...] | bool:
@@ -334,7 +417,7 @@ class OrderWorkflowService:
         }
 
     @staticmethod
-    def _next_action(order: UserOrder, session: ClarificationSession | None, brief: ProjectBrief | None, handoff: AgentHandoff | None, execution: ProjectExecution | None, blockers: list[ExecutionBlocker]) -> dict[str, str]:
+    def _next_action(order: UserOrder, session: ClarificationSession | None, brief: ProjectBrief | None, design_preview: DesignPreview | None, handoff: AgentHandoff | None, execution: ProjectExecution | None, blockers: list[ExecutionBlocker]) -> dict[str, str]:
         if blockers:
             return {"code": blockers[0].code, "message": blockers[0].message}
         if order.status is UserOrderStatus.CLARIFICATION_REQUIRED:
@@ -343,6 +426,10 @@ class OrderWorkflowService:
             return {"code": "generate_brief", "message": "Generate the structured project brief."}
         if brief.approved_at is None:
             return {"code": "approve_brief", "message": "Review and approve the current project brief."}
+        if OrderWorkflowService._design_preview_required(brief) and design_preview is None:
+            return {"code": "generate_design_preview", "message": "Generate Elena's design preview before implementation."}
+        if OrderWorkflowService._design_preview_required(brief) and not design_preview.approved:
+            return {"code": "approve_design_preview", "message": "Review and approve Elena's design preview."}
         if handoff is None:
             return {"code": "prepare_handoff", "message": "Prepare the Alex to Codex implementation handoff."}
         if execution is None:
@@ -366,3 +453,7 @@ class OrderWorkflowService:
             "execution_not_found": "execution_not_found",
             "brief_not_approved": "brief_not_approved",
         }.get(code, code)
+
+    @staticmethod
+    def _design_preview_required(brief: ProjectBrief | None) -> bool:
+        return bool(brief and brief.elena_design_choice is ElenaDesignChoice.SHOW_ELENA_CONCEPT)

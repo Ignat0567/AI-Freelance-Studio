@@ -59,6 +59,19 @@ class ApproveBriefRequest(StrictApiModel):
     fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 
+class DesignPreviewRequest(StrictApiModel):
+    revision_note: ShortText | None = None
+
+
+class ReviseDesignPreviewRequest(StrictApiModel):
+    note: ShortText
+
+
+class ApproveDesignPreviewRequest(StrictApiModel):
+    preview_id: ShortText
+    brief_version: Annotated[int, Field(ge=1)]
+
+
 class StartExecutionRequest(StrictApiModel):
     mode: Literal["fake", "production"] = "fake"
 

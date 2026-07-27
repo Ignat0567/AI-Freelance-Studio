@@ -172,12 +172,23 @@ def test_pdf_voice_assistant_full_api_acceptance_sequence():
     approved = _post_ok(client, f"/api/orders/{order_id}/brief/approve", {"revision": brief["revision"]})
     assert approved["approval"]["approved"] is True
     assert approved["order"]["id"] == order_id
+    preview = approved["design_preview"]
+    preview_text = json.dumps(preview, sort_keys=True).casefold()
+    assert preview["layout_type"] == "three_panel_workspace"
+    for expected in ["left pdf library panel", "center voice/text chat", "right source evidence panel", "citation pinning", "no-answer state", "speech playback"]:
+        assert expected in preview_text
+
+    blocked_handoff = client.get(f"/api/orders/{order_id}/handoff")
+    assert blocked_handoff.status_code == 409
+    preview_approved = _post_ok(client, f"/api/orders/{order_id}/design-preview/approve", {"preview_id": preview["preview_id"], "brief_version": preview["brief_version"]})
+    assert preview_approved["design_preview"]["approved"] is True
 
     handoff = client.get(f"/api/orders/{order_id}/handoff")
     assert handoff.status_code == 200
     handoff_text = handoff.text.casefold()
     assert handoff.json()["handoff"]["source_agent"] == "alex"
     assert handoff.json()["handoff"]["target_agent"] == "codex"
+    assert handoff.json()["handoff"]["design_preview_id"] == preview["preview_id"]
     assert "chat_history" not in handoff_text
     assert "api_key" not in handoff_text
 
@@ -211,7 +222,9 @@ def test_duplicate_cancel_recovery_and_production_negative_paths():
     order_id = _post_ok(client, "/api/orders", _payload())["order"]["id"]
     _post_ok(client, f"/api/orders/{order_id}/defaults", {"use_recommended_defaults": True})
     brief = _post_ok(client, f"/api/orders/{order_id}/brief", {})["brief"]
-    _post_ok(client, f"/api/orders/{order_id}/brief/approve", {"revision": brief["revision"]})
+    approved = _post_ok(client, f"/api/orders/{order_id}/brief/approve", {"revision": brief["revision"]})
+    preview = approved["design_preview"]
+    _post_ok(client, f"/api/orders/{order_id}/design-preview/approve", {"preview_id": preview["preview_id"], "brief_version": preview["brief_version"]})
 
     first = _post_ok(client, f"/api/orders/{order_id}/execution", {"mode": "fake"})["execution"]
     duplicate = _post_ok(client, f"/api/orders/{order_id}/execution", {"mode": "fake"})["execution"]
@@ -227,7 +240,9 @@ def test_duplicate_cancel_recovery_and_production_negative_paths():
     prod_order = _post_ok(prod_client, "/api/orders", _payload())["order"]["id"]
     _post_ok(prod_client, f"/api/orders/{prod_order}/defaults", {"use_recommended_defaults": True})
     prod_brief = _post_ok(prod_client, f"/api/orders/{prod_order}/brief", {})["brief"]
-    _post_ok(prod_client, f"/api/orders/{prod_order}/brief/approve", {"revision": prod_brief["revision"]})
+    prod_approved = _post_ok(prod_client, f"/api/orders/{prod_order}/brief/approve", {"revision": prod_brief["revision"]})
+    prod_preview = prod_approved["design_preview"]
+    _post_ok(prod_client, f"/api/orders/{prod_order}/design-preview/approve", {"preview_id": prod_preview["preview_id"], "brief_version": prod_preview["brief_version"]})
     production = _post_ok(prod_client, f"/api/orders/{prod_order}/execution", {"mode": "production"})
     assert production["execution"]["mode"] == "production"
     assert production["execution"]["status"] == "awaiting_user"
@@ -268,6 +283,8 @@ def test_ui_acceptance_path_is_wired_without_renderer_token_or_hidden_pdf_execut
     assert "Visible assumptions" in clarification
     assert "orderWorkflowApi.generateBrief" in page
     assert "Approve brief" in brief
+    assert "Elena Design Preview" in brief
+    assert "orderWorkflowApi.approveDesignPreview" in page
     assert "orderWorkflowApi.approveBrief" in page
     assert "Start fake execution" in execution
     assert "orderWorkflowApi.startExecution" in page
