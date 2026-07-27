@@ -11,7 +11,7 @@ from .models import StrictDomainModel
 from .production_adapter import live_opencode_execution_enabled
 
 
-LOCAL_NO_KEY_PROVIDERS = frozenset({"ollama", "opencode"})
+LOCAL_NO_KEY_PROVIDERS = frozenset({"ollama", "opencode", "opencode_bridge"})
 SUPPORTED_EXECUTION_PROVIDERS = frozenset({*secret_store.PROVIDER_ENV_NAMES, *LOCAL_NO_KEY_PROVIDERS})
 
 
@@ -142,14 +142,43 @@ def _selected_provider(config: dict | None) -> str:
     if not isinstance(config, dict):
         return ""
     system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
-    return str(system.get("global_provider") or config.get("global_provider") or "").strip().lower()
+    global_ai = config.get("_global_ai", {}) if isinstance(config.get("_global_ai"), dict) else {}
+    provider = str(system.get("global_provider") or global_ai.get("provider") or config.get("global_provider") or "").strip().lower()
+    if provider:
+        return provider
+    bridge = _selected_opencode_bridge(config)
+    return "opencode_bridge" if bridge else ""
 
 
 def _selected_model(config: dict | None) -> str:
     if not isinstance(config, dict):
         return ""
     system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
-    return str(system.get("global_model") or config.get("global_model") or "").strip()
+    global_ai = config.get("_global_ai", {}) if isinstance(config.get("_global_ai"), dict) else {}
+    model = str(system.get("global_model") or global_ai.get("model") or config.get("global_model") or "").strip()
+    if model:
+        return model
+    bridge = _selected_opencode_bridge(config)
+    return str(bridge.get("configured_model") or "").strip() if bridge else ""
+
+
+def _selected_opencode_bridge(config: dict) -> dict:
+    connections = config.get("_provider_connections")
+    if not isinstance(connections, list):
+        return {}
+    for connection in connections:
+        if not isinstance(connection, dict):
+            continue
+        connection_type = str(connection.get("connection_type") or "").strip().lower()
+        if connection_type not in {"opencode_bridge", "opencode_oauth_bridge"}:
+            continue
+        if connection.get("enabled", True) is False:
+            continue
+        if connection.get("readiness_status") != "ready":
+            continue
+        if str(connection.get("configured_model") or "").strip():
+            return connection
+    return {}
 
 
 def _probe_opencode_version() -> tuple[bool, str, str]:
