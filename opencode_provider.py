@@ -32,6 +32,20 @@ CAPABILITY_NAMES = (
     "single_image_input", "multi_image_input",
 )
 SECRET_VALUE_RE = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|authorization|cookie)\b\s*[:=]\s*[^\s'\"]+|\bsk-[A-Za-z0-9_-]{16,}\b")
+STUDIO_METADATA_FILES = frozenset(
+    {
+        ".freelancerstudio-project.json",
+        "execution_package.json",
+        "execution_prompt.md",
+        "delivery_report.md",
+        "generated_project_summary.json",
+        "opencode_command.txt",
+        "README_NEXT_STEPS.md",
+    }
+)
+MEANINGFUL_FILE_NAMES = frozenset({"package.json", "README.md", "pyproject.toml", "requirements.txt", "index.html", "main.py", "server.py"})
+MEANINGFUL_DIR_NAMES = frozenset({"src", "app", "frontend", "backend"})
+MEANINGFUL_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".py", ".html", ".css", ".json", ".md")
 
 
 class BrowserAuthConnectionAdapter(ABC):
@@ -145,12 +159,70 @@ def _run_capture(command: list[str], timeout: int, cwd: str | None = None) -> tu
         return None, "", str(exc)
 
 
+def _run_owned_capture(command: list[str], timeout: int, cwd: str) -> tuple[int | None, str, str, bool, bool]:
+    process = None
+    try:
+        process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+            return process.returncode, stdout or "", stderr or "", False, False
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            terminated_gracefully = True
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                terminated_gracefully = False
+                stdout, stderr = process.communicate()
+            return None, stdout or "", stderr or "", True, terminated_gracefully
+    except OSError as exc:
+        return None, "", str(exc), False, False
+
+
 def _safe_cli_invocation(binary: str, model: str, attachment_count: int, *, workspace_bound: bool = False) -> list[str]:
     invocation = [binary, "run", "<prompt>", "--model", model, "--format", "json"]
     if workspace_bound:
         invocation.extend(["--dir", "<workspace>"])
     invocation.extend(["--file", "<attachment>"] * attachment_count)
     return invocation
+
+
+def _scan_meaningful_artifacts(workdir: str | None, *, max_files: int = 200, max_depth: int = 4, limit: int = 50) -> tuple[str, ...]:
+    if not workdir:
+        return ()
+    root = Path(workdir).expanduser().resolve()
+    if not root.is_dir():
+        return ()
+    found: list[str] = []
+    scanned = 0
+    for child in sorted(root.rglob("*"), key=lambda item: str(item.relative_to(root)).casefold()):
+        if child.is_symlink():
+            continue
+        try:
+            resolved = child.resolve()
+        except OSError:
+            continue
+        if resolved != root and root not in resolved.parents:
+            continue
+        relative = child.relative_to(root)
+        if len(relative.parts) > max_depth or any(part in {"", ".", ".."} for part in relative.parts):
+            continue
+        safe_relative = relative.as_posix()
+        if child.name in STUDIO_METADATA_FILES:
+            continue
+        if child.is_dir():
+            if child.name in MEANINGFUL_DIR_NAMES:
+                found.append(safe_relative + "/")
+        elif child.is_file():
+            scanned += 1
+            if scanned > max_files:
+                break
+            if child.name in MEANINGFUL_FILE_NAMES or child.suffix in MEANINGFUL_SUFFIXES:
+                found.append(safe_relative)
+        if len(found) >= limit:
+            break
+    return tuple(found)
 
 
 @dataclass
@@ -256,21 +328,28 @@ class OpenCodeBridgeConnection:
             command.extend(["--file", path])
         timeout = max(1, int(request.get("timeout", 120)))
         started = time.monotonic()
+        timed_out = False
+        terminated_gracefully = False
         if workdir:
-            code, stdout, stderr = _run_capture(command, timeout, workdir)
+            code, stdout, stderr, timed_out, terminated_gracefully = _run_owned_capture(command, timeout, workdir)
         else:
             # A temporary working directory prevents the judge from being placed inside a project tree.
             with tempfile.TemporaryDirectory(prefix="freelancerstudio-opencode-") as temp_workdir:
                 code, stdout, stderr = _run_capture(command, timeout, temp_workdir)
+                timed_out = code is None and stderr == "timeout"
         duration = round(time.monotonic() - started, 3)
         text = self._extract_text(stdout)
-        raw_error = _strip_ansi(stderr or stdout)[-1000:]
+        raw_error = _safe_summary(stderr or stdout)
         if code is None:
-            category = "timeout" if stderr == "timeout" else "bridge_unavailable"
-            return {"status": "error", "failure_stage": "model_execution" if category == "timeout" else "cli_invocation", "error_category": category, "errors": [raw_error], "text": text, "duration": duration, "timeout": category == "timeout", "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+            category = "timeout" if timed_out else "bridge_unavailable"
+            meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+            classification = "generated_needs_review" if timed_out and meaningful_artifacts else "opencode_execution_timeout" if timed_out else "bridge_unavailable"
+            return {"status": "partial" if classification == "generated_needs_review" else "error", "failure_stage": "model_execution" if category == "timeout" else "cli_invocation", "error_category": category, "classification": classification, "errors": [raw_error], "text": text, "duration": duration, "timeout": timed_out, "timed_out": timed_out, "terminated_owned_process": bool(workdir), "terminated_gracefully": terminated_gracefully, "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
         if code != 0:
-            return {"status": "error", "failure_stage": "cli_process_exit", "error_category": _error_category(stderr, stdout), "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
-        return {"status": "success", "text": text, "structured_output": None, "provider_connection": self.connection_id, "bridge": "opencode_bridge", "underlying_provider": model.split("/", 1)[0] if "/" in model else "", "model": model, "capabilities_used": ["text_input"] + (["file_input"] if attachments else []), "session_id": "fresh-cli-session", "duration": duration, "errors": [], "failure_stage": "", "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+            meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+            return {"status": "partial" if meaningful_artifacts else "error", "failure_stage": "cli_process_exit", "error_category": _error_category(stderr, stdout), "classification": "generated_needs_review" if meaningful_artifacts else _error_category(stderr, stdout), "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+        meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+        return {"status": "success", "text": text, "structured_output": None, "provider_connection": self.connection_id, "bridge": "opencode_bridge", "underlying_provider": model.split("/", 1)[0] if "/" in model else "", "model": model, "capabilities_used": ["text_input"] + (["file_input"] if attachments else []), "session_id": "fresh-cli-session", "duration": duration, "errors": [], "failure_stage": "", "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
 
     def test_connection(self, include_vision: bool = False) -> dict[str, Any]:
         response = self.execute({"user_content": "Return exactly OPENCODE_BRIDGE_TEXT_OK", "timeout": 120})

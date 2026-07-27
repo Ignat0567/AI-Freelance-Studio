@@ -90,9 +90,9 @@ def test_workspace_bound_request_runs_in_owned_workspace_with_dir_argument(monke
         captured["command"] = command
         captured["timeout"] = timeout
         captured["cwd"] = cwd
-        return 0, '{"part":{"type":"text","text":"ok"}}', ""
+        return 0, '{"part":{"type":"text","text":"ok"}}', "", False, False
 
-    monkeypatch.setattr(opencode_provider, "_run_capture", run)
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", run)
 
     result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
 
@@ -111,6 +111,80 @@ def test_timeout_is_not_request_rejection(monkeypatch):
     assert result["error_category"] == "timeout"
     assert result["failure_stage"] == "model_execution"
     assert result["timeout"] is True
+
+
+def test_timeout_without_meaningful_files_is_execution_timeout(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+    (tmp_path / "execution_prompt.md").write_text("metadata", encoding="utf-8")
+
+    def run_owned(command, timeout, cwd):
+        return None, "", "token=secret-value timeout", True, True
+
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", run_owned)
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["status"] == "error"
+    assert result["classification"] == "opencode_execution_timeout"
+    assert result["timed_out"] is True
+    assert result["files_detected"] is False
+    assert result["meaningful_artifacts"] == []
+    assert "secret-value" not in "\n".join(result["errors"])
+    assert "secret-value" not in result["stderr_summary"]
+
+
+def test_timeout_with_readme_is_generated_needs_review(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+
+    def run_owned(command, timeout, cwd):
+        Path(cwd, "README.md").write_text("Hello", encoding="utf-8")
+        return None, "created", "timeout", True, False
+
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", run_owned)
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["status"] == "partial"
+    assert result["classification"] == "generated_needs_review"
+    assert result["files_detected"] is True
+    assert result["meaningful_artifacts"] == ["README.md"]
+    assert result["terminated_owned_process"] is True
+    assert result["terminated_gracefully"] is False
+
+
+def test_timeout_with_package_and_src_is_generated_needs_review(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+
+    def run_owned(command, timeout, cwd):
+        Path(cwd, "package.json").write_text("{}", encoding="utf-8")
+        Path(cwd, "src").mkdir()
+        return None, "", "timeout", True, True
+
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", run_owned)
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["classification"] == "generated_needs_review"
+    assert "package.json" in result["meaningful_artifacts"]
+    assert "src/" in result["meaningful_artifacts"]
+
+
+def test_nonzero_exit_with_files_requires_review_and_keeps_sanitized_error(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+
+    def run_owned(command, timeout, cwd):
+        Path(cwd, "README.md").write_text("Hello", encoding="utf-8")
+        return 2, "", "failed token=secret-value", False, False
+
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", run_owned)
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["status"] == "partial"
+    assert result["classification"] == "generated_needs_review"
+    assert result["files_detected"] is True
+    assert "secret-value" not in "\n".join(result["errors"])
+    assert "secret-value" not in result["stderr_summary"]
 
 
 def test_text_only_bridge_is_rejected_for_product_judge(tmp_path):

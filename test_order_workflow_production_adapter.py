@@ -113,6 +113,7 @@ def test_production_adapter_prepares_package_without_live_execution(tmp_path):
     assert package.workspace_root == tmp_path.name
     assert package.project_path.startswith("order_pdf-")
     assert "Implement the approved" in package.prompt
+    assert "After creating the requested project files, stop and exit. Do not keep rewriting files." in package.prompt
     assert "npm test" in package.prompt
 
 

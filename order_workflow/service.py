@@ -88,9 +88,19 @@ class ConfiguredOpenCodeExecutionClient:
             }
         )
         if result.get("status") == "success":
-            return OpenCodeExecutionResult(success=True, summary=str(result.get("text") or "OpenCode completed."))
-        category = str(result.get("error_category") or result.get("status") or "opencode_error")
-        return OpenCodeExecutionResult(success=False, summary=f"OpenCode execution failed: {_public_opencode_failure_code(category)}", warnings=(_public_opencode_failure_code(category),))
+            return OpenCodeExecutionResult(success=True, summary=str(result.get("text") or "OpenCode completed."), outcome="generated", meaningful_artifacts=tuple(result.get("meaningful_artifacts") or ()))
+        if result.get("classification") == "generated_needs_review":
+            return OpenCodeExecutionResult(
+                success=True,
+                summary="OpenCode created files but did not exit before timeout. Review the generated workspace before QA.",
+                warnings=("OpenCode created files but did not exit before timeout. Review the generated workspace before QA.",),
+                outcome="generated_needs_review",
+                timed_out=bool(result.get("timed_out") or result.get("timeout")),
+                meaningful_artifacts=tuple(result.get("meaningful_artifacts") or ()),
+            )
+        category = str(result.get("classification") or result.get("error_category") or result.get("status") or "opencode_error")
+        public_code = _public_opencode_failure_code(category)
+        return OpenCodeExecutionResult(success=False, summary=f"OpenCode execution failed: {public_code}", warnings=(public_code,), errors=(public_code,), outcome="timed_out_without_artifacts" if public_code == "opencode_execution_timeout" else "failed", timed_out=bool(result.get("timed_out") or result.get("timeout")), meaningful_artifacts=tuple(result.get("meaningful_artifacts") or ()))
 
     def _connection(self) -> dict:
         config = self._config_loader()
@@ -120,6 +130,8 @@ def _public_opencode_failure_code(category: str) -> str:
         "attachment_load_failed": "opencode_payload_rejected",
         "cli_argument_parsing": "opencode_payload_rejected",
         "bridge_unavailable": "opencode_endpoint_unavailable",
+        "timeout": "opencode_execution_timeout",
+        "opencode_execution_timeout": "opencode_execution_timeout",
         "request_rejected": "opencode_request_rejected",
     }.get(str(category or "").strip().lower(), "opencode_request_rejected")
 

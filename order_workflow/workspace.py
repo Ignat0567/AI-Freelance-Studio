@@ -6,6 +6,22 @@ import json
 from pathlib import Path
 
 
+STUDIO_METADATA_FILES = frozenset(
+    {
+        ".freelancerstudio-project.json",
+        "execution_package.json",
+        "execution_prompt.md",
+        "delivery_report.md",
+        "generated_project_summary.json",
+        "opencode_command.txt",
+        "README_NEXT_STEPS.md",
+    }
+)
+MEANINGFUL_FILE_NAMES = frozenset({"package.json", "README.md", "pyproject.toml", "requirements.txt", "index.html", "main.py", "server.py"})
+MEANINGFUL_DIR_NAMES = frozenset({"src", "app", "frontend", "backend"})
+MEANINGFUL_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".py", ".html", ".css", ".json", ".md")
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectWorkspace:
     root: Path
@@ -69,6 +85,45 @@ def validate_owned_project_workspace(workspace: ProjectWorkspace, *, order_id: s
         raise ValueError("workspace_marker_invalid") from exc
     if payload.get("owner") != "AI Freelance Studio" or payload.get("order_id") != order_id or payload.get("execution_id") != execution_id:
         raise ValueError("workspace_marker_mismatch")
+
+
+def scan_meaningful_generated_artifacts(workspace: ProjectWorkspace, *, max_files: int = 200, max_depth: int = 4, limit: int = 50) -> tuple[str, ...]:
+    root_path = workspace.root.expanduser().resolve()
+    project_path = workspace.project_path.expanduser().resolve()
+    if not project_path.is_dir() or root_path not in project_path.parents:
+        raise ValueError("unsafe_workspace_path")
+    found: list[str] = []
+    scanned = 0
+    for child in sorted(project_path.rglob("*"), key=lambda item: str(item.relative_to(project_path)).casefold()):
+        if child.is_symlink():
+            continue
+        try:
+            resolved = child.resolve()
+        except OSError:
+            continue
+        if resolved != project_path and project_path not in resolved.parents:
+            continue
+        relative = child.relative_to(project_path)
+        if len(relative.parts) > max_depth:
+            continue
+        safe_relative = relative.as_posix()
+        if any(part in {"", ".", ".."} for part in relative.parts):
+            continue
+        name = child.name
+        if name in STUDIO_METADATA_FILES:
+            continue
+        if child.is_dir():
+            if name in MEANINGFUL_DIR_NAMES:
+                found.append(safe_relative + "/")
+        elif child.is_file():
+            scanned += 1
+            if scanned > max_files:
+                break
+            if name in MEANINGFUL_FILE_NAMES or child.suffix in MEANINGFUL_SUFFIXES:
+                found.append(safe_relative)
+        if len(found) >= limit:
+            break
+    return tuple(found)
 
 
 def summarize_generated_workspace(workspace: ProjectWorkspace, *, limit: int = 50) -> dict[str, object]:

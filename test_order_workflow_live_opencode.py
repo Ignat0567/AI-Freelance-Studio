@@ -24,7 +24,7 @@ from order_workflow import (
 from order_workflow.api_models import CreateOrderRequest
 from order_workflow.execution_config import ExecutionConfigurationProvider
 from order_workflow.service import ConfiguredOpenCodeExecutionClient, OrderWorkflowService
-from order_workflow.workspace import ProjectWorkspace, reserve_owned_project_workspace, summarize_generated_workspace, validate_owned_project_workspace
+from order_workflow.workspace import ProjectWorkspace, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
 
 pytestmark = pytest.mark.unit
@@ -81,6 +81,41 @@ class RejectingOpenCodeClient(FakeOpenCodeClient):
         self.workspace_path = Path(workspace_path)
         event_sink.emit(stage="implementation", agent="OpenCode", progress=60, message="OpenCode execution rejected request")
         return OpenCodeExecutionResult(success=False, summary="OpenCode execution failed: opencode_request_rejected", warnings=("opencode_request_rejected",))
+
+
+class TimeoutOpenCodeClient(FakeOpenCodeClient):
+    def __init__(self, *, files=()) -> None:
+        super().__init__()
+        self.files = files
+
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+        self.prompt = prompt
+        self.workspace_path = Path(workspace_path)
+        for relative in self.files:
+            target = self.workspace_path / relative
+            if str(relative).endswith("/"):
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("generated", encoding="utf-8")
+        event_sink.emit(stage="implementation", agent="OpenCode", progress=60, message="OpenCode timed out")
+        if self.files:
+            return OpenCodeExecutionResult(
+                success=True,
+                summary="OpenCode created files but timed out.",
+                warnings=("OpenCode created files but did not exit before timeout. Review the generated workspace before QA.",),
+                outcome="generated_needs_review",
+                timed_out=True,
+                meaningful_artifacts=tuple(str(item).rstrip("/") for item in self.files),
+            )
+        return OpenCodeExecutionResult(
+            success=False,
+            summary="OpenCode did not finish and no generated project files were detected.",
+            warnings=("opencode_execution_timeout",),
+            errors=("opencode_execution_timeout",),
+            outcome="timed_out_without_artifacts",
+            timed_out=True,
+        )
 
 
 def _clock():
@@ -184,7 +219,7 @@ def test_live_adapter_writes_owned_workspace_and_prompt(tmp_path):
     finished = service.wait(service.start(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True).id, 2)
 
     assert finished.status is ExecutionStatus.SUCCEEDED
-    assert finished.result.outcome == "live_generated"
+    assert finished.result.outcome == "generated"
     assert client.workspace_path is not None
     assert (client.workspace_path / ".freelancerstudio-project.json").is_file()
     assert "left PDF library panel" in client.prompt
@@ -214,6 +249,36 @@ def test_workspace_validation_rejects_mismatched_marker(tmp_path):
         validate_owned_project_workspace(workspace, order_id="order", execution_id="other")
     with pytest.raises(ValueError, match="unsafe_workspace_path"):
         validate_owned_project_workspace(ProjectWorkspace(root=tmp_path, project_path=tmp_path.parent), order_id="order", execution_id="execution")
+
+
+def test_meaningful_artifact_scan_ignores_metadata_and_returns_safe_paths(tmp_path):
+    workspace = reserve_owned_project_workspace(tmp_path, order_id="order", execution_id="execution", brief_fingerprint="abc")
+    for name in ("execution_package.json", "execution_prompt.md", "delivery_report.md", "generated_project_summary.json", "opencode_command.txt", "README_NEXT_STEPS.md"):
+        (workspace.project_path / name).write_text("metadata", encoding="utf-8")
+    (workspace.project_path / "README.md").write_text("generated", encoding="utf-8")
+    (workspace.project_path / "src").mkdir()
+    (workspace.project_path / "src" / "main.js").write_text("console.log('ok')", encoding="utf-8")
+
+    artifacts = scan_meaningful_generated_artifacts(workspace)
+
+    assert "README.md" in artifacts
+    assert "src/" in artifacts
+    assert "src/main.js" in artifacts
+    assert all("\\" not in item and ".." not in item for item in artifacts)
+    assert "execution_package.json" not in artifacts
+
+
+def test_meaningful_artifact_scan_ignores_symlink_escape(tmp_path):
+    workspace = reserve_owned_project_workspace(tmp_path, order_id="order", execution_id="execution", brief_fingerprint="abc")
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    link = workspace.project_path / "linked.md"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is not available")
+
+    assert "linked.md" not in scan_meaningful_generated_artifacts(workspace)
 
 
 def test_crm_prompt_differs_and_has_no_pdf_panels(tmp_path):
@@ -324,6 +389,58 @@ def test_failed_live_execution_reports_failure_without_generation_claim_or_secre
     assert "api_key" not in serialized
 
 
+def test_timeout_without_files_reports_execution_timeout(tmp_path):
+    client = TimeoutOpenCodeClient(files=())
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+    delivery = next(item for item in finished.artifacts if item.name == "delivery_report.md")
+    report_path = client.workspace_path / "delivery_report.md"
+
+    assert finished.status is ExecutionStatus.FAILED
+    assert finished.result.outcome == "timed_out_without_artifacts"
+    assert finished.result.errors == ("opencode_execution_timeout",)
+    assert finished.result.test_summary.skipped == 1
+    assert delivery.summary == "OpenCode timed out without generated project files; QA was not run."
+    assert "OpenCode did not finish and no generated project files were detected." in report_path.read_text(encoding="utf-8")
+
+
+def test_timeout_with_readme_is_reviewable_and_honest(tmp_path):
+    client = TimeoutOpenCodeClient(files=("README.md",))
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+    delivery = next(item for item in finished.artifacts if item.name == "delivery_report.md")
+    report = (client.workspace_path / "delivery_report.md").read_text(encoding="utf-8")
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert finished.result.success is True
+    assert finished.result.outcome == "generated_needs_review"
+    assert finished.result.test_summary.skipped == 1
+    assert "OpenCode created files but did not exit before timeout. Review the generated workspace before QA." in finished.result.warnings
+    assert delivery.summary == "OpenCode created project files but timed out; manual review required and QA was not run."
+    assert "OpenCode created project files but did not exit before timeout. The workspace requires review." in report
+    assert "Live OpenCode execution completed" not in report
+
+
+def test_timeout_with_package_and_src_is_reviewable(tmp_path):
+    client = TimeoutOpenCodeClient(files=("package.json", "src/"))
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert finished.result.outcome == "generated_needs_review"
+    assert (client.workspace_path / "package.json").is_file()
+    assert (client.workspace_path / "src").is_dir()
+
+
 def test_successful_live_execution_keeps_success_wording(tmp_path):
     client = FakeOpenCodeClient()
     service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
@@ -334,6 +451,7 @@ def test_successful_live_execution_keeps_success_wording(tmp_path):
     delivery = next(item for item in finished.artifacts if item.name == "delivery_report.md")
 
     assert finished.status is ExecutionStatus.SUCCEEDED
+    assert finished.result.outcome == "generated"
     assert delivery.summary == "Live OpenCode execution completed; QA was not run."
     assert (client.workspace_path / "delivery_report.md").is_file()
 

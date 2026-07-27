@@ -78,5 +78,6 @@ def _build_prompt(brief: ProjectBrief, handoff: AgentHandoff, qa_commands: tuple
         *[f"- {item}" for item in qa_commands],
         "",
         "Do not expose secrets in logs, reports, or generated files.",
+        "After creating the requested project files, stop and exit. Do not keep rewriting files.",
     ]
     return "\n".join(lines)
