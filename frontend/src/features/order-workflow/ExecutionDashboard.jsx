@@ -9,7 +9,7 @@ function ExecutionReadinessPanel({ readiness }) {
   const checks = readiness?.checks || [];
   return (
     <section className="ow-readiness" aria-labelledby="ow-readiness-title">
-      <div><span className="fs-eyebrow">Execution Readiness</span><h3 id="ow-readiness-title">Can Studio execute this order?</h3><p>Simulation is local fake execution. Production dry-run only prepares a package. Live execution is not enabled.</p></div>
+      <div><span className="fs-eyebrow">Execution Readiness</span><h3 id="ow-readiness-title">Can Studio execute this order?</h3><p>Simulation is local fake execution. Production dry-run only prepares a package. Live execution is not enabled.</p><p>Checks: OpenCode, AI provider, Model, Workspace, QA tools, Live execution opt-in.</p></div>
       <div className="ow-readiness-modes"><ReadinessPill label="Simulation mode" ready={readiness?.simulation_ready} /><ReadinessPill label="Production dry-run" ready={readiness?.production_dry_run_ready} /><ReadinessPill label="Live execution" ready={readiness?.production_live_ready} unavailable={!readiness?.production_live_ready} /></div>
       <div className="ow-readiness-checks">{checks.map(check => <article key={check.code} className={check.status}><b>{check.label}</b><span>{formatLabel(check.status)} - {check.message}</span></article>)}</div>
       {readiness?.blockers?.length > 0 && <div className="ow-callout warning"><strong>Action suggestions</strong>{readiness.blockers.map(item => <p key={item.code}>{item.message} <b>{item.action}</b></p>)}<p>Open Settings from the sidebar and configure OpenCode/provider, model, workspace, and QA commands.</p></div>}

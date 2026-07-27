@@ -14,6 +14,7 @@ class ExecutionReadinessCheck(StrictDomainModel):
     label: str
     status: ReadinessStatus
     message: str
+    action: str | None = None
 
 
 class ExecutionReadinessBlocker(StrictDomainModel):
@@ -44,10 +45,11 @@ def readiness_blocker_view(blocker: ExecutionBlocker, *, code: str | None = None
     )
 
 
-def readiness_check(code: str, label: str, status: ReadinessStatus, message: str) -> ExecutionReadinessCheck:
+def readiness_check(code: str, label: str, status: ReadinessStatus, message: str, action: str | None = None) -> ExecutionReadinessCheck:
     return ExecutionReadinessCheck(
         code=code,
         label=label,
         status=status,
         message=sanitize_public_text(message),
+        action=sanitize_public_text(action) if action else None,
     )

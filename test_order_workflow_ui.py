@@ -144,6 +144,10 @@ def test_execution_readiness_panel_guides_settings_without_live_execution():
         "Execution Readiness",
         "Production dry-run",
         "Open Settings from the sidebar",
+        "AI provider",
+        "Model",
+        "Workspace",
+        "Live execution opt-in",
         "production_live_ready",
         "Live execution is not enabled",
     ]:

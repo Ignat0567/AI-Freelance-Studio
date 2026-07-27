@@ -18,6 +18,7 @@ from .brief_service import (
 from .clarification import AlexClarificationService, ClarificationError, ClarificationSession
 from .design_preview import DesignPreview, DesignPreviewError, DesignPreviewService
 from .execution import ExecutionServiceError, ProjectExecutionService
+from .execution_config import ExecutionConfigurationProvider
 from .execution_readiness import ExecutionReadinessView, readiness_blocker_view, readiness_check
 from .handoffs import AgentHandoffService
 from .models import (
@@ -53,6 +54,7 @@ class OrderWorkflowService:
         id_factory: Callable[[], object] = uuid4,
         clock: Callable[[], datetime] | None = None,
         execution_service: ProjectExecutionService | None = None,
+        configuration_provider: ExecutionConfigurationProvider | None = None,
     ) -> None:
         self._id_factory = id_factory
         self._clock = clock
@@ -61,6 +63,7 @@ class OrderWorkflowService:
         self._designs = DesignPreviewService(id_factory=id_factory, clock=clock)
         self._handoffs = AgentHandoffService(id_factory=id_factory, clock=clock)
         self._executions = execution_service or ProjectExecutionService(id_factory=id_factory, clock=clock)
+        self._configuration = configuration_provider or ExecutionConfigurationProvider()
         self._orders: dict[str, UserOrder] = {}
         self._sessions: dict[str, ClarificationSession] = {}
         self._brief_versions: dict[str, list[ProjectBrief]] = {}
@@ -317,6 +320,7 @@ class OrderWorkflowService:
             execution_exists = order_id in self._execution_by_order
         simulation_ready = False
         production_ready = False
+        config = self._configuration.snapshot()
         blockers = []
         checks = []
         if brief is None:
@@ -347,6 +351,8 @@ class OrderWorkflowService:
             checks.extend(self._readiness_checks(simulation_ready, production_ready, live_ready, tuple(blocker.code for blocker in (*readiness_blockers, *live_blockers))))
         if brief is None:
             live_ready = False
+        checks = (*self._configuration_checks(config), *tuple(checks))
+        blockers.extend(self._configuration_blockers(config))
         view = ExecutionReadinessView(
             ready=production_ready if mode is ExecutionMode.PRODUCTION else simulation_ready,
             mode=mode,
@@ -520,17 +526,36 @@ class OrderWorkflowService:
     @staticmethod
     def _readiness_checks(fake_ready: bool, production_ready: bool, live_ready: bool, blocker_codes: tuple[str, ...]):
         codes = set(blocker_codes)
-        provider_blocked = bool(codes & {"provider_not_configured", "execution_provider_not_configured"})
         return (
             readiness_check("simulation", "Simulation mode", "ready" if fake_ready else "blocked", "Simulation uses the fake executor and does not require live providers." if fake_ready else "Approve the brief, preview, and handoff before simulation."),
-            readiness_check("provider", "Provider", "missing" if provider_blocked else "ready", "Select and configure an AI provider." if provider_blocked else "Provider planning requirements are satisfied."),
-            readiness_check("model", "Model", "missing" if "model_not_selected" in codes else "ready", "Select a coding model." if "model_not_selected" in codes else "Model planning requirements are satisfied."),
-            readiness_check("workspace", "Workspace", "missing" if "workspace_root_unavailable" in codes else "blocked" if "workspace_not_writable" in codes else "ready", "Choose a writable workspace root." if codes & {"workspace_root_unavailable", "workspace_not_writable"} else "Workspace planning requirements are satisfied."),
             readiness_check("qa_tools", "QA tools", "missing" if "qa_tools_unavailable" in codes else "ready", "Configure at least one QA command." if "qa_tools_unavailable" in codes else "QA planning requirements are satisfied."),
             readiness_check("production_dry_run", "Production dry-run", "ready" if production_ready else "blocked", "Can prepare a production execution package without live OpenCode." if production_ready else "Resolve production dry-run blockers before preparing a package."),
-            readiness_check("opencode", "OpenCode", "missing" if "opencode_unavailable" in codes else "ready" if live_ready else "unavailable", "OpenCode is not available." if "opencode_unavailable" in codes else "OpenCode readiness passed." if live_ready else "Live execution is locked by opt-in or readiness."),
             readiness_check("live_execution", "Live execution", "ready" if live_ready else "unavailable", "Live OpenCode execution can be started." if live_ready else "Live execution is locked. Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio to enable it."),
         )
+
+    @staticmethod
+    def _configuration_checks(config):
+        provider_status = "ready" if config.provider.configured else "missing" if config.provider.code == "provider_not_configured" else "blocked"
+        model_status = "ready" if config.model.supported else "missing" if config.model.code == "model_not_selected" else "blocked"
+        workspace_status = "ready" if config.workspace.available and config.workspace.writable else "missing" if not config.workspace.available else "blocked"
+        return (
+            readiness_check("opencode", "OpenCode", "ready" if config.opencode.available else "missing", config.opencode.message, config.opencode.action),
+            readiness_check("provider", "AI provider", provider_status, config.provider.message, config.provider.action),
+            readiness_check("model", "Model", model_status, config.model.message, config.model.action),
+            readiness_check("workspace", "Workspace", workspace_status, config.workspace.message, config.workspace.action),
+            readiness_check("live_opt_in", "Live execution opt-in", "ready" if config.live_opt_in.enabled else "blocked", config.live_opt_in.message, config.live_opt_in.action),
+        )
+
+    @staticmethod
+    def _configuration_blockers(config):
+        from .execution_readiness import ExecutionReadinessBlocker
+
+        blockers = []
+        for status in (config.provider, config.model, config.opencode, config.workspace, config.live_opt_in):
+            blocked = getattr(status, "configured", True) is False or getattr(status, "supported", True) is False or getattr(status, "available", True) is False or getattr(status, "writable", True) is False or getattr(status, "enabled", True) is False
+            if blocked:
+                blockers.append(ExecutionReadinessBlocker(code=status.code, message=status.message, action=status.action))
+        return tuple(blockers)
 
     @staticmethod
     def _unique_readiness_blockers(blockers):

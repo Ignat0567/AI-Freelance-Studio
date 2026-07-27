@@ -34,6 +34,7 @@ from .design_preview import (
 )
 from .handoffs import AgentHandoffService
 from .execution import ExecutionServiceError, ProjectExecutionService, TERMINAL_EXECUTION_STATUSES
+from .execution_config import ExecutionConfigurationProvider, ExecutionConfigurationSnapshot
 from .execution_readiness import ExecutionReadinessBlocker, ExecutionReadinessCheck, ExecutionReadinessView
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import (
@@ -110,6 +111,8 @@ __all__ = [
     "EventKind",
     "EventLevel",
     "ExecutionArtifact",
+    "ExecutionConfigurationProvider",
+    "ExecutionConfigurationSnapshot",
     "ExecutionBlocker",
     "ExecutionReadinessBlocker",
     "ExecutionReadinessCheck",

@@ -14,6 +14,7 @@ from order_workflow import (
 from order_workflow.api_models import CreateOrderRequest
 from order_workflow.service import OrderWorkflowService
 from order_workflow.service import OrderWorkflowError
+from order_workflow.execution_config import ExecutionConfigurationProvider
 
 
 pytestmark = pytest.mark.unit
@@ -35,7 +36,18 @@ class SequenceIds:
             return f"ready-{self.index:04d}"
 
 
-def _service(*, production_adapter=None):
+def _config(tmp_path=None, provider="", model="", secret=False, opencode=True, opt_in=False):
+    config = {"_system": {"global_provider": provider, "global_model": model}} if provider or model else {}
+    return ExecutionConfigurationProvider(
+        config_loader=lambda: config,
+        secret_lookup=lambda name, _config=None: "configured-secret" if secret else "",
+        opencode_version_probe=lambda: (opencode, "1.17.11" if opencode else "", "opencode.cmd" if opencode else ""),
+        workspace_root=tmp_path or __import__("pathlib").Path(__file__).resolve().parent,
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if opt_in else {},
+    )
+
+
+def _service(*, production_adapter=None, configuration_provider=None):
     ids = SequenceIds()
     execution = ProjectExecutionService(
         id_factory=ids,
@@ -43,7 +55,7 @@ def _service(*, production_adapter=None):
         fake_adapter=FakeProjectExecutionAdapter(),
         production_adapter=production_adapter,
     )
-    return OrderWorkflowService(id_factory=ids, clock=lambda: NOW, execution_service=execution)
+    return OrderWorkflowService(id_factory=ids, clock=lambda: NOW, execution_service=execution, configuration_provider=configuration_provider or _config())
 
 
 def _create(service, description=PDF_DESCRIPTION):
@@ -91,7 +103,7 @@ def test_readiness_before_design_preview_approval_blocks_execution():
 
 
 def test_approved_order_reports_simulation_ready_and_missing_provider():
-    service = _service()
+    service = _service(configuration_provider=_config())
     order_id = _create(service)
     _approve_all(service, order_id)
 
@@ -103,6 +115,7 @@ def test_approved_order_reports_simulation_ready_and_missing_provider():
     assert readiness["production_dry_run_ready"] is False
     assert readiness["production_live_ready"] is False
     assert "provider_not_configured" in {item["code"] for item in readiness["blockers"]}
+    assert any(item["code"] == "provider" and item["status"] == "missing" for item in readiness["checks"])
     assert "token" not in serialized
     assert "api_key" not in serialized
 
@@ -125,7 +138,7 @@ def test_production_readiness_reports_model_workspace_and_qa_blockers(tmp_path):
 
 def test_production_dry_run_ready_but_live_unavailable(tmp_path):
     adapter = ProductionProjectExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path)
-    service = _service(production_adapter=adapter)
+    service = _service(production_adapter=adapter, configuration_provider=_config(tmp_path, provider="ollama", model="codellama", opencode=True))
     order_id = _create(service)
     _approve_all(service, order_id)
 
@@ -135,3 +148,24 @@ def test_production_dry_run_ready_but_live_unavailable(tmp_path):
     assert readiness["can_prepare_dry_run"] is True
     assert readiness["can_run_live"] is False
     assert any(item["code"] == "live_execution" and item["status"] == "unavailable" for item in readiness["checks"])
+
+
+def test_readiness_reflects_configured_provider_model_opencode_workspace_and_opt_in(tmp_path):
+    adapter = ProductionProjectExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path)
+    service = _service(
+        production_adapter=adapter,
+        configuration_provider=_config(tmp_path, provider="openai", model="gpt-5.5", secret=True, opencode=True, opt_in=True),
+    )
+    order_id = _create(service)
+    _approve_all(service, order_id)
+
+    readiness = service.execution_readiness(order_id)
+    checks = {item["code"]: item for item in readiness["checks"]}
+
+    assert checks["opencode"]["status"] == "ready"
+    assert "1.17.11" in checks["opencode"]["message"]
+    assert checks["provider"]["status"] == "ready"
+    assert checks["model"]["status"] == "ready"
+    assert checks["workspace"]["status"] == "ready"
+    assert checks["live_opt_in"]["status"] == "ready"
+    assert "configured-secret" not in str(readiness)
