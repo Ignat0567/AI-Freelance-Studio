@@ -22,6 +22,7 @@ from order_workflow import (
     live_opencode_execution_enabled,
 )
 from order_workflow.api_models import CreateOrderRequest
+from order_workflow.execution_config import ExecutionConfigurationProvider
 from order_workflow.service import OrderWorkflowService
 from order_workflow.workspace import reserve_owned_project_workspace, summarize_generated_workspace
 
@@ -98,6 +99,41 @@ def _workflow(tmp_path, *, environ=None, client=None, production_adapter=None):
     live = LiveOpenCodeExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path, opencode_client=client or FakeOpenCodeClient(), environ=environ)
     execution = ProjectExecutionService(id_factory=ids, clock=_clock, production_adapter=production_adapter, live_adapter=live)
     return OrderWorkflowService(id_factory=ids, clock=_clock, execution_service=execution)
+
+
+def _bridge_config(model="nvidia/deepseek-ai/deepseek-v4-pro"):
+    return {
+        "_provider_connections": [
+            {
+                "connection_type": "opencode_oauth_bridge",
+                "configured_provider": "nvidia",
+                "configured_model": model,
+                "readiness_status": "ready",
+                "auth_status": "authenticated",
+                "enabled": True,
+            }
+        ]
+    }
+
+
+def _configuration(tmp_path, *, config=None, opt_in=False):
+    return ExecutionConfigurationProvider(
+        config_loader=lambda: config or {},
+        secret_lookup=lambda name, _config=None: "",
+        opencode_version_probe=lambda: (True, "1.17.11", "opencode.cmd"),
+        workspace_root=tmp_path,
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if opt_in else {},
+    )
+
+
+def _configured_workflow(tmp_path, *, config=None, opt_in=False, client=None):
+    ids = SequenceIds()
+    return OrderWorkflowService(
+        id_factory=ids,
+        clock=_clock,
+        configuration_provider=_configuration(tmp_path, config=config, opt_in=opt_in),
+        opencode_client=client or FakeOpenCodeClient(),
+    )
 
 
 def _approve_order(service, description=PDF):
@@ -202,3 +238,42 @@ def test_live_start_rejected_without_opt_in_and_dry_run_still_works(tmp_path):
     order2, _ = _approve_order(service2)
     dry_start = service2.start_execution(order2, ExecutionMode.PRODUCTION, live=False)
     assert dry_start["execution"]["mode"] == "production"
+
+
+def test_default_configured_live_start_uses_opencode_bridge_without_fake_fallback(tmp_path):
+    client = FakeOpenCodeClient()
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    readiness = service.execution_readiness(order_id, ExecutionMode.PRODUCTION)
+    assert "provider_not_configured" not in {item["code"] for item in readiness["blockers"]}
+    assert "live_execution_opt_in_required" not in {item["code"] for item in readiness["blockers"]}
+    assert readiness["can_prepare_dry_run"] is True
+    assert readiness["can_run_live"] is True
+
+    dry_run = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=False)
+    assert dry_run["execution"]["mode"] == "production"
+    assert client.prompt == ""
+
+    service2 = _configured_workflow(tmp_path, config=_bridge_config("nvidia/deepseek-ai/deepseek-v4-pro-2"), opt_in=True, client=client)
+    order2, _ = _approve_order(service2)
+    started = service2.start_execution(order2, ExecutionMode.PRODUCTION, live=True)
+    assert started["execution"]["mode"] == "production"
+    finished = service2._executions.wait(started["execution"]["id"], 2)
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert client.prompt
+
+
+def test_default_configured_live_start_blocks_missing_opt_in_and_missing_provider(tmp_path):
+    locked = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=False, client=FakeOpenCodeClient())
+    locked_id, _ = _approve_order(locked)
+    locked_start = locked.start_execution(locked_id, ExecutionMode.PRODUCTION, live=True)
+    assert locked_start["execution"]["status"] == "awaiting_user"
+    assert "live_execution_opt_in_required" in {item["code"] for item in locked_start["blockers"]}
+
+    missing = _configured_workflow(tmp_path, config={}, opt_in=True, client=FakeOpenCodeClient())
+    missing_id, _ = _approve_order(missing)
+    missing_start = missing.start_execution(missing_id, ExecutionMode.PRODUCTION, live=True)
+    codes = {item["code"] for item in missing_start["blockers"]}
+    assert "provider_not_configured" in codes
+    assert "model_not_selected" in codes

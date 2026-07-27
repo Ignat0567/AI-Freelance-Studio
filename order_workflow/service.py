@@ -6,6 +6,9 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+import config_storage
+from opencode_provider import OpenCodeBridgeConnection
+
 from .api_models import CreateOrderRequest, RevisionOperationRequest
 from .brief_service import (
     BriefApprovalBinding,
@@ -20,6 +23,7 @@ from .design_preview import DesignPreview, DesignPreviewError, DesignPreviewServ
 from .execution import ExecutionServiceError, ProjectExecutionService
 from .execution_config import ExecutionConfigurationProvider
 from .execution_readiness import ExecutionReadinessView, readiness_blocker_view, readiness_check
+from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .handoffs import AgentHandoffService
 from .models import (
     AgentHandoff,
@@ -38,6 +42,13 @@ from .models import (
     utc_now,
 )
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
+from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
+from .production_adapter import (
+    LiveOpenCodeExecutionAdapter,
+    OpenCodeExecutionClient,
+    OpenCodeExecutionResult,
+    ProductionProjectExecutionAdapter,
+)
 
 
 class OrderWorkflowError(ValueError):
@@ -45,6 +56,93 @@ class OrderWorkflowError(ValueError):
         super().__init__(code)
         self.code = code
         self.message = message or code
+
+
+class ConfiguredOpenCodeExecutionClient:
+    def __init__(self, *, config_loader: Callable[[], dict] = config_storage.load_studio_keys) -> None:
+        self._config_loader = config_loader
+
+    def check_readiness(self) -> ReadinessResult:
+        return ReadinessResult.ready_result() if self._connection() else ReadinessResult.blocked(OPENCODE_UNAVAILABLE)
+
+    def execute_project_prompt(
+        self,
+        prompt: str,
+        workspace_path,
+        event_sink: ExecutionEventSink,
+        cancellation: CancellationToken,
+    ) -> OpenCodeExecutionResult:
+        if cancellation.is_cancelled():
+            return OpenCodeExecutionResult(success=False, summary="OpenCode execution was cancelled before invocation.")
+        connection = self._connection()
+        if not connection:
+            return OpenCodeExecutionResult(success=False, summary="OpenCode bridge connection is not ready.")
+        event_sink.emit(stage="implementation", agent="OpenCode", progress=50, message="Invoking OpenCode bridge")
+        result = OpenCodeBridgeConnection.from_dict(connection).execute(
+            {
+                "user_content": prompt,
+                "requested_model": connection.get("configured_model"),
+                "timeout": 900,
+            }
+        )
+        if result.get("status") == "success":
+            return OpenCodeExecutionResult(success=True, summary=str(result.get("text") or "OpenCode completed."))
+        category = str(result.get("error_category") or result.get("status") or "opencode_error")
+        return OpenCodeExecutionResult(success=False, summary=f"OpenCode execution failed: {category}", warnings=(category,))
+
+    def _connection(self) -> dict:
+        config = self._config_loader()
+        connections = config.get("_provider_connections") if isinstance(config, dict) else None
+        if not isinstance(connections, list):
+            return {}
+        for connection in connections:
+            if not isinstance(connection, dict):
+                continue
+            connection_type = str(connection.get("connection_type") or "").strip().lower()
+            if connection_type not in {"opencode_bridge", "opencode_oauth_bridge"}:
+                continue
+            if connection.get("enabled", True) is False:
+                continue
+            if connection.get("readiness_status") != "ready":
+                continue
+            if str(connection.get("configured_model") or "").strip():
+                return connection
+        return {}
+
+
+class ConfigurationBackedExecutionAdapter:
+    def __init__(
+        self,
+        configuration_provider: ExecutionConfigurationProvider,
+        *,
+        live: bool = False,
+        opencode_client: OpenCodeExecutionClient | None = None,
+    ) -> None:
+        self._configuration_provider = configuration_provider
+        self._live = live
+        self._opencode_client = opencode_client
+
+    def check_readiness(self, brief: ProjectBrief) -> ReadinessResult:
+        return self._adapter().check_readiness(brief)
+
+    def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken):
+        return self._adapter().execute(request, event_sink, cancellation)
+
+    def _adapter(self):
+        snapshot = self._configuration_provider.snapshot()
+        provider = snapshot.provider.provider if snapshot.provider.configured else ""
+        model = snapshot.model.model if snapshot.model.supported else ""
+        workspace_root = self._configuration_provider.workspace_root
+        if self._live:
+            environ = {"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if snapshot.live_opt_in.enabled else {}
+            return LiveOpenCodeExecutionAdapter(
+                provider_name=provider,
+                model_name=model,
+                workspace_root=workspace_root,
+                opencode_client=self._opencode_client or ConfiguredOpenCodeExecutionClient(),
+                environ=environ,
+            )
+        return ProductionProjectExecutionAdapter(provider_name=provider, model_name=model, workspace_root=workspace_root)
 
 
 class OrderWorkflowService:
@@ -55,6 +153,7 @@ class OrderWorkflowService:
         clock: Callable[[], datetime] | None = None,
         execution_service: ProjectExecutionService | None = None,
         configuration_provider: ExecutionConfigurationProvider | None = None,
+        opencode_client: OpenCodeExecutionClient | None = None,
     ) -> None:
         self._id_factory = id_factory
         self._clock = clock
@@ -62,8 +161,13 @@ class OrderWorkflowService:
         self._briefs = ProjectBriefService(id_factory=id_factory, clock=clock)
         self._designs = DesignPreviewService(id_factory=id_factory, clock=clock)
         self._handoffs = AgentHandoffService(id_factory=id_factory, clock=clock)
-        self._executions = execution_service or ProjectExecutionService(id_factory=id_factory, clock=clock)
         self._configuration = configuration_provider or ExecutionConfigurationProvider()
+        self._executions = execution_service or ProjectExecutionService(
+            id_factory=id_factory,
+            clock=clock,
+            production_adapter=ConfigurationBackedExecutionAdapter(self._configuration),
+            live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client),
+        )
         self._orders: dict[str, UserOrder] = {}
         self._sessions: dict[str, ClarificationSession] = {}
         self._brief_versions: dict[str, list[ProjectBrief]] = {}

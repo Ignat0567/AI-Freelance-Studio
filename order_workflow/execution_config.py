@@ -94,6 +94,10 @@ class ExecutionConfigurationProvider:
             live_opt_in=self.get_live_opt_in_status(),
         )
 
+    @property
+    def workspace_root(self) -> Path:
+        return self._workspace_root
+
     def get_provider_status(self, config: dict | None = None) -> ProviderStatus:
         config = config if config is not None else self._config_loader()
         provider = _selected_provider(config)
