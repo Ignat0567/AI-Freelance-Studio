@@ -60,6 +60,17 @@ QA_TOOLS_UNAVAILABLE = readiness_blocker(
     "Configure at least one QA command before starting production execution.",
 )
 
+LIVE_EXECUTION_OPT_IN_REQUIRED = readiness_blocker(
+    "live_execution_opt_in_required",
+    "Live execution is locked. Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio to enable it.",
+    "Restart Studio",
+)
+
+UNSAFE_WORKSPACE_PATH = readiness_blocker(
+    "unsafe_workspace_path",
+    "Choose a safe generated-projects workspace managed by AI Freelance Studio.",
+)
+
 DESIGN_PREVIEW_NOT_APPROVED = readiness_blocker(
     "design_preview_not_approved",
     "Approve Elena's design preview before starting execution.",

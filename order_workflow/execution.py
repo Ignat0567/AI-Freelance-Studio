@@ -39,6 +39,7 @@ from .readiness import (
     BRIEF_NOT_APPROVED,
     ELENA_CHOICE_REQUIRED,
     PRODUCTION_NOT_CONFIGURED,
+    LIVE_EXECUTION_OPT_IN_REQUIRED,
     ReadinessResult,
     UNRESOLVED_QUESTIONS,
     UNSUPPORTED_PRODUCT_TYPE,
@@ -108,6 +109,7 @@ class ProjectExecutionService:
         mode: ExecutionMode = ExecutionMode.FAKE,
         fake_adapter: ProjectExecutionAdapter | None = None,
         production_adapter: ProjectExecutionAdapter | None = None,
+        live_adapter: ProjectExecutionAdapter | None = None,
         state_store: ExecutionStateStore | None = None,
         id_factory: Callable[[], object] = uuid4,
         clock: Callable[[], datetime] | None = None,
@@ -119,6 +121,7 @@ class ProjectExecutionService:
         self._mode = mode
         self._fake_adapter = fake_adapter or FakeProjectExecutionAdapter()
         self._production_adapter = production_adapter
+        self._live_adapter = live_adapter
         self._store = state_store or InMemoryExecutionStateStore()
         self._id_factory = id_factory
         self._clock = clock
@@ -136,12 +139,15 @@ class ProjectExecutionService:
         handoff: AgentHandoff | None = None,
         *,
         mode: ExecutionMode | None = None,
+        live: bool = False,
     ) -> ReadinessResult:
         blockers = list(self._domain_blockers(brief, handoff))
         if blockers:
             return ReadinessResult.blocked(*blockers)
-        adapter = self._adapter(mode or self._mode)
+        adapter = self._adapter(mode or self._mode, live=live)
         if adapter is None:
+            if live:
+                return ReadinessResult.blocked(LIVE_EXECUTION_OPT_IN_REQUIRED)
             return ReadinessResult.blocked(PRODUCTION_NOT_CONFIGURED)
         return adapter.check_readiness(brief)
 
@@ -151,6 +157,7 @@ class ProjectExecutionService:
         handoff: AgentHandoff,
         *,
         mode: ExecutionMode | None = None,
+        live: bool = False,
     ) -> ProjectExecution:
         active_mode = mode or self._mode
         self._validate_handoff(brief, handoff)
@@ -164,11 +171,13 @@ class ProjectExecutionService:
                 if existing.status in TERMINAL_EXECUTION_STATUSES or existing.status is ExecutionStatus.AWAITING_USER:
                     raise ExecutionServiceError("execution_already_completed")
                 return self._snapshot(existing)
-        readiness = self.check_readiness(brief, handoff, mode=active_mode)
+        readiness = self.check_readiness(brief, handoff, mode=active_mode, live=live)
         if not readiness.ready:
             return self._create_blocked_execution(brief, handoff, active_mode, readiness.blockers, key)
-        adapter = self._adapter(active_mode)
+        adapter = self._adapter(active_mode, live=live)
         if adapter is None:
+            if live:
+                return self._create_blocked_execution(brief, handoff, active_mode, (LIVE_EXECUTION_OPT_IN_REQUIRED,), key)
             return self._create_blocked_execution(brief, handoff, active_mode, (PRODUCTION_NOT_CONFIGURED,), key)
         now = utc_now(self._clock)
         execution = ProjectExecution(
@@ -188,7 +197,7 @@ class ProjectExecutionService:
         record = _ExecutionRecord(execution, CancellationToken())
         with self._lock:
             if key in self._by_approval:
-                return self.start(brief, handoff, mode=active_mode)
+                return self.start(brief, handoff, mode=active_mode, live=live)
             self._records[execution.id] = record
             self._by_approval[key] = execution.id
             self._save(record.snapshot)
@@ -533,9 +542,11 @@ class ProjectExecutionService:
     def _snapshot(snapshot: ProjectExecution) -> ProjectExecution:
         return snapshot.model_copy()
 
-    def _adapter(self, mode: ExecutionMode) -> ProjectExecutionAdapter | None:
+    def _adapter(self, mode: ExecutionMode, *, live: bool = False) -> ProjectExecutionAdapter | None:
         if mode is ExecutionMode.FAKE:
             return self._fake_adapter
+        if live:
+            return self._live_adapter
         return self._production_adapter
 
     @staticmethod

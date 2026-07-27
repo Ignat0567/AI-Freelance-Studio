@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import Protocol
 
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
@@ -11,11 +13,44 @@ from .readiness import (
     MODEL_NOT_SELECTED,
     PROVIDER_NOT_CONFIGURED,
     QA_TOOLS_UNAVAILABLE,
+    LIVE_EXECUTION_OPT_IN_REQUIRED,
+    OPENCODE_UNAVAILABLE,
     WORKSPACE_NOT_WRITABLE,
     WORKSPACE_ROOT_UNAVAILABLE,
     ReadinessResult,
 )
-from .workspace import plan_project_workspace
+from .workspace import plan_project_workspace, reserve_owned_project_workspace, summarize_generated_workspace
+
+
+def live_opencode_execution_enabled(environ: dict[str, str] | None = None) -> bool:
+    return (environ or os.environ).get("FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION") == "1"
+
+
+@dataclass(frozen=True, slots=True)
+class OpenCodeExecutionResult:
+    success: bool
+    summary: str
+    warnings: tuple[str, ...] = ()
+
+
+class OpenCodeExecutionClient(Protocol):
+    def check_readiness(self) -> ReadinessResult: ...
+
+    def execute_project_prompt(
+        self,
+        prompt: str,
+        workspace_path: Path,
+        event_sink: ExecutionEventSink,
+        cancellation: CancellationToken,
+    ) -> OpenCodeExecutionResult: ...
+
+
+class UnavailableOpenCodeExecutionClient:
+    def check_readiness(self) -> ReadinessResult:
+        return ReadinessResult.blocked(OPENCODE_UNAVAILABLE)
+
+    def execute_project_prompt(self, prompt: str, workspace_path: Path, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> OpenCodeExecutionResult:
+        raise RuntimeError("OpenCode client is unavailable")
 
 
 class ProductionProjectExecutionAdapter:
@@ -102,6 +137,73 @@ class ProductionProjectExecutionAdapter:
 
 def _is_writable_directory(path: Path) -> bool:
     return path.is_dir() and os.access(path, os.W_OK)
+
+
+class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
+    def __init__(
+        self,
+        *,
+        provider_name: str | None,
+        model_name: str | None,
+        workspace_root: str | Path | None,
+        opencode_client: OpenCodeExecutionClient | None = None,
+        qa_commands: tuple[str, ...] = ("QA not run in first live MVP",),
+        environ: dict[str, str] | None = None,
+        writable_probe: Callable[[Path], bool] | None = None,
+    ) -> None:
+        super().__init__(provider_name=provider_name, model_name=model_name, workspace_root=workspace_root, qa_commands=qa_commands, dry_run=True, writable_probe=writable_probe)
+        self._opencode_client = opencode_client or UnavailableOpenCodeExecutionClient()
+        self._environ = environ
+
+    def check_readiness(self, brief: ProjectBrief) -> ReadinessResult:
+        blockers = list(super().check_readiness(brief).blockers)
+        if not live_opencode_execution_enabled(self._environ):
+            blockers.append(LIVE_EXECUTION_OPT_IN_REQUIRED)
+        blockers.extend(self._opencode_client.check_readiness().blockers)
+        if blockers:
+            return ReadinessResult.blocked(*blockers)
+        return ReadinessResult.ready_result()
+
+    def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=10, message="Preparing live OpenCode execution")
+        package = self.prepare_execution(request)
+        event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=20, message="Creating project workspace")
+        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint)
+        event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=30, message="Writing execution package")
+        (workspace.project_path / "execution_prompt.md").write_text(package.prompt, encoding="utf-8")
+        (workspace.project_path / "execution_package.json").write_text(package.to_json(), encoding="utf-8")
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        event_sink.emit(stage=ExecutionStage.IMPLEMENTATION, agent="OpenCode", progress=45, message="Sending implementation prompt to OpenCode")
+        try:
+            result = self._opencode_client.execute_project_prompt(package.prompt, workspace.project_path, event_sink, cancellation)
+        except Exception:
+            return ExecutionResult(success=False, outcome="failed", summary="Live OpenCode execution failed before completion.", test_summary=TestSummary(failed=1), errors=("opencode_execution_failed",), final_stage=ExecutionStage.IMPLEMENTATION, completed_at=request.brief.updated_at)
+        if cancellation.is_cancelled():
+            cancelled = _cancelled_result(request)
+            return cancelled.model_copy(update={"warnings": (*cancelled.warnings, "OpenCode cancellation was requested; no unrelated processes were terminated.")})
+        event_sink.emit(stage=ExecutionStage.VERIFICATION, agent="BugCatcher", progress=80, message="QA not run in first live MVP", level=EventLevel.WARNING)
+        summary = summarize_generated_workspace(workspace)
+        artifacts = (
+            event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="generated_project_summary.json", summary=f"Generated project summary: {summary['files_created']} files.", reference="generated-project-summary-json"),
+            event_sink.artifact(kind=ArtifactKind.AGENT_HANDOFF, name="execution_package.json", summary="Live execution package written to the owned workspace.", reference="execution-package-json"),
+            event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="execution_prompt.md", summary="Implementation prompt sent to OpenCode.", reference="execution-prompt-md"),
+            event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="delivery_report.md", summary="Live OpenCode execution completed; QA was not run.", reference="delivery-report-md"),
+        )
+        event_sink.emit(stage=ExecutionStage.COMPLETED, agent="Product Judge", progress=100, message="Delivery summary prepared")
+        return ExecutionResult(
+            success=result.success,
+            outcome="live_generated" if result.success else "failed",
+            summary="Project generated by live OpenCode execution. QA was not run in this live opt-in commit." if result.success else "Live OpenCode execution did not complete successfully.",
+            artifact_ids=tuple(item.id for item in artifacts),
+            test_summary=TestSummary(skipped=1),
+            warnings=("QA was not run in this live opt-in commit.", *result.warnings),
+            errors=() if result.success else ("opencode_execution_failed",),
+            final_stage=ExecutionStage.COMPLETED if result.success else ExecutionStage.IMPLEMENTATION,
+            completed_at=request.brief.updated_at,
+        )
 
 
 def _cancelled_result(request: ExecutionRequest) -> ExecutionResult:

@@ -70,7 +70,8 @@ def test_execution_dashboard_is_explicitly_fake_and_cancellable():
     assert "Fake executor for MVP validation" in source
     assert "Run simulation" in source
     assert "Prepare production dry-run" in source
-    assert "Live execution unavailable" in source
+    assert "Live execution locked" in source
+    assert "Start live OpenCode execution" in source
     assert "Cancel execution" in source
     for agent in ["active_agent", "stage", "progress", "events", "blockers", "Execution Readiness"]:
         assert agent in source
@@ -149,7 +150,8 @@ def test_execution_readiness_panel_guides_settings_without_live_execution():
         assert expected in dashboard
     assert "can_prepare_dry_run" in page
     assert "orderWorkflowApi.getReadiness" in page
-    assert "startExecution(state.order.id, mode)" in page
+    assert "startExecution(state.order.id, mode, false)" in page
+    assert "startExecution(state.order.id, 'production', true)" in page
     assert "mode = 'production'" in api
     assert "X-FreelancerStudio-Token" not in dashboard + page + api
     assert "ow-readiness" in css

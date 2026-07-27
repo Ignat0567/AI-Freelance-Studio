@@ -289,7 +289,9 @@ class OrderWorkflowService:
                 raise OrderWorkflowError("handoff_blocked", "Approve the current brief before requesting a handoff.")
         return self.snapshot(order_id)
 
-    def start_execution(self, order_id: str, mode: ExecutionMode) -> dict[str, Any]:
+    def start_execution(self, order_id: str, mode: ExecutionMode, *, live: bool = False) -> dict[str, Any]:
+        if live and mode is not ExecutionMode.PRODUCTION:
+            raise OrderWorkflowError("invalid_execution_mode", "Live execution requires production mode.")
         with self._lock:
             order = self._order(order_id)
             brief = self._require_brief(order_id)
@@ -297,7 +299,7 @@ class OrderWorkflowService:
         if handoff is None:
             raise OrderWorkflowError("design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved", "Approve the current brief and Elena preview before execution.")
         try:
-            execution = self._executions.start(brief, handoff, mode=mode)
+            execution = self._executions.start(brief, handoff, mode=mode, live=live)
         except ExecutionServiceError as exc:
             raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
         with self._lock:
@@ -331,26 +333,29 @@ class OrderWorkflowService:
         else:
             fake = self._executions.check_readiness(brief, handoff, mode=ExecutionMode.FAKE)
             production = self._executions.check_readiness(brief, handoff, mode=ExecutionMode.PRODUCTION)
+            live = self._executions.check_readiness(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True)
             simulation_ready = fake.ready and handoff is not None and not execution_exists
             production_ready = production.ready and handoff is not None and not execution_exists
+            live_ready = live.ready and handoff is not None and not execution_exists
             readiness_blockers = list(production.blockers)
+            live_blockers = list(live.blockers)
             if self._design_preview_required(brief) and (design_preview is None or not design_preview.approved):
                 readiness_blockers.append(DESIGN_PREVIEW_NOT_APPROVED)
             if handoff is None and not any(item.code == "design_preview_not_approved" for item in readiness_blockers):
                 readiness_blockers.extend(fake.blockers)
-            blockers.extend(self._public_blocker(item) for item in readiness_blockers)
-            checks.extend(self._readiness_checks(simulation_ready, production_ready, tuple(blocker.code for blocker in readiness_blockers)))
-        checks.append(readiness_check("opencode", "OpenCode", "unavailable", "Live OpenCode execution is not enabled for this MVP build."))
-        checks.append(readiness_check("live_execution", "Live execution", "unavailable", "Live execution is intentionally unavailable; use simulation or production dry-run only."))
+            blockers.extend(self._public_blocker(item) for item in (*readiness_blockers, *live_blockers))
+            checks.extend(self._readiness_checks(simulation_ready, production_ready, live_ready, tuple(blocker.code for blocker in (*readiness_blockers, *live_blockers))))
+        if brief is None:
+            live_ready = False
         view = ExecutionReadinessView(
             ready=production_ready if mode is ExecutionMode.PRODUCTION else simulation_ready,
             mode=mode,
             simulation_ready=simulation_ready,
             production_dry_run_ready=production_ready,
-            production_live_ready=False,
+            production_live_ready=live_ready,
             can_run_simulation=simulation_ready,
             can_prepare_dry_run=production_ready,
-            can_run_live=False,
+            can_run_live=live_ready,
             blockers=self._unique_readiness_blockers(blockers),
             checks=tuple(checks),
         )
@@ -504,6 +509,7 @@ class OrderWorkflowService:
             "execution_already_completed": "execution_already_completed",
             "execution_not_found": "execution_not_found",
             "brief_not_approved": "brief_not_approved",
+            "live_execution_opt_in_required": "live_execution_opt_in_required",
         }.get(code, code)
 
     @staticmethod
@@ -512,7 +518,7 @@ class OrderWorkflowService:
         return readiness_blocker_view(blocker, code=code)
 
     @staticmethod
-    def _readiness_checks(fake_ready: bool, production_ready: bool, blocker_codes: tuple[str, ...]):
+    def _readiness_checks(fake_ready: bool, production_ready: bool, live_ready: bool, blocker_codes: tuple[str, ...]):
         codes = set(blocker_codes)
         provider_blocked = bool(codes & {"provider_not_configured", "execution_provider_not_configured"})
         return (
@@ -522,6 +528,8 @@ class OrderWorkflowService:
             readiness_check("workspace", "Workspace", "missing" if "workspace_root_unavailable" in codes else "blocked" if "workspace_not_writable" in codes else "ready", "Choose a writable workspace root." if codes & {"workspace_root_unavailable", "workspace_not_writable"} else "Workspace planning requirements are satisfied."),
             readiness_check("qa_tools", "QA tools", "missing" if "qa_tools_unavailable" in codes else "ready", "Configure at least one QA command." if "qa_tools_unavailable" in codes else "QA planning requirements are satisfied."),
             readiness_check("production_dry_run", "Production dry-run", "ready" if production_ready else "blocked", "Can prepare a production execution package without live OpenCode." if production_ready else "Resolve production dry-run blockers before preparing a package."),
+            readiness_check("opencode", "OpenCode", "missing" if "opencode_unavailable" in codes else "ready" if live_ready else "unavailable", "OpenCode is not available." if "opencode_unavailable" in codes else "OpenCode readiness passed." if live_ready else "Live execution is locked by opt-in or readiness."),
+            readiness_check("live_execution", "Live execution", "ready" if live_ready else "unavailable", "Live OpenCode execution can be started." if live_ready else "Live execution is locked. Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio to enable it."),
         )
 
     @staticmethod

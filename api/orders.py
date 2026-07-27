@@ -36,6 +36,8 @@ _STATUS_BY_CODE = {
     "design_preview_not_approved": 409,
     "design_preview_stale": 409,
     "design_revision_note_required": 422,
+    "invalid_execution_mode": 422,
+    "live_execution_opt_in_required": 409,
     "handoff_blocked": 409,
     "execution_already_completed": 409,
     "execution_already_active": 409,
@@ -174,7 +176,7 @@ def get_handoff(order_id: str, request: Request):
 @router.post("/{order_id}/execution")
 async def start_execution(order_id: str, request: Request):
     payload = await _body(request, StartExecutionRequest)
-    return _call(get_order_workflow_service(request).start_execution, order_id, ExecutionMode(payload.mode))
+    return _call(get_order_workflow_service(request).start_execution, order_id, ExecutionMode(payload.mode), live=payload.live)
 
 
 @router.get("/{order_id}/readiness")

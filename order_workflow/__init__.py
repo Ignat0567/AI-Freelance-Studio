@@ -75,6 +75,7 @@ from .models import (
 )
 from .persistence import ExecutionStateStore, InMemoryExecutionStateStore
 from .production_adapter import ProductionProjectExecutionAdapter
+from .production_adapter import LiveOpenCodeExecutionAdapter, OpenCodeExecutionClient, OpenCodeExecutionResult, live_opencode_execution_enabled
 from .readiness import ReadinessResult, readiness_blocker
 from .service import OrderWorkflowError, OrderWorkflowService
 from .transitions import (
@@ -127,6 +128,9 @@ __all__ = [
     "GapAnalysis",
     "InvalidWorkflowTransition",
     "LayoutArchetype",
+    "LiveOpenCodeExecutionAdapter",
+    "OpenCodeExecutionClient",
+    "OpenCodeExecutionResult",
     "InMemoryExecutionStateStore",
     "ProjectBrief",
     "ProjectBriefService",
@@ -155,6 +159,7 @@ __all__ = [
     "build_production_execution_package",
     "detect_requirement_gaps",
     "infer_requirement_signals",
+    "live_opencode_execution_enabled",
     "new_public_id",
     "readiness_blocker",
     "utc_now",

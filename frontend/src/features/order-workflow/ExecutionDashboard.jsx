@@ -17,7 +17,7 @@ function ExecutionReadinessPanel({ readiness }) {
   );
 }
 
-export default function ExecutionDashboard({ state, readiness, pending, canStart, canDryRun, onStart, onDryRun, onCancel, onRefresh, onRefreshReadiness }) {
+export default function ExecutionDashboard({ state, readiness, pending, canStart, canDryRun, canLive, liveConfirm, setLiveConfirm, onStart, onDryRun, onLive, onCancel, onRefresh, onRefreshReadiness }) {
   const execution = state?.execution;
   const progress = execution?.progress ?? STAGE_PROGRESS[execution?.stage] ?? 0;
   return (
@@ -33,7 +33,8 @@ export default function ExecutionDashboard({ state, readiness, pending, canStart
         {execution.blockers?.length > 0 && <div className="ow-callout warning"><strong>Action required</strong>{execution.blockers.map(item => <p key={item.code}>{item.message} <b>{item.action}</b></p>)}</div>}
         <EventTimeline events={execution.events} />
       </>}
-      <div className="ow-actions"><button type="button" className="fs-secondary" onClick={onRefreshReadiness} disabled={pending || !state?.order}>Refresh readiness</button><button type="button" className="fs-secondary" onClick={onRefresh} disabled={pending || !state?.order}>Refresh execution</button>{!execution && <button type="button" className="fs-primary" onClick={onStart} disabled={pending || !canStart}>{pending ? 'Starting...' : 'Run simulation'}</button>}{!execution && <button type="button" className="fs-secondary" onClick={onDryRun} disabled={pending || !canDryRun}>Prepare production dry-run</button>}<button type="button" className="fs-secondary" disabled>Live execution unavailable</button>{execution && !isTerminalExecution(execution) && <button type="button" className="fs-danger-button" onClick={onCancel} disabled={pending}>Cancel execution</button>}</div>
+      {!execution && canLive && <div className="ow-callout warning"><label><input type="checkbox" checked={liveConfirm} onChange={event => setLiveConfirm(event.target.checked)} /> This will ask OpenCode to create files in the generated project workspace. Continue?</label></div>}
+      <div className="ow-actions"><button type="button" className="fs-secondary" onClick={onRefreshReadiness} disabled={pending || !state?.order}>Refresh readiness</button><button type="button" className="fs-secondary" onClick={onRefresh} disabled={pending || !state?.order}>Refresh execution</button>{!execution && <button type="button" className="fs-primary" onClick={onStart} disabled={pending || !canStart}>{pending ? 'Starting...' : 'Run simulation'}</button>}{!execution && <button type="button" className="fs-secondary" onClick={onDryRun} disabled={pending || !canDryRun}>Prepare production dry-run</button>}{!execution && <button type="button" className="fs-danger-button" onClick={onLive} disabled={pending || !canLive || !liveConfirm}>Start live OpenCode execution</button>}{!canLive && <button type="button" className="fs-secondary" disabled>Live execution locked</button>}{execution && !isTerminalExecution(execution) && <button type="button" className="fs-danger-button" onClick={onCancel} disabled={pending}>Cancel execution</button>}</div>
     </section>
   );
 }

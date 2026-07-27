@@ -74,6 +74,7 @@ class ApproveDesignPreviewRequest(StrictApiModel):
 
 class StartExecutionRequest(StrictApiModel):
     mode: Literal["fake", "production"] = "fake"
+    live: bool = False
 
 
 class NextAction(StrictApiModel):

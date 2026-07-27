@@ -39,7 +39,7 @@ export const orderWorkflowApi = {
   approveDesignPreview: (orderId, preview_id, brief_version) => post(`/api/orders/${encodeURIComponent(orderId)}/design-preview/approve`, { preview_id, brief_version }),
   getHandoff: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/handoff`),
   getReadiness: (orderId, mode = 'production') => requestJson(`/api/orders/${encodeURIComponent(orderId)}/readiness?mode=${encodeURIComponent(mode)}`),
-  startExecution: (orderId, mode = 'fake') => post(`/api/orders/${encodeURIComponent(orderId)}/execution`, { mode }),
+  startExecution: (orderId, mode = 'fake', live = false) => post(`/api/orders/${encodeURIComponent(orderId)}/execution`, { mode, live }),
   getExecution: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/execution`),
   cancelExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/cancel`, {}),
   getEvents: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/events`),
