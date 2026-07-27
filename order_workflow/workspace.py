@@ -55,6 +55,22 @@ def reserve_owned_project_workspace(root: str | Path, *, order_id: str, executio
     return ProjectWorkspace(root=root_path, project_path=project_path)
 
 
+def validate_owned_project_workspace(workspace: ProjectWorkspace, *, order_id: str, execution_id: str) -> None:
+    root_path = workspace.root.expanduser().resolve()
+    project_path = workspace.project_path.expanduser().resolve()
+    if not root_path.is_dir() or root_path not in project_path.parents or not project_path.is_dir():
+        raise ValueError("unsafe_workspace_path")
+    marker = project_path / ".freelancerstudio-project.json"
+    if not marker.is_file():
+        raise ValueError("workspace_not_owned")
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("workspace_marker_invalid") from exc
+    if payload.get("owner") != "AI Freelance Studio" or payload.get("order_id") != order_id or payload.get("execution_id") != execution_id:
+        raise ValueError("workspace_marker_mismatch")
+
+
 def summarize_generated_workspace(workspace: ProjectWorkspace, *, limit: int = 50) -> dict[str, object]:
     entries = []
     files_created = 0

@@ -145,6 +145,14 @@ def _run_capture(command: list[str], timeout: int, cwd: str | None = None) -> tu
         return None, "", str(exc)
 
 
+def _safe_cli_invocation(binary: str, model: str, attachment_count: int, *, workspace_bound: bool = False) -> list[str]:
+    invocation = [binary, "run", "<prompt>", "--model", model, "--format", "json"]
+    if workspace_bound:
+        invocation.extend(["--dir", "<workspace>"])
+    invocation.extend(["--file", "<attachment>"] * attachment_count)
+    return invocation
+
+
 @dataclass
 class OpenCodeBridgeConnection:
     connection_id: str
@@ -237,23 +245,32 @@ class OpenCodeBridgeConnection:
             return {"status": "error", "failure_stage": "before_invocation", "error_category": "attachment_missing", "errors": ["An attachment is missing"], "text": "", "attachment_count": len(requested_attachments)}
         attachment_metadata = _attachment_metadata(attachments)
         prompt = f"{request.get('system_instruction', '')}\n\n{request.get('user_content') or request.get('text_content') or ''}".strip()
+        workspace_path = request.get("workspace_path")
+        workdir = str(Path(workspace_path).expanduser().resolve()) if workspace_path else None
+        if workdir and not os.path.isdir(workdir):
+            return {"status": "error", "failure_stage": "before_invocation", "error_category": "workspace_unavailable", "errors": ["Workspace path is not available"], "text": "", "attachment_count": len(attachments)}
         command = [binary, "run", prompt, "--model", model, "--format", "json"]
+        if workdir:
+            command.extend(["--dir", workdir])
         for path in attachments:
             command.extend(["--file", path])
         timeout = max(1, int(request.get("timeout", 120)))
         started = time.monotonic()
-        # A temporary working directory prevents the judge from being placed inside a project tree.
-        with tempfile.TemporaryDirectory(prefix="freelancerstudio-opencode-") as workdir:
+        if workdir:
             code, stdout, stderr = _run_capture(command, timeout, workdir)
+        else:
+            # A temporary working directory prevents the judge from being placed inside a project tree.
+            with tempfile.TemporaryDirectory(prefix="freelancerstudio-opencode-") as temp_workdir:
+                code, stdout, stderr = _run_capture(command, timeout, temp_workdir)
         duration = round(time.monotonic() - started, 3)
         text = self._extract_text(stdout)
         raw_error = _strip_ansi(stderr or stdout)[-1000:]
         if code is None:
             category = "timeout" if stderr == "timeout" else "bridge_unavailable"
-            return {"status": "error", "failure_stage": "model_execution" if category == "timeout" else "cli_invocation", "error_category": category, "errors": [raw_error], "text": text, "duration": duration, "timeout": category == "timeout", "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": [binary, "run", "<prompt>", "--model", model, "--format", "json"] + ["--file", "<attachment>"] * len(attachments)}
+            return {"status": "error", "failure_stage": "model_execution" if category == "timeout" else "cli_invocation", "error_category": category, "errors": [raw_error], "text": text, "duration": duration, "timeout": category == "timeout", "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
         if code != 0:
-            return {"status": "error", "failure_stage": "cli_process_exit", "error_category": _error_category(stderr, stdout), "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": [binary, "run", "<prompt>", "--model", model, "--format", "json"] + ["--file", "<attachment>"] * len(attachments)}
-        return {"status": "success", "text": text, "structured_output": None, "provider_connection": self.connection_id, "bridge": "opencode_bridge", "underlying_provider": model.split("/", 1)[0] if "/" in model else "", "model": model, "capabilities_used": ["text_input"] + (["file_input"] if attachments else []), "session_id": "fresh-cli-session", "duration": duration, "errors": [], "failure_stage": "", "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": [binary, "run", "<prompt>", "--model", model, "--format", "json"] + ["--file", "<attachment>"] * len(attachments)}
+            return {"status": "error", "failure_stage": "cli_process_exit", "error_category": _error_category(stderr, stdout), "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+        return {"status": "success", "text": text, "structured_output": None, "provider_connection": self.connection_id, "bridge": "opencode_bridge", "underlying_provider": model.split("/", 1)[0] if "/" in model else "", "model": model, "capabilities_used": ["text_input"] + (["file_input"] if attachments else []), "session_id": "fresh-cli-session", "duration": duration, "errors": [], "failure_stage": "", "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
 
     def test_connection(self, include_vision: bool = False) -> dict[str, Any]:
         response = self.execute({"user_content": "Return exactly OPENCODE_BRIDGE_TEXT_OK", "timeout": 120})

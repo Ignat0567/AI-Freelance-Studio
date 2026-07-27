@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from threading import RLock
 from typing import Any
 from uuid import uuid4
@@ -83,6 +84,7 @@ class ConfiguredOpenCodeExecutionClient:
                 "user_content": prompt,
                 "requested_model": connection.get("configured_model"),
                 "timeout": 900,
+                "workspace_path": str(Path(workspace_path).expanduser().resolve()),
             }
         )
         if result.get("status") == "success":

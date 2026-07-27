@@ -19,7 +19,7 @@ from .readiness import (
     WORKSPACE_ROOT_UNAVAILABLE,
     ReadinessResult,
 )
-from .workspace import plan_project_workspace, reserve_owned_project_workspace, summarize_generated_workspace
+from .workspace import plan_project_workspace, reserve_owned_project_workspace, summarize_generated_workspace, validate_owned_project_workspace
 
 
 def live_opencode_execution_enabled(environ: dict[str, str] | None = None) -> bool:
@@ -176,6 +176,7 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         (workspace.project_path / "execution_package.json").write_text(package.to_json(), encoding="utf-8")
         if cancellation.is_cancelled():
             return _cancelled_result(request)
+        validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)
         event_sink.emit(stage=ExecutionStage.IMPLEMENTATION, agent="OpenCode", progress=45, message="Sending implementation prompt to OpenCode")
         try:
             result = self._opencode_client.execute_project_prompt(package.prompt, workspace.project_path, event_sink, cancellation)

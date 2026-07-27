@@ -23,8 +23,8 @@ from order_workflow import (
 )
 from order_workflow.api_models import CreateOrderRequest
 from order_workflow.execution_config import ExecutionConfigurationProvider
-from order_workflow.service import OrderWorkflowService
-from order_workflow.workspace import reserve_owned_project_workspace, summarize_generated_workspace
+from order_workflow.service import ConfiguredOpenCodeExecutionClient, OrderWorkflowService
+from order_workflow.workspace import ProjectWorkspace, reserve_owned_project_workspace, summarize_generated_workspace, validate_owned_project_workspace
 
 
 pytestmark = pytest.mark.unit
@@ -207,6 +207,15 @@ def test_workspace_safety_rejects_unsafe_and_non_owned_paths(tmp_path):
     assert "README.md" in summary["top_level_entries"]
 
 
+def test_workspace_validation_rejects_mismatched_marker(tmp_path):
+    workspace = reserve_owned_project_workspace(tmp_path, order_id="order", execution_id="execution", brief_fingerprint="abc")
+    validate_owned_project_workspace(workspace, order_id="order", execution_id="execution")
+    with pytest.raises(ValueError, match="workspace_marker_mismatch"):
+        validate_owned_project_workspace(workspace, order_id="order", execution_id="other")
+    with pytest.raises(ValueError, match="unsafe_workspace_path"):
+        validate_owned_project_workspace(ProjectWorkspace(root=tmp_path, project_path=tmp_path.parent), order_id="order", execution_id="execution")
+
+
 def test_crm_prompt_differs_and_has_no_pdf_panels(tmp_path):
     pdf_brief, pdf_handoff = _contract(PDF)
     crm_brief, crm_handoff = _contract(CRM)
@@ -327,3 +336,24 @@ def test_successful_live_execution_keeps_success_wording(tmp_path):
     assert finished.status is ExecutionStatus.SUCCEEDED
     assert delivery.summary == "Live OpenCode execution completed; QA was not run."
     assert (client.workspace_path / "delivery_report.md").is_file()
+
+
+def test_configured_client_passes_owned_workspace_to_bridge(tmp_path, monkeypatch):
+    captured = {}
+
+    class Bridge:
+        @classmethod
+        def from_dict(cls, connection):
+            captured["connection"] = connection
+            return cls()
+
+        def execute(self, request):
+            captured["request"] = request
+            return {"status": "success", "text": "ok"}
+
+    monkeypatch.setattr("order_workflow.service.OpenCodeBridgeConnection", Bridge)
+    client = ConfiguredOpenCodeExecutionClient(config_loader=lambda: _bridge_config())
+    result = client.execute_project_prompt("build", tmp_path, _NoopSink(), _Token())
+
+    assert result.success is True
+    assert captured["request"]["workspace_path"] == str(tmp_path.resolve())

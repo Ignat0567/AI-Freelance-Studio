@@ -82,6 +82,26 @@ def test_failed_request_preserves_safe_cli_diagnostics(monkeypatch, tmp_path):
     assert "secret-value" not in result["stderr_summary"]
 
 
+def test_workspace_bound_request_runs_in_owned_workspace_with_dir_argument(monkeypatch, tmp_path):
+    captured = {}
+    connection = _connection(executable_path="opencode")
+
+    def run(command, timeout, cwd=None):
+        captured["command"] = command
+        captured["timeout"] = timeout
+        captured["cwd"] = cwd
+        return 0, '{"part":{"type":"text","text":"ok"}}', ""
+
+    monkeypatch.setattr(opencode_provider, "_run_capture", run)
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["status"] == "success"
+    assert captured["cwd"] == str(tmp_path.resolve())
+    assert captured["command"][-2:] == ["--dir", str(tmp_path.resolve())]
+    assert result["cli_invocation"][-2:] == ["--dir", "<workspace>"]
+
+
 def test_timeout_is_not_request_rejection(monkeypatch):
     connection = _connection(executable_path="opencode")
     monkeypatch.setattr(opencode_provider, "_run_capture", lambda *_args, **_kwargs: (None, "", "timeout"))
