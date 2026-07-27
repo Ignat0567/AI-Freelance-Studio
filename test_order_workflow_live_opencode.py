@@ -75,6 +75,14 @@ class FakeOpenCodeClient:
         return OpenCodeExecutionResult(success=True, summary="generated")
 
 
+class RejectingOpenCodeClient(FakeOpenCodeClient):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+        self.prompt = prompt
+        self.workspace_path = Path(workspace_path)
+        event_sink.emit(stage="implementation", agent="OpenCode", progress=60, message="OpenCode execution rejected request")
+        return OpenCodeExecutionResult(success=False, summary="OpenCode execution failed: opencode_request_rejected", warnings=("opencode_request_rejected",))
+
+
 def _clock():
     return NOW + timedelta(seconds=1)
 
@@ -277,3 +285,45 @@ def test_default_configured_live_start_blocks_missing_opt_in_and_missing_provide
     codes = {item["code"] for item in missing_start["blockers"]}
     assert "provider_not_configured" in codes
     assert "model_not_selected" in codes
+
+
+def test_failed_live_execution_reports_failure_without_generation_claim_or_secrets(tmp_path):
+    client = RejectingOpenCodeClient()
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+    serialized = finished.to_json().casefold()
+    delivery = next(item for item in finished.artifacts if item.name == "delivery_report.md")
+    workspace_summary = next(item for item in finished.artifacts if item.name == "generated_project_summary.json")
+    report_path = client.workspace_path / "delivery_report.md"
+
+    assert finished.status is ExecutionStatus.FAILED
+    assert finished.result.success is False
+    assert finished.result.test_summary.skipped == 1
+    assert "opencode_execution_failed" in finished.result.errors
+    assert "opencode_request_rejected" in finished.result.warnings
+    assert delivery.summary == "Live OpenCode execution failed; QA was not run."
+    assert "completed" not in delivery.summary.casefold()
+    assert "generated project summary" not in workspace_summary.summary.casefold()
+    assert "generated app files detected: 0" in workspace_summary.summary.casefold()
+    assert report_path.is_file()
+    assert "Live OpenCode execution failed." in report_path.read_text(encoding="utf-8")
+    assert "QA status: not_run" in report_path.read_text(encoding="utf-8")
+    assert "token" not in serialized
+    assert "api_key" not in serialized
+
+
+def test_successful_live_execution_keeps_success_wording(tmp_path):
+    client = FakeOpenCodeClient()
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+    delivery = next(item for item in finished.artifacts if item.name == "delivery_report.md")
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert delivery.summary == "Live OpenCode execution completed; QA was not run."
+    assert (client.workspace_path / "delivery_report.md").is_file()

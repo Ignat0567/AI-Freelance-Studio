@@ -186,11 +186,31 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return cancelled.model_copy(update={"warnings": (*cancelled.warnings, "OpenCode cancellation was requested; no unrelated processes were terminated.")})
         event_sink.emit(stage=ExecutionStage.VERIFICATION, agent="BugCatcher", progress=80, message="QA not run in first live MVP", level=EventLevel.WARNING)
         summary = summarize_generated_workspace(workspace)
+        studio_package_files = {"execution_package.json", "execution_prompt.md"}
+        top_level_entries = set(summary.get("top_level_entries", ()))
+        app_file_count = max(0, int(summary["files_created"]) - len(top_level_entries.intersection(studio_package_files)))
+        status_line = "Live OpenCode execution completed." if result.success else "Live OpenCode execution failed."
+        delivery_report = (
+            f"{status_line}\n"
+            "QA status: not_run.\n"
+            f"Generated app files detected: {app_file_count}.\n"
+            f"Workspace files inspected: {summary['files_created']}.\n"
+        )
+        (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
+        workspace_summary = (
+            f"Workspace contains {summary['files_created']} non-marker files; "
+            f"generated app files detected: {app_file_count}."
+        )
+        delivery_summary = (
+            "Live OpenCode execution completed; QA was not run."
+            if result.success
+            else "Live OpenCode execution failed; QA was not run."
+        )
         artifacts = (
-            event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="generated_project_summary.json", summary=f"Generated project summary: {summary['files_created']} files.", reference="generated-project-summary-json"),
+            event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="generated_project_summary.json", summary=workspace_summary, reference="generated-project-summary-json"),
             event_sink.artifact(kind=ArtifactKind.AGENT_HANDOFF, name="execution_package.json", summary="Live execution package written to the owned workspace.", reference="execution-package-json"),
             event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="execution_prompt.md", summary="Implementation prompt sent to OpenCode.", reference="execution-prompt-md"),
-            event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="delivery_report.md", summary="Live OpenCode execution completed; QA was not run.", reference="delivery-report-md"),
+            event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="delivery_report.md", summary=delivery_summary, reference="delivery-report-md"),
         )
         event_sink.emit(stage=ExecutionStage.COMPLETED, agent="Product Judge", progress=100, message="Delivery summary prepared")
         return ExecutionResult(

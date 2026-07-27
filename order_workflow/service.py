@@ -88,7 +88,7 @@ class ConfiguredOpenCodeExecutionClient:
         if result.get("status") == "success":
             return OpenCodeExecutionResult(success=True, summary=str(result.get("text") or "OpenCode completed."))
         category = str(result.get("error_category") or result.get("status") or "opencode_error")
-        return OpenCodeExecutionResult(success=False, summary=f"OpenCode execution failed: {category}", warnings=(category,))
+        return OpenCodeExecutionResult(success=False, summary=f"OpenCode execution failed: {_public_opencode_failure_code(category)}", warnings=(_public_opencode_failure_code(category),))
 
     def _connection(self) -> dict:
         config = self._config_loader()
@@ -108,6 +108,18 @@ class ConfiguredOpenCodeExecutionClient:
             if str(connection.get("configured_model") or "").strip():
                 return connection
         return {}
+
+
+def _public_opencode_failure_code(category: str) -> str:
+    return {
+        "unauthenticated": "opencode_auth_required",
+        "model_unavailable": "opencode_model_rejected",
+        "provider_upload_failed": "opencode_payload_rejected",
+        "attachment_load_failed": "opencode_payload_rejected",
+        "cli_argument_parsing": "opencode_payload_rejected",
+        "bridge_unavailable": "opencode_endpoint_unavailable",
+        "request_rejected": "opencode_request_rejected",
+    }.get(str(category or "").strip().lower(), "opencode_request_rejected")
 
 
 class ConfigurationBackedExecutionAdapter:
