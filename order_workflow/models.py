@@ -93,6 +93,12 @@ class EventKind(str, Enum):
     RESULT = "result"
 
 
+class EventLevel(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
 class ArtifactKind(str, Enum):
     PROJECT_BRIEF = "project_brief"
     AGENT_HANDOFF = "agent_handoff"
@@ -370,10 +376,12 @@ class ExecutionEvent(StrictDomainModel):
     id: PublicId
     execution_id: PublicId
     kind: EventKind
+    level: EventLevel = EventLevel.INFO
     message: ShortText
     stage: ExecutionStage | None = None
     agent: ShortText | None = None
     progress: Annotated[int, Field(ge=0, le=100)] | None = None
+    details: tuple[ShortText, ...] = ()
     created_at: datetime
 
     @field_validator("created_at")
@@ -415,9 +423,13 @@ class TestSummary(StrictDomainModel):
 class ExecutionResult(StrictDomainModel):
     success: bool
     summary: LongText
+    outcome: ShortText | None = None
     artifact_ids: tuple[PublicId, ...] = ()
     test_summary: TestSummary = Field(default_factory=TestSummary)
     warnings: tuple[ShortText, ...] = ()
+    errors: tuple[ShortText, ...] = ()
+    duration_seconds: Annotated[float, Field(ge=0)] | None = None
+    final_stage: ExecutionStage | None = None
     completed_at: datetime
 
     @field_validator("completed_at")
@@ -431,6 +443,7 @@ class ProjectExecution(StrictDomainModel):
     order_id: PublicId
     brief_id: PublicId
     handoff_id: PublicId
+    approval_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
     mode: ExecutionMode
     status: ExecutionStatus = ExecutionStatus.QUEUED
     stage: ExecutionStage = ExecutionStage.REQUIREMENTS
