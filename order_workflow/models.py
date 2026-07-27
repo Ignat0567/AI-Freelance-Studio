@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]
 LongText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
+OrderDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=20_000)]
 PublicId = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*_[A-Za-z0-9][A-Za-z0-9_-]{0,95}$")]
 OpaqueReference = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$")]
 LanguageCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=16, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
@@ -49,8 +50,14 @@ class QuestionType(str, Enum):
 
 
 class ElenaDesignChoice(str, Enum):
-    SHOW_CONCEPT = "show_concept"
-    PROCEED_DIRECTLY = "proceed_directly"
+    SHOW_ELENA_CONCEPT = "show_elena_concept"
+    PROCEED_WITHOUT_CONCEPT = "proceed_without_concept"
+    UNDECIDED = "undecided"
+    NOT_APPLICABLE = "not_applicable"
+
+    # Compatibility aliases for the Commit 1 public names.
+    SHOW_CONCEPT = SHOW_ELENA_CONCEPT
+    PROCEED_DIRECTLY = PROCEED_WITHOUT_CONCEPT
 
 
 class ExecutionMode(str, Enum):
@@ -209,7 +216,7 @@ class ClarificationAnswer(StrictDomainModel):
 class UserOrder(StrictDomainModel):
     id: PublicId
     title: ShortText
-    description: LongText
+    description: OrderDescription
     product_type: Literal[ProductType.WEB_APP] = ProductType.WEB_APP
     preferred_language: LanguageCode = "en"
     constraints: tuple[ShortText, ...] = ()
@@ -301,6 +308,8 @@ class ProjectBrief(StrictDomainModel):
     elena_design_choice: ElenaDesignChoice
     elena_design_concept: ElenaDesignConcept | None = None
     approved_at: datetime | None = None
+    approved_revision: Annotated[int, Field(ge=1)] | None = None
+    approval_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -317,10 +326,15 @@ class ProjectBrief(StrictDomainModel):
             raise ValueError("updated_at cannot precede created_at")
         if self.approved_at is not None and self.approved_at < self.created_at:
             raise ValueError("approved_at cannot precede created_at")
-        if self.elena_design_choice is ElenaDesignChoice.SHOW_CONCEPT and self.elena_design_concept is None:
-            raise ValueError("Elena concept is required when selected")
-        if self.elena_design_choice is ElenaDesignChoice.PROCEED_DIRECTLY and self.elena_design_concept is not None:
-            raise ValueError("Elena concept must be absent when skipped")
+        approval_fields = (self.approved_at, self.approved_revision, self.approval_fingerprint)
+        if any(item is not None for item in approval_fields) and not all(item is not None for item in approval_fields):
+            raise ValueError("approval metadata must be complete")
+        if self.approved_revision is not None and self.approved_revision != self.revision:
+            raise ValueError("approval must bind the current brief revision")
+        if self.elena_design_choice is ElenaDesignChoice.SHOW_ELENA_CONCEPT and self.elena_design_concept is None:
+            raise ValueError("selected Elena concept is not ready")
+        if self.elena_design_concept is not None and self.elena_design_choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT:
+            raise ValueError("Elena concept is only valid when selected")
         return self
 
 

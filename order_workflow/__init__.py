@@ -1,5 +1,27 @@
 """Domain and services for the user-facing project order workflow."""
 
+from .brief_service import (
+    BriefApprovalBinding,
+    BriefRevisionKind,
+    BriefRevisionOperation,
+    BriefRevisionRecord,
+    BriefRevisionRequest,
+    BriefServiceError,
+    ProjectBriefService,
+    verify_brief_approval,
+)
+from .clarification import (
+    AlexClarificationService,
+    ClarificationError,
+    ClarificationResult,
+    ClarificationSession,
+    GapAnalysis,
+    RequirementDimension,
+    RequirementSignals,
+    detect_requirement_gaps,
+    infer_requirement_signals,
+)
+from .handoffs import AgentHandoffService
 from .models import (
     AgentHandoff,
     ArtifactKind,
@@ -36,10 +58,21 @@ from .transitions import (
 )
 
 __all__ = [
+    "AlexClarificationService",
     "AgentHandoff",
+    "AgentHandoffService",
     "ArtifactKind",
+    "BriefApprovalBinding",
+    "BriefRevisionKind",
+    "BriefRevisionOperation",
+    "BriefRevisionRecord",
+    "BriefRevisionRequest",
+    "BriefServiceError",
     "ClarificationAnswer",
+    "ClarificationError",
     "ClarificationQuestion",
+    "ClarificationResult",
+    "ClarificationSession",
     "ElenaDesignChoice",
     "ElenaDesignConcept",
     "EventKind",
@@ -50,20 +83,27 @@ __all__ = [
     "ExecutionResult",
     "ExecutionStage",
     "ExecutionStatus",
+    "GapAnalysis",
     "InvalidWorkflowTransition",
     "ProjectBrief",
+    "ProjectBriefService",
     "ProjectExecution",
     "ProductType",
     "QuestionType",
     "RecommendedStack",
+    "RequirementDimension",
+    "RequirementSignals",
     "TestSummary",
     "ThemePalette",
     "UserOrder",
     "UserOrderStatus",
     "append_bounded_event",
+    "detect_requirement_gaps",
+    "infer_requirement_signals",
     "new_public_id",
     "utc_now",
     "validate_execution_stage_transition",
     "validate_execution_transition",
     "validate_order_transition",
+    "verify_brief_approval",
 ]
