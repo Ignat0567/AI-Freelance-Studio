@@ -89,11 +89,11 @@ class ConfiguredOpenCodeExecutionClient:
         )
         if result.get("status") == "success":
             return OpenCodeExecutionResult(success=True, summary=str(result.get("text") or "OpenCode completed."), outcome="generated", meaningful_artifacts=tuple(result.get("meaningful_artifacts") or ()))
-        if result.get("classification") == "generated_needs_review":
+        if result.get("classification") in {"generated_needs_review", "opencode_usable_but_nonterminating"}:
             return OpenCodeExecutionResult(
                 success=True,
                 summary="OpenCode created files but did not exit before timeout. Review the generated workspace before QA.",
-                warnings=("OpenCode created files but did not exit before timeout. Review the generated workspace before QA.",),
+                warnings=("opencode_usable_but_nonterminating", "OpenCode created files but did not exit before timeout. Review the generated workspace before QA."),
                 outcome="generated_needs_review",
                 timed_out=bool(result.get("timed_out") or result.get("timeout")),
                 meaningful_artifacts=tuple(result.get("meaningful_artifacts") or ()),
@@ -125,15 +125,28 @@ class ConfiguredOpenCodeExecutionClient:
 def _public_opencode_failure_code(category: str) -> str:
     return {
         "unauthenticated": "opencode_auth_required",
+        "authentication_failure": "opencode_authentication_failure",
         "model_unavailable": "opencode_model_rejected",
+        "model_rejected": "opencode_model_rejected",
+        "provider_error": "opencode_provider_error",
+        "provider_rejected": "opencode_provider_rejected",
         "provider_upload_failed": "opencode_payload_rejected",
         "attachment_load_failed": "opencode_payload_rejected",
-        "cli_argument_parsing": "opencode_payload_rejected",
+        "cli_argument_parsing": "opencode_flag_rejected",
+        "flag_rejected": "opencode_flag_rejected",
         "bridge_unavailable": "opencode_endpoint_unavailable",
         "timeout": "opencode_execution_timeout",
         "opencode_execution_timeout": "opencode_execution_timeout",
+        "opencode_timeout_without_artifact": "opencode_timeout_without_artifact",
+        "opencode_usable_but_nonterminating": "opencode_usable_but_nonterminating",
+        "opencode_json_stream_failure": "opencode_json_stream_failure",
+        "json_stream_failure": "opencode_json_stream_failure",
+        "artifact_validation_failed": "opencode_artifact_validation_failed",
+        "opencode_artifact_validation_failed": "opencode_artifact_validation_failed",
+        "process_failed": "opencode_process_failed",
+        "opencode_process_failed_with_artifacts": "opencode_process_failed",
         "request_rejected": "opencode_request_rejected",
-    }.get(str(category or "").strip().lower(), "opencode_request_rejected")
+    }.get(str(category or "").strip().lower(), "opencode_process_failed")
 
 
 class ConfigurationBackedExecutionAdapter:

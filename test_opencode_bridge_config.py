@@ -51,10 +51,10 @@ def test_missing_or_invalid_config_keeps_existing_default_behavior(monkeypatch, 
     monkeypatch.setattr(opencode_bridge, "_opencode_auth_provider_ids", lambda: set())
 
     monkeypatch.setattr(config_storage, "CONFIG_FILE", str(missing_path))
-    assert opencode_bridge._preferred_provider_model() == ("nvidia", "meta/llama-3.3-70b-instruct")
+    assert opencode_bridge._preferred_provider_model() == ("nvidia", "deepseek-ai/deepseek-v4-pro")
 
     monkeypatch.setattr(config_storage, "CONFIG_FILE", str(invalid_path))
-    assert opencode_bridge._preferred_provider_model() == ("nvidia", "meta/llama-3.3-70b-instruct")
+    assert opencode_bridge._preferred_provider_model() == ("nvidia", "deepseek-ai/deepseek-v4-pro")
 
 
 def test_config_storage_monkeypatch_affects_opencode_status(monkeypatch, tmp_path):

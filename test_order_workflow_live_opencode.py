@@ -23,11 +23,22 @@ from order_workflow import (
 )
 from order_workflow.api_models import CreateOrderRequest
 from order_workflow.execution_config import ExecutionConfigurationProvider
-from order_workflow.service import ConfiguredOpenCodeExecutionClient, OrderWorkflowService
+from order_workflow.service import ConfiguredOpenCodeExecutionClient, OrderWorkflowService, _public_opencode_failure_code
 from order_workflow.workspace import ProjectWorkspace, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_public_opencode_failure_mapping_does_not_default_to_request_rejected():
+    assert _public_opencode_failure_code("request_rejected") == "opencode_request_rejected"
+    assert _public_opencode_failure_code("model_rejected") == "opencode_model_rejected"
+    assert _public_opencode_failure_code("authentication_failure") == "opencode_authentication_failure"
+    assert _public_opencode_failure_code("provider_error") == "opencode_provider_error"
+    assert _public_opencode_failure_code("flag_rejected") == "opencode_flag_rejected"
+    assert _public_opencode_failure_code("opencode_json_stream_failure") == "opencode_json_stream_failure"
+    assert _public_opencode_failure_code("artifact_validation_failed") == "opencode_artifact_validation_failed"
+    assert _public_opencode_failure_code("unclassified") == "opencode_process_failed"
 NOW = datetime(2026, 7, 27, 19, 0, tzinfo=timezone.utc)
 PDF = "Create a browser PDF voice assistant with upload, voice and text chat, grounded answers, page citations and speech playback."
 CRM = "Create a CRM for clients, leads, pipeline and deals with task activity tracking."

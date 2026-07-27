@@ -69,7 +69,7 @@ _PROVIDER_MAP = {
 }
 
 _MODEL_MAP = {
-    "nvidia": "meta/llama-3.3-70b-instruct",
+    "nvidia": "deepseek-ai/deepseek-v4-pro",
     "openai": "gpt-5.5",
     "anthropic": "claude-sonnet-4-20250514",
     "deepseek": "deepseek-chat",
@@ -110,7 +110,7 @@ def _ensure_opencode_config() -> bool:
     studio_cfg = _get_studio_config()
     system_cfg = studio_cfg.get("_system", {}) if isinstance(studio_cfg.get("_system"), dict) else {}
     provider_raw = system_cfg.get("global_provider") or studio_cfg.get("global_provider") or "nvidia"
-    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
+    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "deepseek-ai/deepseek-v4-pro")
     # Map provider. Effective OpenCode model can differ from Studio model only
     # when the selected provider is known to fail OpenCode tool/function calls
     # and a logged-in compatible OpenCode credential is available.
@@ -455,7 +455,7 @@ def test_opencode_readiness(executable_path: str = "", selected_model: str = "",
 def _effective_opencode_provider_model(provider_raw: str, model: str, studio_cfg: dict) -> tuple[str, str, str]:
     """Choose an OpenCode-compatible provider/model while staying inside OpenCode."""
     oc_provider = _PROVIDER_MAP.get(provider_raw, provider_raw)
-    selected_model = model or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
+    selected_model = model or _MODEL_MAP.get(provider_raw, "deepseek-ai/deepseek-v4-pro")
     if isinstance(selected_model, str) and selected_model.startswith(f"{oc_provider}/"):
         selected_model = selected_model.split("/", 1)[1]
 
@@ -1040,13 +1040,15 @@ class OpencodeBridge:
         cmd = [
             binary,
             "run",
-            "Read the attached .opencode_task.md file and complete the task exactly. Modify project files on disk.",
+            prompt,
             "--model",
             f"{provider}/{model}",
-            "--dangerously-skip-permissions",
-            f"--file={task_file_argument}",
+            "--format",
+            "json",
+            "--dir",
+            str(cwd),
         ]
-        command_shape = [str(binary), "run", "<task>", "--model", f"{provider}/{model}", "--dangerously-skip-permissions", "--file=<task-file>"]
+        command_shape = [str(binary), "run", "<prompt>", "--model", f"{provider}/{model}", "--format", "json", "--dir", str(cwd)]
         session_id = f"opencode-cli-{uuid.uuid4().hex[:8]}"
         if log_callback:
             log_callback(f"[Codex] Starting OpenCode CLI session: {session_id}")

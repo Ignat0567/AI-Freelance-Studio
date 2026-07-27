@@ -75,7 +75,7 @@ def test_failed_request_preserves_safe_cli_diagnostics(monkeypatch, tmp_path):
     result = connection.execute({"user_content": "Describe this", "image_attachments": [str(image)], "timeout": 5})
 
     assert result["failure_stage"] == "cli_process_exit"
-    assert result["error_category"] == "cli_argument_parsing"
+    assert result["error_category"] == "flag_rejected"
     assert result["exit_code"] == 2
     assert result["attachment_count"] == 1
     assert result["attachment_metadata"][0]["format"] == "png"
@@ -90,7 +90,7 @@ def test_workspace_bound_request_runs_in_owned_workspace_with_dir_argument(monke
         captured["command"] = command
         captured["timeout"] = timeout
         captured["cwd"] = cwd
-        return 0, '{"part":{"type":"text","text":"ok"}}', "", False, False
+        return 0, '{"type":"step_finish","part":{"reason":"stop"}}', "", False, False
 
     monkeypatch.setattr(opencode_provider, "_run_owned_capture", run)
 
@@ -125,7 +125,7 @@ def test_timeout_without_meaningful_files_is_execution_timeout(monkeypatch, tmp_
     result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
 
     assert result["status"] == "error"
-    assert result["classification"] == "opencode_execution_timeout"
+    assert result["classification"] == "opencode_timeout_without_artifact"
     assert result["timed_out"] is True
     assert result["files_detected"] is False
     assert result["meaningful_artifacts"] == []
@@ -145,7 +145,7 @@ def test_timeout_with_readme_is_generated_needs_review(monkeypatch, tmp_path):
     result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
 
     assert result["status"] == "partial"
-    assert result["classification"] == "generated_needs_review"
+    assert result["classification"] == "opencode_usable_but_nonterminating"
     assert result["files_detected"] is True
     assert result["meaningful_artifacts"] == ["README.md"]
     assert result["terminated_owned_process"] is True
@@ -164,7 +164,7 @@ def test_timeout_with_package_and_src_is_generated_needs_review(monkeypatch, tmp
 
     result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
 
-    assert result["classification"] == "generated_needs_review"
+    assert result["classification"] == "opencode_usable_but_nonterminating"
     assert "package.json" in result["meaningful_artifacts"]
     assert "src/" in result["meaningful_artifacts"]
 
@@ -181,10 +181,84 @@ def test_nonzero_exit_with_files_requires_review_and_keeps_sanitized_error(monke
     result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
 
     assert result["status"] == "partial"
-    assert result["classification"] == "generated_needs_review"
+    assert result["classification"] == "opencode_process_failed_with_artifacts"
     assert result["files_detected"] is True
     assert "secret-value" not in "\n".join(result["errors"])
     assert "secret-value" not in result["stderr_summary"]
+
+
+def test_ndjson_success_stream_is_not_request_rejection(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+    stdout = '\n'.join([
+        '{"type":"session_start"}',
+        '{"type":"step_start"}',
+        '{"type":"step_finish","part":{"reason":"stop"}}',
+    ])
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", lambda *_args, **_kwargs: (0, stdout, "", False, False))
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["status"] == "success"
+    assert result["error_category"] == "" if "error_category" in result else True
+    assert result["opencode_json_valid_lines"] == 3
+    assert result["opencode_terminal_event"] is True
+
+
+def test_multiple_json_objects_are_parsed_as_ndjson():
+    stream = opencode_provider._parse_json_event_stream('{"type":"one"}\n{"type":"two"}\n')
+
+    assert stream["valid_event_lines"] == 2
+    assert stream["event_types"] == ["one", "two"]
+    assert stream["non_json_line_count"] == 0
+
+
+def test_explicit_request_rejection_is_the_only_request_rejection():
+    assert opencode_provider._error_category("Error: request rejected by policy", "") == "request_rejected"
+    assert opencode_provider._error_category("Error: unexpected server error", "") == "process_failed"
+
+
+def test_unknown_model_maps_to_model_rejection():
+    assert opencode_provider._error_category("Error: unknown model meta/llama-3.3-70b-instruct", "") == "model_rejected"
+
+
+def test_provider_resource_exhaustion_maps_to_provider_error():
+    assert opencode_provider._error_category('Error: "ResourceExhausted: Worker local total request limit reached (18/16)"', "") == "provider_error"
+
+
+def test_artifact_validation_failure_is_not_request_rejection(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+    Path(tmp_path, "README.md").write_text("wrong", encoding="utf-8")
+    stdout = '{"type":"step_finish","part":{"reason":"stop"}}'
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", lambda *_args, **_kwargs: (0, stdout, "", False, False))
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5, "expected_artifact_path": "README.md", "expected_artifact_text": "right"})
+
+    assert result["classification"] == "opencode_artifact_validation_failed"
+    assert result["error_category"] == "artifact_validation_failed"
+
+
+def test_missing_terminal_event_is_json_stream_failure(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+    stdout = '{"type":"step_start"}\n{"type":"step_finish","part":{"reason":"tool-calls"}}'
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", lambda *_args, **_kwargs: (0, stdout, "", False, False))
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["classification"] == "opencode_json_stream_failure"
+    assert result["error_category"] == "json_stream_failure"
+
+
+def test_timeout_without_artifact_is_not_request_rejection(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", lambda *_args, **_kwargs: (None, "", "timeout", True, True))
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["classification"] == "opencode_timeout_without_artifact"
+
+
+def test_unsupported_flag_maps_to_flag_rejection():
+    assert opencode_provider._error_category("Error: unknown option --auto", "") == "flag_rejected"
 
 
 def test_text_only_bridge_is_rejected_for_product_judge(tmp_path):
