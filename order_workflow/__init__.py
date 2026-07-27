@@ -62,6 +62,7 @@ from .models import (
 )
 from .persistence import ExecutionStateStore, InMemoryExecutionStateStore
 from .readiness import ReadinessResult, readiness_blocker
+from .service import OrderWorkflowError, OrderWorkflowService
 from .transitions import (
     InvalidWorkflowTransition,
     validate_execution_stage_transition,
@@ -110,6 +111,8 @@ __all__ = [
     "ProjectExecution",
     "ProjectExecutionAdapter",
     "ProjectExecutionService",
+    "OrderWorkflowError",
+    "OrderWorkflowService",
     "ProductType",
     "QuestionType",
     "RecommendedStack",
