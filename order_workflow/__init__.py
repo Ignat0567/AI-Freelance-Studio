@@ -23,6 +23,7 @@ from .clarification import (
 )
 from .handoffs import AgentHandoffService
 from .execution import ExecutionServiceError, ProjectExecutionService, TERMINAL_EXECUTION_STATUSES
+from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import (
     CancellationToken,
     ExecutionEventSink,
@@ -61,6 +62,7 @@ from .models import (
     utc_now,
 )
 from .persistence import ExecutionStateStore, InMemoryExecutionStateStore
+from .production_adapter import ProductionProjectExecutionAdapter
 from .readiness import ReadinessResult, readiness_blocker
 from .service import OrderWorkflowError, OrderWorkflowService
 from .transitions import (
@@ -111,6 +113,8 @@ __all__ = [
     "ProjectExecution",
     "ProjectExecutionAdapter",
     "ProjectExecutionService",
+    "ProductionExecutionPackage",
+    "ProductionProjectExecutionAdapter",
     "OrderWorkflowError",
     "OrderWorkflowService",
     "ProductType",
@@ -125,6 +129,7 @@ __all__ = [
     "UserOrder",
     "UserOrderStatus",
     "append_bounded_event",
+    "build_production_execution_package",
     "detect_requirement_gaps",
     "infer_requirement_signals",
     "new_public_id",

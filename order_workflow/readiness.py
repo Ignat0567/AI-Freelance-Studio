@@ -25,6 +25,16 @@ PRODUCTION_NOT_CONFIGURED = readiness_blocker(
     "Select and configure a coding provider before starting execution.",
 )
 
+PROVIDER_NOT_CONFIGURED = readiness_blocker(
+    "provider_not_configured",
+    "Select a coding provider before starting production execution.",
+)
+
+MODEL_NOT_SELECTED = readiness_blocker(
+    "model_not_selected",
+    "Select a coding model before starting production execution.",
+)
+
 OPENCODE_UNAVAILABLE = readiness_blocker(
     "opencode_unavailable",
     "OpenCode is not available.",
@@ -33,6 +43,21 @@ OPENCODE_UNAVAILABLE = readiness_blocker(
 WORKSPACE_UNAVAILABLE = readiness_blocker(
     "workspace_unavailable",
     "A writable project workspace is not available.",
+)
+
+WORKSPACE_ROOT_UNAVAILABLE = readiness_blocker(
+    "workspace_root_unavailable",
+    "Choose an existing project workspace root before starting production execution.",
+)
+
+WORKSPACE_NOT_WRITABLE = readiness_blocker(
+    "workspace_not_writable",
+    "Choose a writable project workspace before starting production execution.",
+)
+
+QA_TOOLS_UNAVAILABLE = readiness_blocker(
+    "qa_tools_unavailable",
+    "Configure at least one QA command before starting production execution.",
 )
 
 UNSUPPORTED_PRODUCT_TYPE = readiness_blocker(
