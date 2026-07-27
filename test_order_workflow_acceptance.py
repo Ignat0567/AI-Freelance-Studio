@@ -286,7 +286,8 @@ def test_ui_acceptance_path_is_wired_without_renderer_token_or_hidden_pdf_execut
     assert "Elena Design Preview" in brief
     assert "orderWorkflowApi.approveDesignPreview" in page
     assert "orderWorkflowApi.approveBrief" in page
-    assert "Start fake execution" in execution
+    assert "Run simulation" in execution
+    assert "Prepare production dry-run" in execution
     assert "orderWorkflowApi.startExecution" in page
     assert "orderWorkflowApi.cancelExecution" in page
     assert "orderWorkflowApi.getOrder" in page

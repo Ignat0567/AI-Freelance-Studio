@@ -68,9 +68,11 @@ def test_execution_dashboard_is_explicitly_fake_and_cancellable():
     source = _read("ExecutionDashboard.jsx")
     assert "Simulation mode" in source
     assert "Fake executor for MVP validation" in source
-    assert "Start fake execution" in source
+    assert "Run simulation" in source
+    assert "Prepare production dry-run" in source
+    assert "Live execution unavailable" in source
     assert "Cancel execution" in source
-    for agent in ["active_agent", "stage", "progress", "events", "blockers"]:
+    for agent in ["active_agent", "stage", "progress", "events", "blockers", "Execution Readiness"]:
         assert agent in source
 
 
@@ -92,6 +94,7 @@ def test_api_client_uses_relative_routes_and_no_renderer_token_storage():
         "/defaults",
         "/brief",
         "/brief/approve",
+        "/readiness",
         "/execution",
         "/execution/cancel",
         "/events",
@@ -128,6 +131,28 @@ def test_frontend_execution_start_is_approval_gated():
     assert "Approve the current brief and Elena design preview before starting simulated execution" in page
     assert "Approval required" in dashboard
     assert "disabled={pending || !canStart}" in dashboard
+
+
+def test_execution_readiness_panel_guides_settings_without_live_execution():
+    dashboard = _read("ExecutionDashboard.jsx")
+    page = _read("OrderWorkflowPage.jsx")
+    api = _read("orderWorkflowApi.js")
+    css = _read("OrderWorkflow.css")
+
+    for expected in [
+        "Execution Readiness",
+        "Production dry-run",
+        "Open Settings from the sidebar",
+        "production_live_ready",
+        "Live execution is not enabled",
+    ]:
+        assert expected in dashboard
+    assert "can_prepare_dry_run" in page
+    assert "orderWorkflowApi.getReadiness" in page
+    assert "startExecution(state.order.id, mode)" in page
+    assert "mode = 'production'" in api
+    assert "X-FreelancerStudio-Token" not in dashboard + page + api
+    assert "ow-readiness" in css
 
 
 def test_design_preview_ui_and_api_are_wired_generically():

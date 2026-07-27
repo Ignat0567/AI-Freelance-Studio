@@ -38,11 +38,18 @@
 .ow-status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .ow-status-grid div { border: 1px solid var(--fs-border); border-radius: 16px; padding: 12px; background: rgba(255,255,255,.05); }
 .ow-status-grid span { display: block; color: var(--fs-muted); font-size: .82rem; }
+.ow-readiness { display: grid; gap: 12px; border: 1px solid var(--fs-border); border-radius: 22px; padding: 16px; background: rgba(255,255,255,.045); }
+.ow-readiness-modes, .ow-readiness-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ow-readiness-modes div, .ow-readiness-checks article { border: 1px solid var(--fs-border); border-radius: 16px; padding: 11px; background: rgba(255,255,255,.05); }
+.ow-readiness .ready { border-color: rgba(82, 196, 148, .65); }
+.ow-readiness .blocked, .ow-readiness .missing { border-color: rgba(255, 182, 72, .7); }
+.ow-readiness .unavailable { opacity: .72; }
+.ow-readiness span { display: block; color: var(--fs-muted); }
 .ow-progress { height: 12px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.12); }
 .ow-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--fs-accent), #8fe3ff); }
 .ow-timeline, .ow-artifacts { display: grid; gap: 8px; }
 .ow-timeline article, .ow-artifacts article { display: grid; gap: 3px; border: 1px solid var(--fs-border); border-radius: 16px; padding: 11px; background: rgba(255,255,255,.045); }
 .ow-timeline span, .ow-artifacts span, .ow-artifacts b { color: var(--fs-muted); }
 .ow-result-summary { display: grid; gap: 12px; }
-@media (max-width: 860px) { .ow-hero, .ow-revision-box, .ow-design-head { flex-direction: column; } .ow-grid.two, .ow-brief-grid, .ow-status-grid, .ow-region-list { grid-template-columns: 1fr; } .ow-mode { justify-items: start; } }
+@media (max-width: 860px) { .ow-hero, .ow-revision-box, .ow-design-head { flex-direction: column; } .ow-grid.two, .ow-brief-grid, .ow-status-grid, .ow-region-list, .ow-readiness-modes, .ow-readiness-checks { grid-template-columns: 1fr; } .ow-mode { justify-items: start; } }
 @media (prefers-reduced-motion: reduce) { .ow-steps button, .ow-actions button { transition: none; } }

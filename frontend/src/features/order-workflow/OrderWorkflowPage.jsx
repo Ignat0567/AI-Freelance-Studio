@@ -40,6 +40,7 @@ export default function OrderWorkflowPage({ active }) {
   const [answers, setAnswers] = useState({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [readiness, setReadiness] = useState(null);
   const [recovering, setRecovering] = useState(false);
   const [polling, setPolling] = useState(false);
   const mounted = useRef(true);
@@ -60,6 +61,12 @@ export default function OrderWorkflowPage({ active }) {
   const loadOrder = async orderId => {
     const next = await orderWorkflowApi.getOrder(orderId);
     applyState(next);
+    return next;
+  };
+
+  const loadReadiness = async orderId => {
+    const next = await orderWorkflowApi.getReadiness(orderId, 'production');
+    if (mounted.current) setReadiness(next);
     return next;
   };
 
@@ -95,6 +102,11 @@ export default function OrderWorkflowPage({ active }) {
     };
   }, [active, state?.order?.id, state?.execution?.id, state?.execution?.status]);
 
+  useEffect(() => {
+    if (!active || !state?.order?.id || step !== 'execution') return;
+    loadReadiness(state.order.id).catch(err => setError(cleanError(err, 'Execution readiness could not be refreshed.')));
+  }, [active, state?.order?.id, state?.approval?.approved, state?.handoff_ready, state?.design_preview?.approved, step]);
+
   const run = async action => {
     setPending(true);
     setError('');
@@ -125,12 +137,16 @@ export default function OrderWorkflowPage({ active }) {
   const approveDesignPreview = preview => run(() => orderWorkflowApi.approveDesignPreview(state.order.id, preview.preview_id, preview.brief_version));
   const reviseDesignPreview = note => run(() => orderWorkflowApi.reviseDesignPreview(state.order.id, note));
   const canStartExecution = Boolean(state?.approval?.approved && state?.handoff_ready && !state?.execution && (!state?.design_preview_required || state?.design_preview?.approved));
-  const startExecution = () => {
+  const startExecution = (mode = 'fake') => {
     if (!canStartExecution) { setError('Approve the current brief and Elena design preview before starting simulated execution.'); return; }
     if (startInFlight.current) return;
     startInFlight.current = true;
-    run(() => orderWorkflowApi.startExecution(state.order.id)).finally(() => { startInFlight.current = false; });
+    run(() => orderWorkflowApi.startExecution(state.order.id, mode)).finally(() => { startInFlight.current = false; });
     setTimeout(() => { startInFlight.current = false; }, 1500);
+  };
+  const startDryRun = () => {
+    if (!readiness?.can_prepare_dry_run) { setError('Resolve production dry-run blockers before preparing a package.'); return; }
+    startExecution('production');
   };
   const reset = () => {
     localStorage.removeItem(STORAGE_KEY);
@@ -155,7 +171,7 @@ export default function OrderWorkflowPage({ active }) {
       {step === 'new-order' && <OrderCreatePanel form={form} setForm={setForm} pending={pending} onSubmit={submitOrder} />}
       {step === 'clarification' && <ClarificationPanel state={state} answers={answers} setAnswers={setAnswers} pending={pending} onSubmit={submitAnswers} onDefaults={() => run(() => orderWorkflowApi.applyDefaults(state.order.id))} onBack={() => setStep('new-order')} />}
       {step === 'brief' && <ProjectBriefPanel state={state} pending={pending} onGenerate={() => run(() => orderWorkflowApi.generateBrief(state.order.id))} onApprove={approveBrief} onRevise={reviseBrief} onGeneratePreview={generateDesignPreview} onApprovePreview={approveDesignPreview} onRevisePreview={reviseDesignPreview} onBack={() => setStep('clarification')} />}
-      {step === 'execution' && <ExecutionDashboard state={state} pending={pending} canStart={canStartExecution} onStart={startExecution} onCancel={() => run(() => orderWorkflowApi.cancelExecution(state.order.id))} onRefresh={() => loadOrder(state.order.id).catch(err => setError(cleanError(err)))} />}
+      {step === 'execution' && <ExecutionDashboard state={state} readiness={readiness} pending={pending} canStart={canStartExecution} canDryRun={Boolean(readiness?.can_prepare_dry_run && canStartExecution)} onStart={() => startExecution('fake')} onDryRun={startDryRun} onCancel={() => run(() => orderWorkflowApi.cancelExecution(state.order.id))} onRefresh={() => loadOrder(state.order.id).catch(err => setError(cleanError(err)))} onRefreshReadiness={() => loadReadiness(state.order.id).catch(err => setError(cleanError(err)))} />}
       {step === 'result' && <ExecutionResultPanel state={state} onNewOrder={reset} onBackToBrief={() => setStep('brief')} />}
       {!state?.order && step !== 'new-order' && <div className="ow-callout warning">No current order is loaded. Use the new order screen to begin.</div>}
     </section>

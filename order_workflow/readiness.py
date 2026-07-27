@@ -60,6 +60,12 @@ QA_TOOLS_UNAVAILABLE = readiness_blocker(
     "Configure at least one QA command before starting production execution.",
 )
 
+DESIGN_PREVIEW_NOT_APPROVED = readiness_blocker(
+    "design_preview_not_approved",
+    "Approve Elena's design preview before starting execution.",
+    "Review Preview",
+)
+
 UNSUPPORTED_PRODUCT_TYPE = readiness_blocker(
     "unsupported_product_type",
     "This MVP currently supports only small browser-based web applications.",

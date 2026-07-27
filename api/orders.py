@@ -177,6 +177,15 @@ async def start_execution(order_id: str, request: Request):
     return _call(get_order_workflow_service(request).start_execution, order_id, ExecutionMode(payload.mode))
 
 
+@router.get("/{order_id}/readiness")
+def get_readiness(order_id: str, request: Request, mode: str = "production"):
+    try:
+        execution_mode = ExecutionMode(mode)
+    except ValueError:
+        raise HTTPException(status_code=422, detail={"code": "invalid_execution_mode", "message": "Execution mode is invalid."}) from None
+    return _call(get_order_workflow_service(request).execution_readiness, order_id, execution_mode)
+
+
 @router.get("/{order_id}/execution")
 def get_execution(order_id: str, request: Request):
     return _call(get_order_workflow_service(request).execution, order_id)

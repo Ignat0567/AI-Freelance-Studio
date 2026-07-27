@@ -34,6 +34,7 @@ from .design_preview import (
 )
 from .handoffs import AgentHandoffService
 from .execution import ExecutionServiceError, ProjectExecutionService, TERMINAL_EXECUTION_STATUSES
+from .execution_readiness import ExecutionReadinessBlocker, ExecutionReadinessCheck, ExecutionReadinessView
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import (
     CancellationToken,
@@ -109,6 +110,9 @@ __all__ = [
     "EventLevel",
     "ExecutionArtifact",
     "ExecutionBlocker",
+    "ExecutionReadinessBlocker",
+    "ExecutionReadinessCheck",
+    "ExecutionReadinessView",
     "ExecutionEvent",
     "ExecutionEventSink",
     "ExecutionMode",

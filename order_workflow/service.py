@@ -18,6 +18,7 @@ from .brief_service import (
 from .clarification import AlexClarificationService, ClarificationError, ClarificationSession
 from .design_preview import DesignPreview, DesignPreviewError, DesignPreviewService
 from .execution import ExecutionServiceError, ProjectExecutionService
+from .execution_readiness import ExecutionReadinessView, readiness_blocker_view, readiness_check
 from .handoffs import AgentHandoffService
 from .models import (
     AgentHandoff,
@@ -35,6 +36,7 @@ from .models import (
     new_public_id,
     utc_now,
 )
+from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 
 
 class OrderWorkflowError(ValueError):
@@ -304,6 +306,56 @@ class OrderWorkflowService:
             self._orders[order_id] = order.model_copy(update={"execution_id": execution.id, "status": next_status})
         return self.snapshot(order_id)
 
+    def execution_readiness(self, order_id: str, mode: ExecutionMode = ExecutionMode.PRODUCTION) -> dict[str, Any]:
+        with self._lock:
+            self._order(order_id)
+            brief = self._latest_brief(order_id)
+            design_preview = self._latest_design_preview(order_id)
+            handoff = self._handoff_by_order.get(order_id)
+            execution_exists = order_id in self._execution_by_order
+        simulation_ready = False
+        production_ready = False
+        blockers = []
+        checks = []
+        if brief is None:
+            blockers.append(readiness_blocker_view(BRIEF_NOT_APPROVED))
+            checks.extend(
+                (
+                    readiness_check("simulation", "Simulation mode", "blocked", "Generate and approve the project brief first."),
+                    readiness_check("provider", "Provider", "missing", "Provider is not checked until the brief is approved."),
+                    readiness_check("model", "Model", "missing", "Model is not checked until the brief is approved."),
+                    readiness_check("workspace", "Workspace", "missing", "Workspace is not checked until the brief is approved."),
+                    readiness_check("qa_tools", "QA tools", "missing", "QA tools are not checked until the brief is approved."),
+                )
+            )
+        else:
+            fake = self._executions.check_readiness(brief, handoff, mode=ExecutionMode.FAKE)
+            production = self._executions.check_readiness(brief, handoff, mode=ExecutionMode.PRODUCTION)
+            simulation_ready = fake.ready and handoff is not None and not execution_exists
+            production_ready = production.ready and handoff is not None and not execution_exists
+            readiness_blockers = list(production.blockers)
+            if self._design_preview_required(brief) and (design_preview is None or not design_preview.approved):
+                readiness_blockers.append(DESIGN_PREVIEW_NOT_APPROVED)
+            if handoff is None and not any(item.code == "design_preview_not_approved" for item in readiness_blockers):
+                readiness_blockers.extend(fake.blockers)
+            blockers.extend(self._public_blocker(item) for item in readiness_blockers)
+            checks.extend(self._readiness_checks(simulation_ready, production_ready, tuple(blocker.code for blocker in readiness_blockers)))
+        checks.append(readiness_check("opencode", "OpenCode", "unavailable", "Live OpenCode execution is not enabled for this MVP build."))
+        checks.append(readiness_check("live_execution", "Live execution", "unavailable", "Live execution is intentionally unavailable; use simulation or production dry-run only."))
+        view = ExecutionReadinessView(
+            ready=production_ready if mode is ExecutionMode.PRODUCTION else simulation_ready,
+            mode=mode,
+            simulation_ready=simulation_ready,
+            production_dry_run_ready=production_ready,
+            production_live_ready=False,
+            can_run_simulation=simulation_ready,
+            can_prepare_dry_run=production_ready,
+            can_run_live=False,
+            blockers=self._unique_readiness_blockers(blockers),
+            checks=tuple(checks),
+        )
+        return view.to_dict()
+
     def execution(self, order_id: str) -> dict[str, Any]:
         with self._lock:
             self._order(order_id)
@@ -453,6 +505,31 @@ class OrderWorkflowService:
             "execution_not_found": "execution_not_found",
             "brief_not_approved": "brief_not_approved",
         }.get(code, code)
+
+    @staticmethod
+    def _public_blocker(blocker: ExecutionBlocker):
+        code = "provider_not_configured" if blocker.code == "execution_provider_not_configured" else blocker.code
+        return readiness_blocker_view(blocker, code=code)
+
+    @staticmethod
+    def _readiness_checks(fake_ready: bool, production_ready: bool, blocker_codes: tuple[str, ...]):
+        codes = set(blocker_codes)
+        provider_blocked = bool(codes & {"provider_not_configured", "execution_provider_not_configured"})
+        return (
+            readiness_check("simulation", "Simulation mode", "ready" if fake_ready else "blocked", "Simulation uses the fake executor and does not require live providers." if fake_ready else "Approve the brief, preview, and handoff before simulation."),
+            readiness_check("provider", "Provider", "missing" if provider_blocked else "ready", "Select and configure an AI provider." if provider_blocked else "Provider planning requirements are satisfied."),
+            readiness_check("model", "Model", "missing" if "model_not_selected" in codes else "ready", "Select a coding model." if "model_not_selected" in codes else "Model planning requirements are satisfied."),
+            readiness_check("workspace", "Workspace", "missing" if "workspace_root_unavailable" in codes else "blocked" if "workspace_not_writable" in codes else "ready", "Choose a writable workspace root." if codes & {"workspace_root_unavailable", "workspace_not_writable"} else "Workspace planning requirements are satisfied."),
+            readiness_check("qa_tools", "QA tools", "missing" if "qa_tools_unavailable" in codes else "ready", "Configure at least one QA command." if "qa_tools_unavailable" in codes else "QA planning requirements are satisfied."),
+            readiness_check("production_dry_run", "Production dry-run", "ready" if production_ready else "blocked", "Can prepare a production execution package without live OpenCode." if production_ready else "Resolve production dry-run blockers before preparing a package."),
+        )
+
+    @staticmethod
+    def _unique_readiness_blockers(blockers):
+        unique = {}
+        for blocker in blockers:
+            unique.setdefault(blocker.code, blocker)
+        return tuple(unique.values())
 
     @staticmethod
     def _design_preview_required(brief: ProjectBrief | None) -> bool:

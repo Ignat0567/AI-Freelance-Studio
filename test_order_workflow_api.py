@@ -284,6 +284,30 @@ def test_execution_requires_approval_then_fake_execution_exposes_events_artifact
     assert TOKEN not in str(result)
 
 
+def test_readiness_route_is_authorized_stable_and_does_not_start_execution():
+    app = _app()
+    client = _client(app)
+    order_id = _create(client)["order"]["id"]
+
+    no_auth = TestClient(app, base_url=ORIGIN).get(f"/api/orders/{order_id}/readiness")
+    unknown = client.get("/api/orders/order_missing/readiness")
+    invalid = client.get(f"/api/orders/{order_id}/readiness?mode=live")
+    readiness = client.get(f"/api/orders/{order_id}/readiness")
+    execution = client.get(f"/api/orders/{order_id}/execution")
+
+    assert no_auth.status_code == 401
+    assert unknown.status_code == 404
+    assert invalid.status_code == 422
+    assert readiness.status_code == 200
+    payload = readiness.json()
+    assert payload["mode"] == "production"
+    assert payload["can_run_simulation"] is False
+    assert payload["can_run_live"] is False
+    assert payload["blockers"][0]["code"] == "brief_not_approved"
+    assert execution.status_code == 404 or execution.status_code == 409
+    assert TOKEN not in readiness.text
+
+
 def test_duplicate_active_returns_existing_and_terminal_duplicate_conflicts():
     service = _service(fake_adapter=FakeProjectExecutionAdapter(FakeExecutorConfig(step_delay_seconds=0.05)))
     client = _client(_app(service))
