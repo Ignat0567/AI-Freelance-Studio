@@ -73,12 +73,29 @@ def test_config_storage_monkeypatch_affects_opencode_status(monkeypatch, tmp_pat
     assert status["effective_provider"] == "mistral"
 
 
+def test_opencode_bridge_provider_uses_native_model_provider(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    opencode_dir = tmp_path / "opencode"
+    opencode_dir.mkdir()
+    _write_config(config_path, {"_system": {"global_provider": "opencode_bridge", "global_model": "nvidia/deepseek-ai/deepseek-v4-pro"}})
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(opencode_bridge, "_get_opencode_config_dir", lambda: str(opencode_dir))
+    monkeypatch.setattr(opencode_bridge, "_opencode_auth_provider_ids", lambda: set())
+
+    assert opencode_bridge._ensure_opencode_config() is True
+
+    generated = json.loads((opencode_dir / "opencode.json").read_text(encoding="utf-8"))
+    assert generated["model"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert "opencode_bridge/nvidia" not in json.dumps(generated)
+
+
 def test_opencode_bridge_has_no_direct_studio_config_file_read():
     source = Path(opencode_bridge.__file__).read_text(encoding="utf-8")
 
     assert "studio_config.json" not in source
     assert "studio_cfg_path" not in source
     assert "load_studio_keys()" in source
+
 
 def test_opencode_config_dir_defaults_to_portable_studio_home(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)

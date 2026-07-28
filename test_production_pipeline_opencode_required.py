@@ -17,6 +17,6 @@ def test_production_coding_stage_requires_opencode_without_ai_developer_fallback
 
 def test_production_coding_stage_uses_opencode_task_execution():
     assert "oc_bridge = _get_oc_bridge()" in MAIN_SOURCE
-    assert "oc_bridge.ensure_running(workdir=target_path)" in MAIN_SOURCE
+    assert "_opencode_preflight_for_agent(\"codex\", target_path)" in MAIN_SOURCE
     assert "oc_bridge.execute_coding_task(" in MAIN_SOURCE
     assert "OpenCode generated no files" in MAIN_SOURCE

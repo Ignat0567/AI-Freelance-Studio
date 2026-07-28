@@ -34,6 +34,16 @@ CAPABILITY_NAMES = (
 SECRET_VALUE_RE = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|authorization|cookie)\b\s*[:=]\s*[^\s'\"]+|\bsk-[A-Za-z0-9_-]{16,}\b")
 
 
+def _native_opencode_model(model: str, connection_id: str = "") -> str:
+    raw = str(model or "").strip()
+    known = {"opencode_bridge", "opencode_oauth_bridge", str(connection_id or "")}
+    if "/" in raw:
+        first, rest = raw.split("/", 1)
+        if first in known and rest and "/" in rest:
+            return rest
+    return raw
+
+
 class BrowserAuthConnectionAdapter(ABC):
     """Future contract for documented browser/OAuth integrations only."""
 
@@ -224,7 +234,7 @@ class OpenCodeBridgeConnection:
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
         """Execute a fresh, local, read-only-by-default CLI request without credentials."""
         binary = self.executable_path or _find_binary()
-        model = str(request.get("requested_model") or self.configured_model)
+        model = _native_opencode_model(str(request.get("requested_model") or self.configured_model), self.connection_id)
         if not binary:
             return {"status": "unavailable", "failure_stage": "before_invocation", "error_category": "bridge_unavailable", "errors": ["OpenCode executable was not found"], "text": ""}
         if not self.enabled:

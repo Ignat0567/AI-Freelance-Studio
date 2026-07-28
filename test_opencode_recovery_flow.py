@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import main
-EXPECTED_FLOW = "Open Settings -> AI Provider -> Download Node.js if Node.js or npm is missing -> Detect Again -> Download OpenCode if it is missing -> Detect Again -> Authenticate Provider -> complete the steps in the OpenCode terminal -> Start OpenCode Web or server -> Test Connection -> Save Connection -> Retry Generation."
+EXPECTED_FLOW = "Open Settings -> AI Provider -> Detect Again -> Repair automatically or Test Connection -> Save Connection -> Retry Generation."
 
 
 def test_recovery_instructions_cover_each_real_failure_state():
@@ -9,7 +9,13 @@ def test_recovery_instructions_cover_each_real_failure_state():
         "nodejs_missing": "Node.js is required",
         "opencode_not_installed": "Download OpenCode",
         "executable_not_detected": "executable was not detected",
-        "server_not_running": "server is unavailable",
+        "server_not_running": "local service is required",
+        "opencode_model_reference_invalid": "model reference is invalid",
+        "opencode_model_not_found": "selected model is not available",
+        "opencode_authentication_failure": "provider is not authenticated",
+        "opencode_workspace_invalid": "workspace path is invalid",
+        "provider_rate_limited": "rate limit",
+        "provider_quota_exceeded": "quota",
         "provider_not_authenticated": "No authorized provider",
         "models_unavailable": "no models are available",
         "connection_test_failed": "readiness was not confirmed",
@@ -26,7 +32,10 @@ def test_recovery_classifier_distinguishes_actionable_failures():
     assert main._opencode_recovery_code("npm is required") == "nodejs_missing"
     assert main._opencode_recovery_code("OpenCode is not installed") == "opencode_not_installed"
     assert main._opencode_recovery_code("executable ENOENT") == "executable_not_detected"
-    assert main._opencode_recovery_code("server connection refused") == "server_not_running"
+    assert main._opencode_recovery_code("server required but serve failed") == "server_not_running"
+    assert main._opencode_recovery_code("Model not found: nvidia/missing") == "opencode_model_not_found"
+    assert main._opencode_recovery_code("rate limit reached") == "provider_rate_limited"
+    assert main._opencode_recovery_code("quota exceeded") == "provider_quota_exceeded"
     assert main._opencode_recovery_code("unauthorized provider") == "provider_not_authenticated"
     assert main._opencode_recovery_code("no models available") == "models_unavailable"
     assert main._opencode_recovery_code("connection not saved") == "connection_not_saved"
@@ -54,8 +63,15 @@ def test_recovery_flow_names_existing_frontend_actions():
     dashboard = Path("frontend/src/components/StudioDashboard.jsx").read_text(encoding="utf-8")
     frontend = settings + connection + dashboard
 
-    for action in ("Download Node.js", "Download OpenCode", "Detect Again", "Authenticate Provider", "Start OpenCode Web", "Test Connection", "Save Connection", "Retry Generation"):
+    for action in ("Download Node.js", "Download OpenCode", "Detect Again", "Authenticate Provider", "Repair automatically", "Test Connection", "Save Connection", "Retry Generation"):
         assert action in frontend
+
+
+def test_frontend_does_not_require_start_web_for_cli_generation():
+    source = Path("frontend/src/components/OpenCodeConnectionSetup.jsx").read_text(encoding="utf-8")
+    assert "Start OpenCode Web before testing" not in source
+    assert "Local server" in source
+    assert "not_required" in source
 
 
 def test_retry_generation_resumes_blocked_project_from_saved_phase(monkeypatch):

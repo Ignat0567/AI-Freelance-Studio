@@ -26,7 +26,8 @@ def test_readiness_gate_returns_separate_successful_checks(monkeypatch):
 
     assert result["status"] == "ok"
     assert result["ready"] is True
-    assert all(check["status"] == "passed" for check in result["checks"].values())
+    assert result["checks"]["server"]["status"] == "not_required"
+    assert all(check["status"] == "passed" for name, check in result["checks"].items() if name != "server")
     assert result["checks"]["authentication"] == {"status": "passed", "providers": ["nvidia", "openai"], "auth_types": ["api", "oauth"]}
     assert result["checks"]["selection"]["provider"] == "openai"
     assert result["available_models"] == ["nvidia/nemotron", "openai/gpt-5.5"]
@@ -39,18 +40,18 @@ def test_readiness_gate_reports_not_installed(monkeypatch):
 
     assert result["error_code"] == "opencode_not_installed"
     assert result["checks"]["executable"]["status"] == "failed"
-    assert result["checks"]["server"]["status"] == "not_checked"
+    assert result["checks"]["server"]["status"] == "not_required"
 
 
-def test_readiness_gate_reports_server_not_running(monkeypatch):
+def test_readiness_gate_does_not_require_server_for_cli_generation(monkeypatch):
     monkeypatch.setattr(opencode_bridge, "_run_capture", lambda *_args, **_kwargs: (0, "1.17.11", ""))
     monkeypatch.setattr(opencode_bridge, "_opencode_web_ready", lambda _url: False)
 
     result = opencode_bridge.test_opencode_readiness("opencode.cmd", "openai/gpt-5.5")
 
-    assert result["error_code"] == "server_not_running"
-    assert result["checks"]["server"]["status"] == "failed"
-    assert result["checks"]["authentication"]["status"] == "not_checked"
+    assert result["error_code"] != "server_not_running"
+    assert result["checks"]["server"]["status"] == "not_required"
+    assert result["checks"]["authentication"]["status"] == "failed"
 
 
 def test_readiness_gate_reports_provider_not_authenticated(monkeypatch):
@@ -121,3 +122,19 @@ def test_frontend_requires_successful_readiness_and_renders_check_statuses():
     assert "A successful Test Connection is required before saving." in source
     assert "Object.entries(tested.checks)" in source
     assert "setTested(null)" in source
+    assert "Repair automatically" in source
+    assert "Local server" in source
+
+
+def test_opencode_model_normalization_contract():
+    native = opencode_bridge.normalize_opencode_model_id("nvidia/deepseek-ai/deepseek-v4-pro", "opencode_bridge", {"opencode_bridge"})
+    legacy = opencode_bridge.normalize_opencode_model_id("opencode_bridge/nvidia/deepseek-ai/deepseek-v4-pro", "", {"opencode_bridge"})
+    unknown = opencode_bridge.normalize_opencode_model_id("unknown/nvidia/deepseek-ai/deepseek-v4-pro", "", {"opencode_bridge"})
+
+    assert native["model_id"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert native["migrated"] is False
+    assert legacy["connection_id"] == "opencode_bridge"
+    assert legacy["model_id"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert legacy["migrated"] is True
+    assert unknown["model_id"] == "unknown/nvidia/deepseek-ai/deepseek-v4-pro"
+    assert unknown["migrated"] is False
