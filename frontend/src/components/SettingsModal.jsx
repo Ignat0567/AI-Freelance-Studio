@@ -424,22 +424,32 @@ function Toggle({ checked, onChange, label, disabled = false }) {
 
 function StoragePathsSettings({ activePort }) {
   const [paths, setPaths] = useState(null);
+  const [draft, setDraft] = useState({});
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const load = () => fetch(`http://localhost:${activePort}/api/system/paths`).then(r => r.json()).then(data => { setPaths(data); setMessage(''); }).catch(err => setMessage(`Path audit failed: ${err.message}`));
+  const editableKeys = ['studio_root', 'data_dir', 'runtime_dir', 'generated_projects', 'projects_data', 'opencode_config', 'backups'];
+  const draftFrom = data => Object.fromEntries(editableKeys.map(key => [key, data.paths?.[key]?.configured_value || data.paths?.[key]?.configured_override || '']));
+  const load = () => fetch(`http://localhost:${activePort}/api/system/paths`).then(r => r.json()).then(data => { setPaths(data); setDraft(draftFrom(data)); setMessage(''); }).catch(err => setMessage(`Path audit failed: ${err.message}`));
   useEffect(() => { load(); }, [activePort]);
   const repair = () => {
     setBusy(true);
     fetch(`http://localhost:${activePort}/api/system/portable-migration`, { method: 'POST' })
       .then(r => r.json())
-      .then(data => { setPaths(data); setMessage(data.portable_ready ? 'Portable folders are ready.' : 'Portable folders were checked; some paths still need attention.'); })
+      .then(data => { setPaths(data); setDraft(draftFrom(data)); setMessage(data.portable_ready ? 'Portable folders are ready.' : 'Portable folders were checked; some paths still need attention.'); })
       .catch(err => setMessage(`Portable repair failed: ${err.message}`))
       .finally(() => setBusy(false));
   };
+  const save = () => {
+    setBusy(true);
+    fetch(`http://localhost:${activePort}/api/system/paths`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || 'Save failed'); return data; })
+      .then(data => { setPaths(data); setDraft(draftFrom(data)); setMessage(data.message || (data.restart_required ? 'Storage paths saved. Restart Studio for runtime paths to take effect.' : 'Storage paths saved.')); })
+      .catch(err => setMessage(`Path save failed: ${err.message}`))
+      .finally(() => setBusy(false));
+  };
   const entries = Object.entries(paths?.paths || {});
-  return <section className="provider-setup"><div className="provider-heading"><div><strong>Storage & Paths</strong><p>All Studio-owned data should live inside one portable AI Freelance Studio folder.</p></div><span className="connection-state">{paths?.portable_ready ? 'Portable ready' : 'Action needed'}</span></div>{message && <p className="provider-message" role="status">{message}</p>}<div className="provider-actions"><button type="button" onClick={load} disabled={busy}>Refresh paths</button><button type="button" className="primary" onClick={repair} disabled={busy}>Repair portable folders</button></div><div className="capability-grid">{entries.map(([name, item]) => <span key={name}><b>{name.replaceAll('_', ' ')}</b><code className="block break-all">{item.path}</code><small>{item.exists ? 'exists' : item.create_allowed ? 'will be created' : 'missing'} · {item.inside_portable_root ? 'inside portable root' : 'outside portable root'} · {item.writable ? 'writable' : 'not writable/unchecked'}</small></span>)}</div></section>;
+  return <section className="provider-setup"><div className="provider-heading"><div><strong>Storage & Paths</strong><p>Choose where Studio stores generated projects, runtime data, OpenCode config, and backups. Runtime path changes may require restart.</p></div><span className="connection-state">{paths?.portable_ready ? 'Portable ready' : 'Action needed'}</span></div>{message && <p className="provider-message" role="status">{message}</p>}<div className="provider-form">{editableKeys.map(key => { const item = paths?.paths?.[key] || {}; return <label key={key}>{key.replaceAll('_', ' ')}<input className="ai-settings-field" value={draft[key] || ''} onChange={e => setDraft(current => ({ ...current, [key]: e.target.value }))} placeholder={item.resolved_path || item.path || ''} /><small>Resolved: <code>{item.resolved_path || item.path || 'not loaded'}</code> · Source: {item.source || 'unknown'}{item.restart_required ? ' · Restart required for runtime to use this path.' : ''}{item.validation_error ? ` · ${item.validation_error}` : ''}</small></label>; })}</div><div className="provider-actions"><button type="button" onClick={load} disabled={busy}>Refresh paths</button><button type="button" className="primary" onClick={save} disabled={busy}>Save paths</button><button type="button" onClick={repair} disabled={busy}>Repair portable folders</button></div><div className="capability-grid">{entries.map(([name, item]) => <span key={name}><b>{name.replaceAll('_', ' ')}</b><code className="block break-all">{item.resolved_path || item.path}</code><small>{item.exists ? 'exists' : item.create_allowed ? 'will be created' : 'missing'} · {item.source || 'unknown source'} · {item.editable ? 'editable' : 'read-only'} · {item.inside_portable_root ? 'inside portable root' : 'outside portable root'} · {item.writable ? 'writable' : 'not writable/unchecked'}{item.configured_value ? ' · custom' : ''}{item.restart_required ? ' · restart required' : ''}{item.validation_error ? ` · ${item.validation_error}` : ''}</small></span>)}</div></section>;
 }
-
 function AIProviderSettings({ activePort, addLog }) {
   const [cfg, setCfg] = useState(null);
   const [provider, setProvider] = useState('nvidia');

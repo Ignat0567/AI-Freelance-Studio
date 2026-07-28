@@ -127,6 +127,11 @@ def test_system_paths_reports_portable_root(monkeypatch, tmp_path):
     assert data["root"] == str(tmp_path.resolve())
     assert data["paths"]["generated_projects"]["inside_portable_root"] is True
     assert data["paths"]["opencode_config"]["inside_portable_root"] is True
+    assert data["paths"]["generated_projects"]["editable"] is True
+    assert data["paths"]["studio_config"]["editable"] is False
+    assert data["paths"]["studio_config"]["source"] == "derived"
+    assert data["paths"]["data_dir"]["source"] == "environment"
+    assert data["paths"]["data_dir"]["configured_value"] == ""
 
 
 def test_portable_migration_creates_required_directories(monkeypatch, tmp_path):
@@ -143,12 +148,132 @@ def test_portable_migration_creates_required_directories(monkeypatch, tmp_path):
         assert Path(data["paths"][name]["path"]).is_dir()
 
 
+def test_system_paths_can_save_manual_overrides(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({"_system": {"theme": "dark"}, "api_key": "secret-value"}), encoding="utf-8")
+    custom_data = tmp_path / "Custom Data With Spaces"
+    custom_generated = tmp_path / "custom-generated"
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"data_dir": f'"{custom_data}"', "generated_projects": str(custom_generated)})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "saved"
+    assert data["saved"] is True
+    assert data["applied"] is False
+    assert data["restart_required"] is True
+    assert data["paths"]["data_dir"]["path"] == str(custom_data.resolve(strict=False))
+    assert data["paths"]["data_dir"]["configured_value"] == str(custom_data.resolve(strict=False))
+    assert data["paths"]["data_dir"]["source"] == "stored_configuration"
+    assert data["paths"]["data_dir"]["restart_required"] is True
+    assert data["paths"]["generated_projects"]["path"] == str(custom_generated.resolve(strict=False))
+    assert data["paths"]["generated_projects"]["restart_required"] is False
+    assert custom_data.is_dir()
+    assert custom_generated.is_dir()
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["_storage_paths"]["data_dir"] == str(custom_data.resolve(strict=False))
+    assert saved["_storage_paths"]["generated_projects"] == str(custom_generated.resolve(strict=False))
+    assert saved["_system"] == {"theme": "dark"}
+    assert "secret-value" not in response.text
+
+
+def test_system_paths_get_after_post_shows_persisted_override(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+    custom_backups = tmp_path / "Backups"
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    post_response = client.post("/api/system/paths", json={"backups": str(custom_backups)})
+    get_response = client.get("/api/system/paths")
+
+    assert post_response.status_code == 200
+    assert get_response.status_code == 200
+    data = get_response.json()
+    assert data["paths"]["backups"]["configured_value"] == str(custom_backups.resolve(strict=False))
+    assert data["paths"]["backups"]["resolved_path"] == str(custom_backups.resolve(strict=False))
+    assert data["paths"]["backups"]["source"] == "stored_configuration"
+    assert data["paths"]["backups"]["restart_required"] is False
+
+
+def test_system_paths_rejects_existing_file(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+    existing_file = tmp_path / "not-a-directory"
+    existing_file.write_text("content", encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"generated_projects": str(existing_file)})
+
+    assert response.status_code == 400
+    assert "not a directory" in response.text
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "_storage_paths" not in saved
+
+
+def test_system_paths_rejects_null_byte_and_reserved_device_name(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    null_response = client.post("/api/system/paths", json={"generated_projects": "bad\u0000path"})
+    reserved_response = client.post("/api/system/paths", json={"generated_projects": str(tmp_path / "CON")})
+
+    assert null_response.status_code == 400
+    assert reserved_response.status_code == 400
+
+
+def test_system_paths_whitespace_clears_override_without_using_cwd(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    old_path = tmp_path / "old-generated"
+    config_path.write_text(json.dumps({"_storage_paths": {"generated_projects": str(old_path)}}), encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"generated_projects": "   "})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["paths"]["generated_projects"]["configured_value"] == ""
+    assert data["paths"]["generated_projects"]["source"] == "default"
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "_storage_paths" not in saved
+
+
+def test_system_paths_permission_failure_is_controlled(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+
+    def fail_mkdir(self, *args, **kwargs):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+    response = client.post("/api/system/paths", json={"projects_data": str(tmp_path / "blocked")})
+
+    assert response.status_code == 400
+    assert "permission denied" in response.text
+
+
+def test_system_paths_rejects_unknown_override_keys(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"data_dir": str(tmp_path), "unknown_path": str(tmp_path)})
+
+    assert response.status_code == 422
+
+
 def test_settings_contains_storage_paths_panel():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
 
     assert "Storage & Paths" in source
     assert "/api/system/paths" in source
     assert "/api/system/portable-migration" in source
+    assert "Save paths" in source
+    assert "Restart required for runtime to use this path." in source
+    assert "Resolved:" in source
+    assert "Source:" in source
     assert "Repair portable folders" in source
 
 
