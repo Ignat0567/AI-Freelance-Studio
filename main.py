@@ -57,7 +57,7 @@ except ImportError:
     _HAS_OPENCODE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or BASE_DIR
+DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.environ.get("FREELANCERSTUDIO_HOME") or BASE_DIR
 RUNTIME_DIR = os.environ.get("FREELANCERSTUDIO_RUNTIME_DIR") or DATA_DIR
 
 # ─── Shared critical rules injected into ALL agent prompts ─────────────────
@@ -285,7 +285,26 @@ def _load_projects_state():
     state, error = project_state.read_json(PROJECTS_STATE_FILE)
     if not state:
         return {}, {}
-    return state.get("projects", {}), state.get("tasks", {})
+    projects = state.get("projects", {}) if isinstance(state.get("projects"), dict) else {}
+    for project in projects.values():
+        if isinstance(project, dict):
+            project["target_path"] = _relocate_generated_project_path(project.get("target_path", ""))
+    return projects, state.get("tasks", {})
+
+
+def _relocate_generated_project_path(value: str) -> str:
+    """Map copied legacy generated-project paths to the current portable data root."""
+    raw = str(value or "")
+    if not raw:
+        return raw
+    normalized = raw.replace("\\", "/")
+    marker = "/generated_projects/"
+    if marker not in normalized:
+        return raw
+    suffix = normalized.split(marker, 1)[1].strip("/")
+    if not suffix:
+        return raw
+    return os.path.join(DATA_DIR, "generated_projects", *suffix.split("/"))
 
 
 def _save_projects_state(preserve_missing: bool = True):

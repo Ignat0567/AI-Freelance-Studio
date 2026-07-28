@@ -123,6 +123,7 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
     { id: 'appearance', label: t('appearance') },
     { id: 'general', label: t('general') },
     { id: 'ai', label: 'AI Provider' },
+    { id: 'storage', label: 'Storage' },
     { id: 'studio', label: t('studio') },
   ];
 
@@ -266,6 +267,10 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
 
           {activeTab === 'ai' && (
             <AIProviderSettings activePort={activePort} addLog={addLog} />
+          )}
+
+          {activeTab === 'storage' && (
+            <StoragePathsSettings activePort={activePort} />
           )}
 
           {activeTab === 'studio' && (
@@ -417,6 +422,23 @@ function Toggle({ checked, onChange, label, disabled = false }) {
   );
 }
 
+function StoragePathsSettings({ activePort }) {
+  const [paths, setPaths] = useState(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = () => fetch(`http://localhost:${activePort}/api/system/paths`).then(r => r.json()).then(data => { setPaths(data); setMessage(''); }).catch(err => setMessage(`Path audit failed: ${err.message}`));
+  useEffect(() => { load(); }, [activePort]);
+  const repair = () => {
+    setBusy(true);
+    fetch(`http://localhost:${activePort}/api/system/portable-migration`, { method: 'POST' })
+      .then(r => r.json())
+      .then(data => { setPaths(data); setMessage(data.portable_ready ? 'Portable folders are ready.' : 'Portable folders were checked; some paths still need attention.'); })
+      .catch(err => setMessage(`Portable repair failed: ${err.message}`))
+      .finally(() => setBusy(false));
+  };
+  const entries = Object.entries(paths?.paths || {});
+  return <section className="provider-setup"><div className="provider-heading"><div><strong>Storage & Paths</strong><p>All Studio-owned data should live inside one portable AI Freelance Studio folder.</p></div><span className="connection-state">{paths?.portable_ready ? 'Portable ready' : 'Action needed'}</span></div>{message && <p className="provider-message" role="status">{message}</p>}<div className="provider-actions"><button type="button" onClick={load} disabled={busy}>Refresh paths</button><button type="button" className="primary" onClick={repair} disabled={busy}>Repair portable folders</button></div><div className="capability-grid">{entries.map(([name, item]) => <span key={name}><b>{name.replaceAll('_', ' ')}</b><code className="block break-all">{item.path}</code><small>{item.exists ? 'exists' : item.create_allowed ? 'will be created' : 'missing'} · {item.inside_portable_root ? 'inside portable root' : 'outside portable root'} · {item.writable ? 'writable' : 'not writable/unchecked'}</small></span>)}</div></section>;
+}
 function AIProviderSettings({ activePort, addLog }) {
   const [cfg, setCfg] = useState(null);
   const [provider, setProvider] = useState('nvidia');

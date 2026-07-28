@@ -92,7 +92,12 @@ def _get_studio_config() -> dict:
 
 def _get_opencode_config_dir() -> str:
     """Return the OpenCode config directory, creating it if needed."""
-    config_dir = os.path.expanduser("~/.config/opencode")
+    configured = os.environ.get("OPENCODE_CONFIG_DIR") or ""
+    if configured and os.path.isabs(configured):
+        config_dir = configured
+    else:
+        studio_home = os.environ.get("FREELANCERSTUDIO_HOME") or os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.path.dirname(os.path.abspath(__file__))
+        config_dir = os.path.join(studio_home, ".opencode")
     os.makedirs(config_dir, exist_ok=True)
     return config_dir
 

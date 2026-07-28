@@ -79,3 +79,20 @@ def test_opencode_bridge_has_no_direct_studio_config_file_read():
     assert "studio_config.json" not in source
     assert "studio_cfg_path" not in source
     assert "load_studio_keys()" in source
+
+def test_opencode_config_dir_defaults_to_portable_studio_home(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("FREELANCERSTUDIO_HOME", str(tmp_path))
+
+    config_dir = opencode_bridge._get_opencode_config_dir()
+
+    assert config_dir == str(tmp_path / ".opencode")
+
+
+def test_opencode_config_dir_allows_explicit_absolute_override(monkeypatch, tmp_path):
+    override = tmp_path / "custom-opencode-config"
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(override))
+
+    config_dir = opencode_bridge._get_opencode_config_dir()
+
+    assert config_dir == str(override)

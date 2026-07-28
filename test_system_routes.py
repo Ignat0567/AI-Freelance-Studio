@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 import json
+from pathlib import Path
 
 import api.system as system_routes
 import config_storage
@@ -112,6 +113,43 @@ def test_system_config_post_rejects_unknown_keys(monkeypatch, tmp_path):
     finally:
         system_settings.SYSTEM_SETTINGS.clear()
         system_settings.SYSTEM_SETTINGS.update(original)
+
+
+def test_system_paths_reports_portable_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("FREELANCERSTUDIO_HOME", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_USER_DATA", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_RUNTIME_DIR", str(tmp_path))
+
+    response = client.get("/api/system/paths")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["root"] == str(tmp_path.resolve())
+    assert data["paths"]["generated_projects"]["inside_portable_root"] is True
+    assert data["paths"]["opencode_config"]["inside_portable_root"] is True
+
+
+def test_portable_migration_creates_required_directories(monkeypatch, tmp_path):
+    monkeypatch.setenv("FREELANCERSTUDIO_HOME", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_USER_DATA", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_RUNTIME_DIR", str(tmp_path))
+
+    response = client.post("/api/system/portable-migration")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "repaired"
+    for name in ("generated_projects", "projects_data", "opencode_config", "backups"):
+        assert Path(data["paths"][name]["path"]).is_dir()
+
+
+def test_settings_contains_storage_paths_panel():
+    source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
+
+    assert "Storage & Paths" in source
+    assert "/api/system/paths" in source
+    assert "/api/system/portable-migration" in source
+    assert "Repair portable folders" in source
 
 
 def test_editor_candidates_use_shared_system_settings():

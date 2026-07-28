@@ -25,10 +25,21 @@ def test_electron_backend_uses_spawn_without_shell_exec():
 def test_electron_backend_uses_absolute_paths_and_explicit_cwd():
     source = _source()
 
-    assert "const rootDir = path.resolve(__dirname, '..');" in source
+    assert "function portableRootDirectory()" in source
+    assert "const rootDir = portableRootDirectory();" in source
     assert "path.join(process.resourcesPath, 'backend'" in source
     assert "path.isAbsolute(spec.command)" in source
     assert "cwd: spec.cwd" in source
+
+
+def test_electron_runtime_uses_portable_root_instead_of_appdata_by_default():
+    source = _source()
+
+    runtime_function = source.split("function runtimeDirectory()", 1)[1].split("function checkBackend", 1)[0]
+    assert "return portableRootDirectory();" in runtime_function
+    assert "app.getPath('userData')" not in runtime_function
+    assert "FREELANCERSTUDIO_HOME: runtimeDir" in source
+    assert "path.dirname(app.getPath('exe'))" in source
 
 
 def test_electron_backend_waits_for_health_check_with_timeout():

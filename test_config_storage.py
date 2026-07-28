@@ -78,3 +78,18 @@ def test_reset_all_credentials_still_clears_entire_config(monkeypatch, tmp_path)
 
     assert response == {"status": "reset"}
     assert json.loads(config_path.read_text(encoding="utf-8")) == {}
+
+
+def test_storage_supports_portable_home_source_contract():
+    source = open("config_storage.py", "r", encoding="utf-8").read()
+
+    assert 'os.environ.get("FREELANCERSTUDIO_HOME")' in source
+
+
+def test_generated_project_paths_relocate_to_current_data_root():
+    old_path = r"E:\Python\OpenCode\FreelancerStudio\generated_projects\ticket-app"
+
+    relocated = main._relocate_generated_project_path(old_path)
+
+    assert relocated.endswith("generated_projects" + main.os.sep + "ticket-app")
+    assert relocated.startswith(main.DATA_DIR)

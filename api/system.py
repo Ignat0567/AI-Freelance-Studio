@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -22,6 +23,64 @@ from system_settings import (
 router = APIRouter()
 SYSTEM_CONFIG_DEFAULTS = DEFAULT_SYSTEM_SETTINGS
 SYSTEM_CONFIG_ALLOWED_KEYS = ALLOWED_SYSTEM_KEYS
+
+
+def _studio_root() -> Path:
+    configured = os.environ.get("FREELANCERSTUDIO_HOME") or os.environ.get("FREELANCERSTUDIO_USER_DATA") or ""
+    return Path(configured).resolve() if configured else Path(__file__).resolve().parents[1]
+
+
+def _path_status(path: Path, root: Path, *, create_allowed: bool = True) -> dict[str, Any]:
+    try:
+        resolved = path.resolve(strict=False)
+        inside_root = resolved == root or root in resolved.parents
+        exists = resolved.exists()
+        writable = False
+        if exists and resolved.is_dir():
+            probe = resolved / ".freelancerstudio-write-test"
+            try:
+                probe.write_text("ok", encoding="utf-8")
+                probe.unlink(missing_ok=True)
+                writable = True
+            except OSError:
+                writable = False
+        return {"path": str(resolved), "exists": exists, "inside_portable_root": inside_root, "writable": writable, "create_allowed": create_allowed}
+    except OSError as exc:
+        return {"path": str(path), "exists": False, "inside_portable_root": False, "writable": False, "create_allowed": create_allowed, "error": str(exc)}
+
+
+def _portable_paths_payload() -> dict[str, Any]:
+    root = _studio_root()
+    data_dir = Path(os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.environ.get("FREELANCERSTUDIO_HOME") or root).resolve(strict=False)
+    runtime_dir = Path(os.environ.get("FREELANCERSTUDIO_RUNTIME_DIR") or data_dir).resolve(strict=False)
+    paths = {
+        "studio_root": _path_status(root, root),
+        "data_dir": _path_status(data_dir, root),
+        "runtime_dir": _path_status(runtime_dir, root),
+        "studio_config": _path_status(data_dir / "studio_config.json", root, create_allowed=False),
+        "projects_state": _path_status(data_dir / "projects_state.json", root, create_allowed=False),
+        "generated_projects": _path_status(data_dir / "generated_projects", root),
+        "projects_data": _path_status(data_dir / "projects_data", root),
+        "opencode_config": _path_status(Path(os.environ.get("OPENCODE_CONFIG_DIR") or data_dir / ".opencode"), root),
+        "backups": _path_status(root / "backups", root),
+    }
+    required = ["studio_root", "data_dir", "runtime_dir", "generated_projects", "projects_data", "opencode_config", "backups"]
+    portable_ready = all(paths[name]["inside_portable_root"] for name in required) and all(paths[name]["exists"] or paths[name]["create_allowed"] for name in required)
+    return {"portable_ready": portable_ready, "root": str(root), "paths": paths}
+
+
+def _ensure_portable_paths() -> dict[str, Any]:
+    payload = _portable_paths_payload()
+    created = []
+    for name in ("generated_projects", "projects_data", "opencode_config", "backups"):
+        item = payload["paths"][name]
+        if item.get("inside_portable_root") and item.get("create_allowed"):
+            target = Path(item["path"])
+            if not target.exists():
+                target.mkdir(parents=True, exist_ok=True)
+                created.append(name)
+    refreshed = _portable_paths_payload()
+    return {"status": "repaired", "created": created, **refreshed}
 
 
 @router.get("/health")
@@ -51,6 +110,16 @@ def list_requirements():
 def check_requirements():
     result = check_all()
     return result if isinstance(result, dict) else {"results": result}
+
+
+@router.get("/api/system/paths")
+def get_system_paths():
+    return _portable_paths_payload()
+
+
+@router.post("/api/system/portable-migration")
+def repair_portable_paths():
+    return _ensure_portable_paths()
 
 
 @router.post("/api/system/install/{component_id}")

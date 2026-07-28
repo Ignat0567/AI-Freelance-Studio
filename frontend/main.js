@@ -148,8 +148,15 @@ function resolveExecutable(name) {
     return candidate && path.isAbsolute(candidate) && fs.existsSync(candidate) ? candidate : '';
 }
 
+function portableRootDirectory() {
+    const configured = process.env.FREELANCERSTUDIO_HOME || '';
+    if (configured && path.isAbsolute(configured)) return configured;
+    if (app.isPackaged) return path.dirname(app.getPath('exe'));
+    return path.resolve(__dirname, '..');
+}
+
 function runtimeDirectory() {
-    return app.isPackaged ? app.getPath('userData') : path.resolve(__dirname, '..');
+    return portableRootDirectory();
 }
 
 function checkBackend(host, port, launchId, instanceId, timeoutMs = 800) {
@@ -211,6 +218,7 @@ function waitForBackend(maxWaitMs, processRef = null) {
             if (descriptor) {
                 if (await checkBackend(descriptor.connect_host, descriptor.port, descriptor.launch_id, descriptor.instance_id)) {
                     backendHost = descriptor.connect_host;
+                    backendStarting = false;
                     console.log(`[Electron]: Backend is ready on port ${descriptor.port}`);
                     resolve(descriptor.port);
                     return;
@@ -242,7 +250,7 @@ function resolvePythonCommand(rootDir) {
 }
 
 function backendLaunchSpec() {
-    const rootDir = path.resolve(__dirname, '..');
+    const rootDir = portableRootDirectory();
     if (app.isPackaged) {
         const sidecarDir = path.join(process.resourcesPath, 'backend', 'freelancerstudio-backend');
         const executable = path.join(sidecarDir, process.platform === 'win32' ? 'freelancerstudio-backend.exe' : 'freelancerstudio-backend');
@@ -263,7 +271,7 @@ function startBackend() {
     backendStartupOutput = '';
     const spec = backendLaunchSpec();
     const runtimeDir = runtimeDirectory();
-    const frontendDir = app.isPackaged ? path.join(process.resourcesPath, 'frontend-dist') : path.join(path.resolve(__dirname, '..'), 'frontend', 'dist');
+    const frontendDir = app.isPackaged ? path.join(process.resourcesPath, 'frontend-dist') : path.join(portableRootDirectory(), 'frontend', 'dist');
     backendToken = crypto.randomBytes(32).toString('base64url');
     backendLaunchId = crypto.randomUUID();
     backendDescriptor = null;
@@ -295,6 +303,7 @@ function startBackend() {
                 ...process.env,
                 FREELANCERSTUDIO_RUNTIME_DIR: runtimeDir,
                 FREELANCERSTUDIO_USER_DATA: runtimeDir,
+                FREELANCERSTUDIO_HOME: runtimeDir,
                 FREELANCERSTUDIO_FRONTEND_DIR: frontendDir,
                 FREELANCERSTUDIO_AUTH_STDIN: '1',
                 FREELANCERSTUDIO_CONTROL_FD: '3',
