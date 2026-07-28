@@ -225,6 +225,28 @@ def test_provider_resource_exhaustion_maps_to_provider_error():
     assert opencode_provider._error_category('Error: "ResourceExhausted: Worker local total request limit reached (18/16)"', "") == "provider_error"
 
 
+def test_provider_too_many_requests_maps_to_provider_error():
+    stderr = 'message="stream error" providerID=nvidia modelID=deepseek-ai/deepseek-v4-pro error.error="AI_APICallError: Too Many Requests"'
+
+    assert opencode_provider._error_category(stderr, "") == "provider_error"
+    diagnostics = opencode_provider._provider_error_diagnostics(stderr, "")
+    assert diagnostics["provider_id"] == "nvidia"
+    assert diagnostics["model_id"] == "deepseek-ai/deepseek-v4-pro"
+    assert diagnostics["provider_error"] is True
+
+
+def test_provider_retry_error_maps_to_provider_error():
+    stderr = 'error.error="AI_RetryError: Failed after 3 attempts. Last error: Too Many Requests" providerID=nvidia modelID=deepseek-ai/deepseek-v4-pro'
+
+    assert opencode_provider._error_category(stderr, "") == "provider_error"
+    assert opencode_provider._provider_error_diagnostics(stderr, "")["retry_observed"] is True
+
+
+def test_rate_limit_and_quota_messages_map_to_provider_error():
+    assert opencode_provider._error_category("provider rate limit reached", "") == "provider_error"
+    assert opencode_provider._error_category("quota exceeded for provider", "") == "provider_error"
+
+
 def test_artifact_validation_failure_is_not_request_rejection(monkeypatch, tmp_path):
     connection = _connection(executable_path="opencode")
     Path(tmp_path, "README.md").write_text("wrong", encoding="utf-8")
@@ -255,6 +277,30 @@ def test_timeout_without_artifact_is_not_request_rejection(monkeypatch, tmp_path
     result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
 
     assert result["classification"] == "opencode_timeout_without_artifact"
+
+
+def test_timeout_with_provider_rate_limit_stderr_maps_to_provider_error(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+    stderr = 'message="stream error" providerID=nvidia modelID=deepseek-ai/deepseek-v4-pro error.error="AI_APICallError: Too Many Requests"'
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", lambda *_args, **_kwargs: (None, "", stderr, True, True))
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["classification"] == "provider_error"
+    assert result["error_category"] == "provider_error"
+    assert result["provider_id"] == "nvidia"
+    assert result["model_id"] == "deepseek-ai/deepseek-v4-pro"
+    assert result["timed_out"] is True
+
+
+def test_empty_timeout_without_artifact_remains_timeout_without_artifact(monkeypatch, tmp_path):
+    connection = _connection(executable_path="opencode")
+    monkeypatch.setattr(opencode_provider, "_run_owned_capture", lambda *_args, **_kwargs: (None, "", "", True, True))
+
+    result = connection.execute({"user_content": "Build this", "workspace_path": str(tmp_path), "timeout": 5})
+
+    assert result["classification"] == "opencode_timeout_without_artifact"
+    assert result["error_category"] == "timeout"
 
 
 def test_unsupported_flag_maps_to_flag_rejection():

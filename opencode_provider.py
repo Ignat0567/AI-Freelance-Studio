@@ -33,6 +33,7 @@ CAPABILITY_NAMES = (
 )
 SECRET_VALUE_RE = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|authorization|cookie)\b\s*[:=]\s*[^\s'\"]+|\bsk-[A-Za-z0-9_-]{16,}\b")
 DEFAULT_OPENCODE_MODEL = "nvidia/deepseek-ai/deepseek-v4-pro"
+PROVIDER_ERROR_RE = re.compile(r"(?i)\b(too many requests|rate[_ -]?limited|rate limit|quota exceeded|resourceexhausted|resource exhausted|ai_apicallerror|ai_retryerror)\b")
 STUDIO_METADATA_FILES = frozenset(
     {
         ".freelancerstudio-project.json",
@@ -187,11 +188,33 @@ def _error_category(stderr: str, stdout: str) -> str:
         return "authentication_failure"
     if any(item in text for item in ("unknown model", "unavailable model", "model not found", "unsupported model", "invalid model", "provider not found", "model does not exist")):
         return "model_rejected"
-    if any(item in text for item in ("resourceexhausted", "resource exhausted", "quota", "rate limit", "provider error", "api error", "worker local total request limit reached", "http 4", "bad request")):
+    if _provider_error_diagnostics(stderr, stdout)["provider_error"] or any(item in text for item in ("provider error", "api error", "worker local total request limit reached", "http 4", "bad request")):
         return "provider_error"
     if any(item in text for item in ("upload", "payload too large", "request entity too large")):
         return "provider_upload_failed"
     return "process_failed"
+
+
+def _provider_error_diagnostics(stderr: str, stdout: str) -> dict[str, Any]:
+    text = _safe_summary(f"{stderr}\n{stdout}", 4000)
+    provider = ""
+    model = ""
+    provider_match = re.search(r"\bproviderID=([^\s]+)", text)
+    model_match = re.search(r"\bmodelID=([^\s]+)", text)
+    if provider_match:
+        provider = provider_match.group(1).strip('"')[:100]
+    if model_match:
+        model = model_match.group(1).strip('"')[:150]
+    signals = sorted({match.group(1) for match in PROVIDER_ERROR_RE.finditer(text)})
+    retry_observed = bool(re.search(r"(?i)\b(retry|retryerror|failed after \d+ attempts)\b", text))
+    return {
+        "provider_error": bool(signals),
+        "provider_id": provider,
+        "model_id": model,
+        "error_signals": signals,
+        "retry_observed": retry_observed,
+        "diagnostic_summary": text[-1000:] if signals else "",
+    }
 
 
 def _find_binary() -> str:
@@ -433,9 +456,13 @@ class OpenCodeBridgeConnection:
                 timed_out = code is None and stderr == "timeout"
         duration = round(time.monotonic() - started, 3)
         event_stream = _parse_json_event_stream(stdout)
+        provider_diagnostics = _provider_error_diagnostics(stderr, stdout)
         text = self._extract_text(stdout)
         raw_error = _safe_summary(stderr or stdout)
         if code is None:
+            if provider_diagnostics["provider_error"]:
+                meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+                return {"status": "partial" if meaningful_artifacts else "error", "failure_stage": "model_execution", "error_category": "provider_error", "classification": "provider_error", "errors": [raw_error or provider_diagnostics["diagnostic_summary"]], "text": text, "duration": duration, "timeout": timed_out, "timed_out": timed_out, "terminated_owned_process": bool(workdir), "terminated_gracefully": terminated_gracefully, "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "provider_id": provider_diagnostics["provider_id"], "model_id": provider_diagnostics["model_id"], "provider_error_signals": provider_diagnostics["error_signals"], "provider_retry_observed": provider_diagnostics["retry_observed"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
             category = "timeout" if timed_out else "bridge_unavailable"
             meaningful_artifacts = _scan_meaningful_artifacts(workdir)
             classification = "opencode_usable_but_nonterminating" if timed_out and meaningful_artifacts else "opencode_timeout_without_artifact" if timed_out else "bridge_unavailable"
@@ -443,7 +470,8 @@ class OpenCodeBridgeConnection:
         if code != 0:
             meaningful_artifacts = _scan_meaningful_artifacts(workdir)
             category = _error_category(stderr, stdout)
-            return {"status": "partial" if meaningful_artifacts else "error", "failure_stage": "cli_process_exit", "error_category": category, "classification": "opencode_process_failed_with_artifacts" if meaningful_artifacts else category, "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+            classification = category if category == "provider_error" or not meaningful_artifacts else "opencode_process_failed_with_artifacts"
+            return {"status": "partial" if meaningful_artifacts else "error", "failure_stage": "cli_process_exit", "error_category": category, "classification": classification, "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "provider_id": provider_diagnostics["provider_id"], "model_id": provider_diagnostics["model_id"], "provider_error_signals": provider_diagnostics["error_signals"], "provider_retry_observed": provider_diagnostics["retry_observed"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
         meaningful_artifacts = _scan_meaningful_artifacts(workdir)
         if event_stream["non_json_line_count"] and not event_stream["valid_event_lines"]:
             return {"status": "error", "failure_stage": "response_parsing", "error_category": "json_stream_failure", "classification": "opencode_json_stream_failure", "errors": event_stream["non_json_lines"][:3], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": [], "opencode_json_valid_lines": 0, "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": False, "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
