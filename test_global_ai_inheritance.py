@@ -311,6 +311,38 @@ def test_opencode_model_override_uses_agent_effective_model(monkeypatch, tmp_pat
     assert command[command.index("--model") + 1] == "openai/gpt-5.5"
 
 
+def test_legacy_opencode_global_model_reference_is_migrated(monkeypatch, tmp_path):
+    connection = _text_connection("opencode_bridge", "nvidia/deepseek-ai/deepseek-v4-pro")
+    connection["connection_id"] = "opencode_bridge"
+    connection["connection_type"] = "opencode_oauth_bridge"
+    connection["provider"] = "opencode_bridge"
+    cfg = {"_provider_connections": [connection], "_global_ai": {"connection_id": "opencode_bridge", "provider": "opencode_bridge", "connection_type": "opencode_oauth_bridge", "model": "opencode_bridge/nvidia/deepseek-ai/deepseek-v4-pro"}}
+    client, config_path = _client(monkeypatch, tmp_path, cfg)
+
+    effective = client.get("/api/agents/codex/effective-ai").json()
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert effective["model"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert saved["_global_ai"]["model"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert saved["_system"]["global_model"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+
+
+def test_legacy_opencode_agent_model_reference_is_migrated_idempotently(monkeypatch, tmp_path):
+    connection = _text_connection("opencode_bridge", "nvidia/deepseek-ai/deepseek-v4-pro")
+    connection["connection_id"] = "opencode_bridge"
+    connection["connection_type"] = "opencode_oauth_bridge"
+    connection["provider"] = "opencode_bridge"
+    cfg = {"_provider_connections": [connection], "_global_ai": {"connection_id": "opencode_bridge", "provider": "opencode_bridge", "connection_type": "opencode_oauth_bridge", "model": "nvidia/deepseek-ai/deepseek-v4-pro"}, "_agent_configs": {"alex": {"use_global_connection": False, "connection_id": "opencode_bridge", "use_global_model": False, "model": "opencode_bridge/nvidia/deepseek-ai/deepseek-v4-pro"}}}
+    client, config_path = _client(monkeypatch, tmp_path, cfg)
+
+    first = client.get("/api/agents/alex/effective-ai").json()
+    second = client.get("/api/agents/alex/effective-ai").json()
+    saved = json.loads(config_path.read_text(encoding="utf-8"))["_agent_configs"]["alex"]
+
+    assert first["model"] == second["model"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert saved["model"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+
+
 def test_opencode_command_never_uses_internal_connection_prefix(tmp_path, monkeypatch):
     import opencode_bridge
     bridge = opencode_bridge.OpencodeBridge()
