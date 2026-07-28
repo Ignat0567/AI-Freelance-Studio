@@ -68,6 +68,11 @@ frontend/installers/
 # Local backups
 local_backups/
 .opencode_backups/
+/backups/
+
+# Local runtime state
+/studio_port.txt
+/sandbox-test-lab-jobs.json
 
 # OS
 Thumbs.db
