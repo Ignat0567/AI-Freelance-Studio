@@ -965,7 +965,7 @@ def _provider_connection_id(provider: str) -> str:
 def _canonical_connection_type(value: str, provider: str = "") -> str:
     raw = str(value or "").strip().lower()
     provider = str(provider or "").strip().lower()
-    if raw in {"opencode_bridge", "opencode_oauth_bridge"}:
+    if raw in {"opencode", "opencode_bridge", "opencode_oauth_bridge"}:
         return "opencode_oauth_bridge"
     if raw in {"openai_api", "api_provider"} and provider == "openai":
         return "openai_api"
@@ -974,6 +974,110 @@ def _canonical_connection_type(value: str, provider: str = "") -> str:
     if raw == "local_model" or provider == "ollama":
         return "local_model"
     return raw or ("openai_api" if provider == "openai" else "other_provider_api")
+
+
+OPENCODE_MODEL_ALIASES = {
+    "nvidia/llama-3.3-70b-instruct": "nvidia/meta/llama-3.3-70b-instruct",
+}
+
+
+def _connection_uses_opencode_transport(connection: dict[str, Any], effective: dict[str, Any] | None = None) -> bool:
+    """Detect OpenCode transport from structured metadata, not a literal connection ID."""
+    values = {
+        str(connection.get("connection_type") or "").lower(),
+        str(connection.get("transport") or "").lower(),
+        str(connection.get("backend") or "").lower(),
+        str(connection.get("execution_backend") or "").lower(),
+        str(connection.get("transport_type") or "").lower(),
+        str((effective or {}).get("connection_type") or "").lower(),
+        str((effective or {}).get("transport") or "").lower(),
+        str((effective or {}).get("backend") or "").lower(),
+        str((effective or {}).get("transport_type") or "").lower(),
+    }
+    return bool(values.intersection({"opencode", "opencode_bridge", "opencode_oauth_bridge"}))
+
+
+def _opencode_model_registry(readiness: dict[str, Any], provider_id: str = "") -> list[dict[str, Any]]:
+    models = []
+    for item in readiness.get("available_models", []) or []:
+        raw = str(item.get("id") if isinstance(item, dict) else item).strip()
+        if not raw:
+            continue
+        model_provider = raw.split("/", 1)[0] if "/" in raw else provider_id
+        if provider_id and model_provider != provider_id:
+            continue
+        models.append({
+            "id": raw,
+            "native_model_id": raw,
+            "provider_id": model_provider,
+            "display_name": raw,
+            "available": True,
+            "source": "opencode_models",
+            "capabilities": item.get("capabilities", {}) if isinstance(item, dict) and isinstance(item.get("capabilities"), dict) else {},
+        })
+    return models
+
+
+def _compatible_opencode_models_for_agent(agent_id: str, connection: dict[str, Any], registry: list[dict[str, Any]]) -> list[str]:
+    compatible = []
+    for item in registry:
+        model = str(item.get("native_model_id") or "")
+        if not model:
+            continue
+        validation_connection = {**connection, "available_models": [{"id": model, "capabilities": item.get("capabilities", {})}], "capability_metadata": {model: item.get("capabilities", {})}}
+        if _validate_agent_capabilities(agent_id, validation_connection, model).get("valid"):
+            compatible.append(model)
+    return compatible
+
+
+def _select_opencode_fallback_model(agent_id: str, connection: dict[str, Any], configured_model: str, registry: list[dict[str, Any]]) -> dict[str, Any]:
+    available = {str(item.get("native_model_id")) for item in registry if item.get("available") and item.get("native_model_id")}
+    provider_id = configured_model.split("/", 1)[0] if "/" in configured_model else ""
+
+    alias = OPENCODE_MODEL_ALIASES.get(configured_model)
+    if alias and alias in available and (not provider_id or alias.startswith(f"{provider_id}/")):
+        return {"possible": True, "selected_model": alias, "reason": "exact_legacy_alias"}
+
+    last_successful = str(connection.get("last_successful_model") or "")
+    if last_successful and last_successful in available and (not provider_id or last_successful.startswith(f"{provider_id}/")):
+        return {"possible": True, "selected_model": last_successful, "reason": "last_successful_model"}
+
+    for candidate in connection.get("model_fallback_chain", []) if isinstance(connection.get("model_fallback_chain"), list) else []:
+        model = str(candidate or "")
+        if model in available and (not provider_id or model.startswith(f"{provider_id}/")):
+            return {"possible": True, "selected_model": model, "reason": "configured_fallback_chain"}
+
+    compatible = _compatible_opencode_models_for_agent(agent_id, connection, registry)
+    if len(compatible) == 1:
+        return {"possible": True, "selected_model": compatible[0], "reason": "single_compatible_model"}
+
+    return {"possible": False, "reason": "no_unambiguous_fallback"}
+
+
+def _save_repaired_opencode_model(agent_id: str, selected_model: str, effective: dict[str, Any]) -> None:
+    data = load_studio_keys()
+    if effective.get("use_global_model") is not False:
+        _save_global_ai_config({
+            "connection_id": effective.get("connection_id", ""),
+            "connection_type": effective.get("connection_type", ""),
+            "provider": effective.get("provider", "opencode_bridge"),
+            "model": selected_model,
+            "temperature": effective.get("temperature"),
+            "top_p": effective.get("top_p"),
+            "top_k": effective.get("top_k"),
+            "max_tokens": effective.get("max_tokens"),
+            "enabled": True,
+        })
+        return
+    configs = data.get("_agent_configs", {}) if isinstance(data.get("_agent_configs"), dict) else {}
+    current = configs.get(agent_id, {}) if isinstance(configs.get(agent_id), dict) else {}
+    current["model"] = selected_model
+    current["use_global_model"] = False
+    configs[agent_id] = current
+    data["_agent_configs"] = configs
+    save_studio_keys(data)
+    global agent_configs
+    agent_configs = configs
 
 
 def _general_provider_connection(data: dict, provider: str, model: str = "", tested: bool | None = None, test_result: dict | None = None) -> dict[str, Any]:
@@ -1053,7 +1157,8 @@ def _ensure_provider_connection_records(data: dict) -> bool:
 def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
     safe = _sanitize_provider_connection_for_storage(connection)
     safe["connection_type"] = _canonical_connection_type(str(safe.get("connection_type") or ""), str(safe.get("provider") or ""))
-    if safe.get("connection_type") == "opencode_oauth_bridge":
+    if _connection_uses_opencode_transport(safe):
+        safe["connection_type"] = "opencode_oauth_bridge"
         configured = safe.get("configured_model") or ""
         raw_models = safe.get("available_models") if isinstance(safe.get("available_models"), list) else []
         bridge_capabilities = safe.get("capabilities", {}) if isinstance(safe.get("capabilities"), dict) else {}
@@ -1162,7 +1267,7 @@ def _connection_for_id(connection_id: str, data: dict | None = None) -> dict[str
 
 
 def _opencode_connection_ids(data: dict | None = None) -> set[str]:
-    return {str(item.get("connection_id")) for item in _load_provider_connections(data) if isinstance(item, dict) and _canonical_connection_type(str(item.get("connection_type") or ""), str(item.get("provider") or "")) == "opencode_oauth_bridge" and item.get("connection_id")}
+    return {str(item.get("connection_id")) for item in _load_provider_connections(data) if isinstance(item, dict) and _connection_uses_opencode_transport(item) and item.get("connection_id")}
 
 
 def _normalize_model_for_connection(model: str, connection_id: str = "", data: dict | None = None) -> dict[str, Any]:
@@ -1291,7 +1396,8 @@ def refresh_provider_connection_models(connection_id: str):
         raise HTTPException(404, "Provider connection not found")
     connection = connections[index]
     ctype = _canonical_connection_type(str(connection.get("connection_type") or ""), str(connection.get("provider") or ""))
-    if ctype == "opencode_oauth_bridge":
+    if _connection_uses_opencode_transport(connection):
+        ctype = "opencode_oauth_bridge"
         oc = OpenCodeBridgeConnection.from_dict(connection)
         models = oc.available_models()
         connection["available_models"] = models
@@ -1392,7 +1498,7 @@ def test_provider_connection(connection_id: str):
     index = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection_id), None)
     if index is None:
         raise HTTPException(404, "Provider connection not found")
-    if connections[index].get("connection_type") == "api_provider":
+    if not _connection_uses_opencode_transport(connections[index]):
         provider = str(connections[index].get("provider") or "").lower()
         key = _provider_api_key(provider, data)
         ok, message = _test_provider_key(provider, key)
@@ -4853,7 +4959,7 @@ def _opencode_recovery_instruction(error_code: str) -> str:
     return f"{reasons.get(error_code, reasons['connection_test_failed'])} {_OPENCODE_RECOVERY_FLOW}"
 
 
-def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None) -> dict[str, Any]:
+def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None, *, repair_attempted: bool = False) -> dict[str, Any]:
     if not _HAS_OPENCODE:
         return {"ready": False, "blocking_reason": "opencode_executable_not_found", "message": "OpenCode bridge is not available.", "server_required": False, "checks": {}}
     effective = resolve_effective_agent_ai_config(agent_id)
@@ -4880,13 +4986,44 @@ def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None)
     if readiness.get("ready"):
         return {"ready": True, "connection_id": connection_id, "transport": "opencode", "provider_id": model_id.split("/", 1)[0] if "/" in model_id else "", "model_id": model_id, "server_required": False, "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}}, "readiness": readiness}
     code = str(readiness.get("error_code") or "opencode_connection_not_ready")
+    provider_id = model_id.split("/", 1)[0] if "/" in model_id else str(effective.get("provider") or "")
+    if code == "selected_model_unavailable":
+        registry = _opencode_model_registry(readiness, provider_id)
+        automatic_repair = _select_opencode_fallback_model(agent_id, connection, model_id, registry)
+        if automatic_repair.get("possible") and not repair_attempted:
+            selected = str(automatic_repair.get("selected_model") or "")
+            _save_repaired_opencode_model(agent_id, selected, effective)
+            repaired = _opencode_preflight_for_agent(agent_id, project_dir, repair_attempted=True)
+            return {**repaired, "automatic_repair": {**automatic_repair, "applied": bool(repaired.get("ready"))}, "previous_model_id": model_id}
+        model_ids = {item.get("native_model_id") for item in registry}
+        connection["available_models"] = [{"id": item["native_model_id"], "capabilities": item.get("capabilities", {})} for item in registry]
+        return {
+            "ready": False,
+            "connection_id": connection_id,
+            "transport": "opencode" if _connection_uses_opencode_transport(connection, effective) else "unknown",
+            "provider_id": provider_id,
+            "configured_model": model_id,
+            "model_id": model_id,
+            "model_count": len(registry),
+            "available_models": registry,
+            "server_required": False,
+            "blocking_reason": "selected_model_unavailable",
+            "message": readiness.get("message", "The selected OpenCode model is not available."),
+            "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}},
+            "readiness": readiness,
+            "automatic_repair": automatic_repair,
+            "actions": ["refresh_models", "choose_model"],
+            "recoverable": True,
+            "selector_required": True,
+            "saved_model_still_visible": model_id not in model_ids,
+        }
     mapped = {
         "opencode_not_installed": "opencode_executable_not_found",
         "selected_model_unavailable": "opencode_model_not_found",
         "selected_provider_not_authenticated": "opencode_authentication_failure",
         "provider_not_authenticated": "opencode_authentication_failure",
     }.get(code, code)
-    return {"ready": False, "connection_id": connection_id, "transport": "opencode", "provider_id": model_id.split("/", 1)[0] if "/" in model_id else "", "model_id": model_id, "server_required": False, "blocking_reason": mapped, "message": readiness.get("message", "OpenCode readiness failed."), "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}}, "readiness": readiness, "recoverable": mapped in {"opencode_model_not_found", "opencode_executable_not_found", "opencode_authentication_failure"}}
+    return {"ready": False, "connection_id": connection_id, "transport": "opencode", "provider_id": provider_id, "model_id": model_id, "server_required": False, "blocking_reason": mapped, "message": readiness.get("message", "OpenCode readiness failed."), "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}}, "readiness": readiness, "recoverable": mapped in {"opencode_model_not_found", "opencode_executable_not_found", "opencode_authentication_failure"}}
 
 
 @app.get("/api/opencode/preflight/{agent_id}")

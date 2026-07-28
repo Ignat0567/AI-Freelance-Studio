@@ -695,7 +695,8 @@ function GlobalAIInheritanceSettings({ activePort, cfg, reload, addLog }) {
   const [busy, setBusy] = useState(false);
   const selected = connections.find(c => c.connection_id === connectionId) || connections[0];
   const textCapableConnections = connections.filter(c => (c.available_models || []).some(m => m?.capabilities?.text_input !== false));
-  const models = modelOptions.length ? modelOptions : (selected?.available_models || []);
+  const loadedModels = modelOptions.length ? modelOptions : (selected?.available_models || []);
+  const models = model && !loadedModels.some(m => m.id === model) ? [{ id: model, capabilities: {}, unavailable: true }, ...loadedModels] : loadedModels;
   const selectedModel = models.find(m => m.id === model);
   const supportsTopK = selected?.provider ? ['nvidia', 'together', 'ollama'].includes(selected.provider) : false;
 
@@ -709,7 +710,7 @@ function GlobalAIInheritanceSettings({ activePort, cfg, reload, addLog }) {
       setGlobalAI(nextGlobal);
       setConnections(nextConnections);
       setConnectionId(mapped?.connection_id || nextGlobal.connection_id || '');
-      setModel(nextGlobal.model || mapped?.available_models?.[0]?.id || '');
+      setModel(nextGlobal.model || '');
       setTemperature(nextGlobal.temperature ?? 0.2);
       setTopP(nextGlobal.top_p ?? '');
       setTopK(nextGlobal.top_k ?? '');
@@ -724,7 +725,7 @@ function GlobalAIInheritanceSettings({ activePort, cfg, reload, addLog }) {
     return fetch(`http://localhost:${activePort}/api/provider-connections/${encodeURIComponent(id)}/models`).then(r => r.json()).then(data => {
       const nextModels = (data.models || []).filter(m => m?.capabilities?.text_input !== false);
       setModelOptions(nextModels);
-      if (!preserve || !nextModels.some(m => m.id === model)) setModel(prev => (preserve && nextModels.some(m => m.id === prev)) ? prev : nextModels[0]?.id || '');
+      if (!preserve) setModel('');
     }).catch(err => { setModelOptions([]); setMessage(`Failed to load models: ${err.message}`); }).finally(() => setLoadingModels(false));
   };
   useEffect(() => { loadGlobal(); loadAgents(); }, [activePort]);
