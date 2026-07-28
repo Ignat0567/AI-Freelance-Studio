@@ -845,7 +845,7 @@ class OpencodeBridge:
 
     # ── high-level task methods ────────────────────────────────────────────
 
-    def execute_coding_task(self, project_dir: str, task_spec: str, log_callback=None, autonomous: bool = False) -> dict:
+    def execute_coding_task(self, project_dir: str, task_spec: str, log_callback=None, autonomous: bool = False, model_override: str = "") -> dict:
         """Delegate a coding task to OpenCode."""
         return self._run_agent_session(
             project_dir=project_dir,
@@ -869,9 +869,10 @@ class OpencodeBridge:
                 "9. Tell me exactly what files you changed and the real command results"
             ),
             log_callback=log_callback,
+            model_override=model_override,
         )
 
-    def execute_review_task(self, project_dir: str, review_type: str, context: str) -> dict:
+    def execute_review_task(self, project_dir: str, review_type: str, context: str, model_override: str = "") -> dict:
         """Delegate code review to OpenCode."""
         prompts = {
             "bugcatcher": "You are a QA engineer reviewing code for bugs, edge cases, and functionality issues.",
@@ -889,9 +890,10 @@ class OpencodeBridge:
                 "4. If no issues, say 'VERDICT: PASS'\n"
                 "5. If issues exist, say 'VERDICT: FAIL' and suggest specific fixes"
             ),
+            model_override=model_override,
         )
 
-    def execute_test_task(self, project_dir: str, test_spec: str) -> dict:
+    def execute_test_task(self, project_dir: str, test_spec: str, model_override: str = "") -> dict:
         """Delegate test writing and execution to OpenCode."""
         return self._run_agent_session(
             project_dir=project_dir,
@@ -904,9 +906,10 @@ class OpencodeBridge:
                 "4. Fix any failures\n"
                 "5. Report which tests passed/failed"
             ),
+            model_override=model_override,
         )
 
-    def execute_fix_task(self, project_dir: str, issues: str, log_callback=None) -> dict:
+    def execute_fix_task(self, project_dir: str, issues: str, log_callback=None, model_override: str = "") -> dict:
         """Delegate bug fixing to OpenCode based on review findings."""
         return self._run_agent_session(
             project_dir=project_dir,
@@ -919,6 +922,7 @@ class OpencodeBridge:
                 "4. Report what was fixed and the results"
             ),
             log_callback=log_callback,
+            model_override=model_override,
         )
 
     # ── session management ────────────────────────────────────────────────
@@ -952,17 +956,17 @@ class OpencodeBridge:
                         continue
         return {"status": "cancelled" if cancelled else "not_found", "sessions": cancelled}
 
-    def _run_agent_session(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None) -> dict:
+    def _run_agent_session(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None, model_override: str = "") -> dict:
         """
         Create an OpenCode session, send a task prompt, collect the result.
         Uses OpenCode CLI by default. The local HTTP API is useful for status/web,
         but its session message schema changes across OpenCode releases.
         """
         if os.environ.get("OPENCODE_USE_HTTP", "0") != "1":
-            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
 
         if not self._http:
-            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
 
         try:
             # 1. Create a session
@@ -976,6 +980,10 @@ class OpencodeBridge:
 
             # 2. Use Studio's effective OpenCode coding model, not a stale server default.
             provider_id, model_id = _preferred_provider_model()
+            if model_override:
+                native = _native_opencode_model(model_override, known_connection_ids={"opencode_bridge", "opencode_oauth_bridge"})
+                provider_id = native.split("/", 1)[0] if "/" in native else provider_id
+                model_id = native
             if log_callback:
                 log_callback(f"[Codex] OpenCode model: {provider_id}/{model_id}")
 
@@ -1020,11 +1028,11 @@ class OpencodeBridge:
             logger.exception(f"OpenCode HTTP task failed: {body}")
             if log_callback:
                 log_callback("[Codex] OpenCode HTTP API rejected the task; retrying through OpenCode CLI...")
-            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
         except Exception as e:
             logger.exception(f"OpenCode task failed")
             if "401" in str(e) or "403" in str(e) or "Unauthorized" in str(e):
-                return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+                return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
             return {"success": False, "error": str(e), "session_id": None}
         finally:
             try:
@@ -1033,12 +1041,16 @@ class OpencodeBridge:
             except Exception:
                 pass
 
-    def _run_cli_task(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None) -> dict:
+    def _run_cli_task(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None, model_override: str = "") -> dict:
         """Run OpenCode via CLI when the local HTTP API requires auth."""
         binary = self._binary or _discover_opencode()
         if not binary:
             return {"success": False, "error": "OpenCode binary not found", "session_id": None, "subprocess_started": False, "exit_code": None, "command_shape": []}
         provider, model = _preferred_provider_model()
+        if model_override:
+            native = _native_opencode_model(model_override, known_connection_ids={"opencode_bridge", "opencode_oauth_bridge"})
+            provider = native.split("/", 1)[0] if "/" in native else provider
+            model = native
         prompt = (
             f"SYSTEM:\n{system_prompt}\n\n"
             f"USER TASK:\n{user_prompt}\n\n"

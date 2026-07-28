@@ -362,14 +362,15 @@ class AgentAIConfigPayload(BaseModel):
     connection_type: str | None = None
     provider: str | None = None
     model: str | None = None
-    temperature: float | None = None
-    top_p: float | None = None
-    top_k: int | None = None
-    max_tokens: int | None = None
+    temperature: Any | None = None
+    top_p: Any | None = None
+    top_k: Any | None = None
+    max_tokens: Any | None = None
     use_global: bool | None = None
     enabled: bool | None = None
     custom_prompt: str | None = None
     save_path: str | None = None
+    reset_to_defaults: bool | None = None
 
 
 class ProviderTestPayload(BaseModel):
@@ -830,7 +831,7 @@ def apply_global_inheritance_to_agents():
         current = agent_configs.get(agent_id, {})
         current["use_global_connection"] = True
         current["use_global_model"] = True
-        current["use_global_generation_parameters"] = False
+        current["use_global_generation_parameters"] = True
         current["use_global"] = True
         agent_configs[agent_id] = current
         updated.append(agent_id)
@@ -2229,10 +2230,127 @@ def _validate_agent_capabilities(agent_id: str, connection: dict[str, Any], mode
         opencode_bridge_tested = connection.get("connection_type") == "opencode_oauth_bridge" and connection.get("capabilities", {}).get("text_input", {}).get("status") == "supported"
         if connection.get("tested_status") != "passed" and not opencode_bridge_tested:
             valid = False
-            reason = "Global model is not eligible for Product Judge."
+            reason = "Selected model is not eligible for Product Judge."
         elif not valid:
-            reason = "Global model is not eligible for Product Judge."
+            reason = "Selected model is not eligible for Product Judge."
     return {"valid": valid, "required": _agent_required_capabilities(agent_id), "capabilities": capabilities, "missing": missing, "unknown": unknown, "model_in_connection": model_in_connection, "reason": reason}
+
+
+def _agent_config_error(code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=400, detail={"code": code, "message": message})
+
+
+def _parse_optional_float(value: Any, field: str, minimum: float, maximum: float) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(str(value).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        raise _agent_config_error("agent_parameters_invalid", f"{field} must be a number.")
+    if number < minimum or number > maximum:
+        raise _agent_config_error("agent_parameters_invalid", f"{field} must be between {minimum:g} and {maximum:g}.")
+    return number
+
+
+def _parse_optional_positive_int(value: Any, field: str) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        text = str(value).strip().replace(",", ".")
+        number = float(text)
+    except (TypeError, ValueError):
+        raise _agent_config_error("agent_parameters_invalid", f"{field} must be a positive integer.")
+    if number <= 0 or not number.is_integer():
+        raise _agent_config_error("agent_parameters_invalid", f"{field} must be a positive integer.")
+    return int(number)
+
+
+def _reset_agent_ai_config(current: dict[str, Any]) -> dict[str, Any]:
+    preserved = {key: current[key] for key in ("enabled", "custom_prompt", "save_path") if key in current}
+    preserved.update({
+        "use_global": True,
+        "use_global_connection": True,
+        "use_global_model": True,
+        "use_global_generation_parameters": True,
+        "connection_id": None,
+        "connection_type": None,
+        "provider": None,
+        "model": None,
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "max_tokens": None,
+    })
+    return preserved
+
+
+def _validated_agent_ai_patch(agent_id: str, current: dict[str, Any], raw_patch: dict[str, Any]) -> dict[str, Any]:
+    if raw_patch.get("reset_to_defaults"):
+        return _reset_agent_ai_config(current)
+
+    patch = {key: value for key, value in raw_patch.items() if key != "reset_to_defaults"}
+    next_cfg = {**current, **patch}
+    if next_cfg.get("use_global_connection") is None and "use_global_connection" not in next_cfg:
+        next_cfg["use_global_connection"] = True
+    if next_cfg.get("use_global_model") is None and "use_global_model" not in next_cfg:
+        next_cfg["use_global_model"] = True
+    if next_cfg.get("use_global_generation_parameters") is None and "use_global_generation_parameters" not in next_cfg:
+        next_cfg["use_global_generation_parameters"] = True
+
+    if next_cfg.get("use_global_connection") is False:
+        connection_id = str(next_cfg.get("connection_id") or "").strip()
+        if not connection_id:
+            raise _agent_config_error("agent_connection_required", "Select a connection for this agent.")
+        connection = _connection_for_id(connection_id)
+        if not connection:
+            raise _agent_config_error("agent_connection_not_found", "Selected agent connection was not found.")
+        next_cfg["connection_id"] = connection_id
+        next_cfg["provider"] = connection.get("provider") or next_cfg.get("provider")
+        next_cfg["connection_type"] = connection.get("connection_type") or next_cfg.get("connection_type")
+    else:
+        next_cfg["connection_id"] = None
+        next_cfg["connection_type"] = None
+        next_cfg["provider"] = None
+
+    if next_cfg.get("use_global_model") is False:
+        model = str(next_cfg.get("model") or "").strip()
+        normalized_model = _normalize_model_for_connection(model, str(next_cfg.get("connection_id") or _load_global_ai_config().get("connection_id") or ""))
+        model = str(normalized_model.get("model_id") or model)
+        if normalized_model.get("migrated") and not next_cfg.get("connection_id"):
+            next_cfg["connection_id"] = normalized_model.get("connection_id")
+        if not model:
+            raise _agent_config_error("agent_model_required", "Select a model for this agent.")
+        effective_connection_id = str(next_cfg.get("connection_id") or _load_global_ai_config().get("connection_id") or "")
+        connection = _connection_for_id(effective_connection_id)
+        available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
+        if available_model_ids and model not in available_model_ids:
+            raise _agent_config_error("agent_model_unavailable", "Selected model is not available for this agent connection.")
+        validation = _validate_agent_capabilities(agent_id, connection, model)
+        if not validation.get("valid"):
+            raise _agent_config_error("agent_configuration_incompatible", str(validation.get("reason") or "Agent configuration is incompatible."))
+        next_cfg["model"] = model
+    elif "model" in patch and not str(patch.get("model") or "").strip():
+        next_cfg["model"] = None
+
+    if next_cfg.get("use_global_generation_parameters") is False:
+        if "temperature" in patch:
+            next_cfg["temperature"] = _parse_optional_float(patch.get("temperature"), "Temperature", 0, 2)
+        if "top_p" in patch:
+            next_cfg["top_p"] = _parse_optional_float(patch.get("top_p"), "Top_p", 0, 1)
+        if "top_k" in patch:
+            next_cfg["top_k"] = _parse_optional_positive_int(patch.get("top_k"), "Top_k")
+        if "max_tokens" in patch:
+            next_cfg["max_tokens"] = _parse_optional_positive_int(patch.get("max_tokens"), "Max tokens")
+    else:
+        for key in ("temperature", "top_p", "top_k", "max_tokens"):
+            if key in patch and patch[key] in (None, ""):
+                next_cfg[key] = None
+
+    return {key: value for key, value in next_cfg.items() if key in {
+        "use_global", "use_global_connection", "use_global_model", "use_global_generation_parameters",
+        "connection_id", "connection_type", "provider", "model", "temperature", "top_p", "top_k", "max_tokens",
+        "enabled", "custom_prompt", "save_path",
+    }}
 
 
 def resolve_effective_agent_ai_config(agent_id: str) -> dict[str, Any]:
@@ -2250,7 +2368,7 @@ def resolve_effective_agent_ai_config(agent_id: str) -> dict[str, Any]:
     legacy_use_global = agent.get("use_global", default.get("use_global", True)) is not False
     use_global_connection = bool(agent.get("use_global_connection", legacy_use_global))
     use_global_model = bool(agent.get("use_global_model", legacy_use_global))
-    use_global_generation = bool(agent.get("use_global_generation_parameters", False))
+    use_global_generation = bool(agent.get("use_global_generation_parameters", legacy_use_global))
     connection_id = global_cfg.get("connection_id", "") if use_global_connection else str(agent.get("connection_id") or "")
     provider = str(global_cfg.get("provider") or SYSTEM_SETTINGS["global_provider"]) if use_global_connection else str(agent.get("provider") or default.get("provider") or SYSTEM_SETTINGS["global_provider"])
     if not connection_id:
@@ -2316,6 +2434,17 @@ def resolve_effective_agent_ai_config(agent_id: str) -> dict[str, Any]:
 
 def agent_generation_kwargs(agent_id: str) -> dict[str, Any]:
     return resolve_effective_agent_ai_config(agent_id)["sendable_generation_parameters"]
+
+
+def agent_opencode_model_override(agent_id: str) -> str:
+    effective = resolve_effective_agent_ai_config(agent_id)
+    model = str(effective.get("model") or "")
+    provider = str(effective.get("provider") or "")
+    if not model:
+        return ""
+    if "/" in model:
+        return model
+    return f"{provider}/{model}" if provider else model
 
 
 def load_agent_configs() -> Dict[str, Dict[str, Any]]:
@@ -2518,11 +2647,23 @@ def update_agent_config(agent_id: str, payload: AgentAIConfigPayload):
     if agent_id not in _all_agent_ids():
         raise HTTPException(status_code=404, detail="Agent not found")
     current = agent_configs.get(agent_id, {})
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        current[key] = value
+    current = _validated_agent_ai_patch(agent_id, current, payload.model_dump(exclude_unset=True))
     agent_configs[agent_id] = current
     save_agent_configs(agent_configs)
-    return {"status": "success", "agent_id": agent_id}
+    return {"status": "success", "agent_id": agent_id, "config": current, "effective_ai": resolve_effective_agent_ai_config(agent_id)}
+
+
+@app.get("/api/agents/{agent_id}/config")
+def get_agent_config(agent_id: str):
+    if agent_id not in _all_agent_ids():
+        raise HTTPException(status_code=404, detail="Agent not found")
+    current = {
+        "use_global_connection": True,
+        "use_global_model": True,
+        "use_global_generation_parameters": True,
+        **agent_configs.get(agent_id, {}),
+    }
+    return {"agent_id": agent_id, "config": current, "effective_ai": resolve_effective_agent_ai_config(agent_id)}
 
 
 @app.get("/api/product-judge/config")
@@ -4707,7 +4848,7 @@ def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None)
         return {"ready": False, "blocking_reason": "opencode_executable_not_found", "message": "OpenCode bridge is not available.", "server_required": False, "checks": {}}
     effective = resolve_effective_agent_ai_config(agent_id)
     connection_id = str(effective.get("connection_id") or "")
-    model_id = str(effective.get("model") or "")
+    model_id = agent_opencode_model_override(agent_id)
     normalized = _normalize_model_for_connection(model_id, connection_id)
     model_id = str(normalized.get("model_id") or model_id)
     if not model_id or _normalize_model_for_connection(model_id, connection_id).get("migrated"):
@@ -4775,6 +4916,7 @@ def _pipeline_codex_fix(project, generated_data, target_path, feedback):
             project_dir=target_path,
             issues=feedback,
             log_callback=lambda msg: project["logs"].append(msg),
+            model_override=agent_opencode_model_override("codex"),
         )
         if not result.get("success"):
             _set_project_status(project, "blocked", reason="OpenCode repair task failed")
@@ -5106,6 +5248,7 @@ def async_studio_production_pipeline(project_id: str):
                             task_spec=task_spec,
                             autonomous=project.get("autonomous_mode", True),
                             log_callback=lambda msg: project["logs"].append(msg),
+                            model_override=agent_opencode_model_override("codex"),
                         )
                         if oc_result.get("session_id"):
                             project["opencode_session_id"] = oc_result.get("session_id")
@@ -5258,7 +5401,7 @@ def async_studio_production_pipeline(project_id: str):
                         preflight = _opencode_preflight_for_agent(review_type, target_path)
                         if preflight.get("ready"):
                             project["logs"].append(f"{label} reviewing via OpenCode...")
-                            oc_r = oc_bridge.execute_review_task(target_path, review_type, context)
+                            oc_r = oc_bridge.execute_review_task(target_path, review_type, context, model_override=agent_opencode_model_override(review_type))
                             if oc_r["success"]:
                                 summary = oc_r.get("summary", "")
                                 has_issues = "VERDICT: FAIL" in summary.upper() or "FAIL" in summary.upper()

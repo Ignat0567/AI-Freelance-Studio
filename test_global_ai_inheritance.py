@@ -37,6 +37,30 @@ def _vision_connection(provider="openai", model="gpt-4o"):
     }
 
 
+def _text_connection(provider="anthropic", model="claude-sonnet-4-20250514"):
+    return {
+        "connection_id": f"provider-{provider}",
+        "display_name": f"{provider.upper()} API key",
+        "name": f"{provider.upper()} API key",
+        "provider": provider,
+        "connection_type": "api_provider",
+        "credential_reference": f"{provider}_key",
+        "configured_status": "tested",
+        "tested_status": "passed",
+        "available_models": [
+            {"id": model, "capabilities": {"text_input": True, "image_input": False, "structured_output": True, "streaming": True, "tool_use": True}},
+            {"id": "model-b", "capabilities": {"text_input": True, "image_input": False, "structured_output": True, "streaming": True, "tool_use": True}},
+        ],
+        "capability_metadata": {
+            model: {"text_input": True, "image_input": False, "structured_output": True, "streaming": True, "tool_use": True},
+            "model-b": {"text_input": True, "image_input": False, "structured_output": True, "streaming": True, "tool_use": True},
+        },
+        "configured_model": model,
+        "updated_at": "2026-07-13T00:00:00Z",
+        "stores_authentication": False,
+    }
+
+
 def _client(monkeypatch, tmp_path, config):
     config_path = tmp_path / "studio_config.json"
     _write(config_path, config)
@@ -71,10 +95,10 @@ def test_same_global_model_allows_different_agent_temperatures(monkeypatch, tmp_
 
 
 def test_agent_specific_model_override_and_temperature_override(monkeypatch, tmp_path):
-    cfg = {"openai_key": "sk-secret", "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o", "temperature": 0.2}, "_agent_configs": {"codex": {"use_global_connection": True, "use_global_model": False, "model": "gpt-4.1", "temperature": 0.15}, "elena": {"use_global_connection": True, "use_global_model": True, "use_global_generation_parameters": False, "temperature": 0.7}}}
+    cfg = {"openai_key": "sk-secret", "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o", "temperature": 0.2}, "_agent_configs": {"codex": {"use_global_connection": True, "use_global_model": False, "use_global_generation_parameters": False, "model": "gpt-5.5", "temperature": 0.15}, "elena": {"use_global_connection": True, "use_global_model": True, "use_global_generation_parameters": False, "temperature": 0.7}}}
     client, _ = _client(monkeypatch, tmp_path, cfg)
     effective = client.get("/api/agents/effective-ai").json()
-    assert effective["codex"]["model"] == "gpt-4.1"
+    assert effective["codex"]["model"] == "gpt-5.5"
     assert effective["codex"]["temperature"] == 0.15
     assert effective["elena"]["model"] == "gpt-4o"
     assert effective["elena"]["temperature"] == 0.7
@@ -96,6 +120,7 @@ def test_apply_to_all_sets_inheritance_not_copied_values(monkeypatch, tmp_path):
     saved = json.loads(config_path.read_text(encoding="utf-8"))["_agent_configs"]["codex"]
     assert saved["use_global_connection"] is True
     assert saved["use_global_model"] is True
+    assert saved["use_global_generation_parameters"] is True
     assert saved["temperature"] == 0.15
     assert "provider" not in saved
     assert "model" not in saved
@@ -106,7 +131,7 @@ def test_product_judge_rejects_incompatible_global_model(monkeypatch, tmp_path):
     client, _ = _client(monkeypatch, tmp_path, cfg)
     effective = client.get("/api/agents/product_judge/effective-ai").json()
     assert effective["capability_validation"]["valid"] is False
-    assert effective["capability_validation"]["reason"] == "Global model is not eligible for Product Judge."
+    assert effective["capability_validation"]["reason"] == "Selected model is not eligible for Product Judge."
 
 
 def test_product_judge_accepts_proven_vision_capable_global_model(monkeypatch, tmp_path):
@@ -146,7 +171,7 @@ def test_configuration_survives_restart_and_raw_credentials_are_not_exposed(monk
     secret = "sk-secret-never-return"
     cfg = {"openai_key": secret, "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}}
     client, config_path = _client(monkeypatch, tmp_path, cfg)
-    client.post("/api/agents/elena/config", json={"use_global_model": True, "temperature": 0.7})
+    client.post("/api/agents/elena/config", json={"use_global_model": True, "use_global_generation_parameters": False, "temperature": 0.7})
     main.agent_configs = main.load_agent_configs()
     assert main.resolve_effective_agent_ai_config("elena")["temperature"] == 0.7
     assert secret not in client.get("/api/config/ai/global").text
@@ -161,6 +186,142 @@ def test_reset_to_defaults_restores_inheritance_defaults(monkeypatch, tmp_path):
     effective = client.get("/api/agents/alex/effective-ai").json()
     assert effective["use_global_model"] is True
     assert effective["model"] == "gpt-4o"
+
+
+def test_legacy_agent_config_defaults_to_global_inheritance(monkeypatch, tmp_path):
+    cfg = {"openai_key": "sk-secret", "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o", "temperature": 0.2}, "_agent_configs": {"alex": {}}}
+    client, _ = _client(monkeypatch, tmp_path, cfg)
+    effective = client.get("/api/agents/alex/effective-ai").json()
+    assert effective["use_global_connection"] is True
+    assert effective["use_global_model"] is True
+    assert effective["use_global_generation_parameters"] is True
+    assert effective["temperature"] == 0.2
+
+
+def test_per_agent_connection_model_parameters_are_independent(monkeypatch, tmp_path):
+    cfg = {"openai_key": "sk-secret", "anthropic_key": "sk-secret", "_provider_connections": [_vision_connection(), _text_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o", "temperature": 0.2, "top_p": 0.8}}
+    client, config_path = _client(monkeypatch, tmp_path, cfg)
+    alex = client.post("/api/agents/alex/config", json={"use_global_connection": False, "connection_id": "provider-anthropic", "use_global_model": False, "model": "claude-sonnet-4-20250514", "use_global_generation_parameters": False, "temperature": "0,25", "top_p": "0,85", "top_k": "40", "max_tokens": "1000"})
+    assert alex.status_code == 200
+    maya = client.post("/api/agents/maya/config", json={"use_global_connection": True, "use_global_model": False, "model": "gpt-5.5", "use_global_generation_parameters": True})
+    assert maya.status_code == 200
+    effective = client.get("/api/agents/effective-ai").json()
+    assert effective["alex"]["connection_id"] == "provider-anthropic"
+    assert effective["alex"]["model"] == "claude-sonnet-4-20250514"
+    assert effective["alex"]["temperature"] == 0.25
+    assert effective["alex"]["top_p"] == 0.85
+    assert effective["alex"]["top_k"] == 40
+    assert effective["alex"]["max_tokens"] == 1000
+    assert effective["maya"]["connection_id"] == "provider-openai"
+    assert effective["maya"]["model"] == "gpt-5.5"
+    assert effective["maya"]["temperature"] == 0.2
+    saved = json.loads(config_path.read_text(encoding="utf-8"))["_agent_configs"]
+    assert saved["alex"]["temperature"] == 0.25
+    assert saved["maya"]["use_global_connection"] is True
+
+
+def test_agent_config_validation_and_reset_are_scoped(monkeypatch, tmp_path):
+    cfg = {"openai_key": "sk-secret", "anthropic_key": "sk-secret", "_provider_connections": [_vision_connection(), _text_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}, "_agent_configs": {"maya": {"use_global_model": False, "model": "gpt-5.5"}}}
+    client, _ = _client(monkeypatch, tmp_path, cfg)
+    assert client.post("/api/agents/alex/config", json={"use_global_connection": False, "connection_id": "missing"}).json()["detail"]["code"] == "agent_connection_not_found"
+    assert client.post("/api/agents/alex/config", json={"use_global_connection": True, "use_global_model": False, "model": "missing-model"}).json()["detail"]["code"] == "agent_model_unavailable"
+    assert client.post("/api/agents/alex/config", json={"use_global_generation_parameters": False, "temperature": 9}).json()["detail"]["code"] == "agent_parameters_invalid"
+    assert client.post("/api/agents/alex/config", json={"use_global_generation_parameters": False, "top_p": "1,5"}).json()["detail"]["code"] == "agent_parameters_invalid"
+    client.post("/api/agents/alex/config", json={"use_global_connection": False, "connection_id": "provider-anthropic", "use_global_model": False, "model": "model-b", "use_global_generation_parameters": False, "temperature": 0.4})
+    client.post("/api/agents/alex/config", json={"reset_to_defaults": True})
+    effective = client.get("/api/agents/effective-ai").json()
+    assert effective["alex"]["use_global_connection"] is True
+    assert effective["alex"]["use_global_model"] is True
+    assert effective["alex"]["use_global_generation_parameters"] is True
+    assert effective["maya"]["model"] == "gpt-5.5"
+
+
+def test_global_updates_only_affect_inheriting_agents(monkeypatch, tmp_path):
+    cfg = {
+        "openai_key": "sk-secret",
+        "anthropic_key": "sk-secret",
+        "_provider_connections": [_vision_connection(), _text_connection()],
+        "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o", "temperature": 0.2, "top_p": 0.8},
+        "_agent_configs": {
+            "alex": {"use_global_connection": False, "connection_id": "provider-anthropic", "provider": "anthropic", "use_global_model": False, "model": "claude-sonnet-4-20250514", "use_global_generation_parameters": False, "temperature": 0.25, "top_p": 0.85, "top_k": 40, "max_tokens": 1000},
+            "maya": {"use_global_connection": True, "use_global_model": True, "use_global_generation_parameters": True},
+        },
+    }
+    client, config_path = _client(monkeypatch, tmp_path, cfg)
+    client.post("/api/config/ai/global", json={"connection_id": "provider-openai", "provider": "openai", "model": "gpt-5.5", "temperature": 0.55, "top_p": 0.9, "top_k": None, "max_tokens": 2000, "enabled": True})
+
+    effective = client.get("/api/agents/effective-ai").json()
+    saved = json.loads(config_path.read_text(encoding="utf-8"))["_agent_configs"]
+
+    assert effective["alex"]["connection_id"] == "provider-anthropic"
+    assert effective["alex"]["model"] == "claude-sonnet-4-20250514"
+    assert effective["alex"]["temperature"] == 0.25
+    assert effective["maya"]["connection_id"] == "provider-openai"
+    assert effective["maya"]["model"] == "gpt-5.5"
+    assert effective["maya"]["temperature"] == 0.55
+    assert effective["maya"]["max_tokens"] == 2000
+    assert saved["alex"]["top_p"] == 0.85
+    assert saved["alex"]["max_tokens"] == 1000
+
+
+def test_agent_config_rejects_invalid_integer_parameters_and_unknown_agent(monkeypatch, tmp_path):
+    cfg = {"openai_key": "sk-secret", "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}}
+    client, _ = _client(monkeypatch, tmp_path, cfg)
+
+    top_k = client.post("/api/agents/alex/config", json={"use_global_generation_parameters": False, "top_k": "0"})
+    max_tokens = client.post("/api/agents/alex/config", json={"use_global_generation_parameters": False, "max_tokens": "1.5"})
+    unknown = client.post("/api/agents/unknown/config", json={"use_global_model": True})
+
+    assert top_k.json()["detail"]["code"] == "agent_parameters_invalid"
+    assert max_tokens.json()["detail"]["code"] == "agent_parameters_invalid"
+    assert unknown.status_code == 404
+
+
+def test_agent_api_responses_do_not_expose_api_keys(monkeypatch, tmp_path):
+    secret = "sk-secret-never-return"
+    cfg = {"openai_key": secret, "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}}
+    client, _ = _client(monkeypatch, tmp_path, cfg)
+
+    assert secret not in client.get("/api/agents").text
+    assert secret not in client.get("/api/agents/alex/config").text
+
+
+def test_product_judge_compatibility_uses_effective_override(monkeypatch, tmp_path):
+    cfg = {"openai_key": "sk-secret", "anthropic_key": "sk-secret", "_provider_connections": [_vision_connection("openai", "gpt-4o"), _text_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}, "_agent_configs": {"product_judge": {"use_global_connection": False, "connection_id": "provider-anthropic", "provider": "anthropic", "use_global_model": False, "model": "claude-sonnet-4-20250514"}}}
+    client, _ = _client(monkeypatch, tmp_path, cfg)
+
+    effective = client.get("/api/agents/product_judge/effective-ai").json()
+
+    assert effective["connection_id"] == "provider-anthropic"
+    assert effective["model"] == "claude-sonnet-4-20250514"
+    assert effective["capability_validation"]["valid"] is False
+    assert effective["capability_validation"]["reason"] == "Selected model is not eligible for Product Judge."
+
+
+def test_opencode_model_override_uses_agent_effective_model(monkeypatch, tmp_path):
+    import opencode_bridge
+    cfg = {"openai_key": "sk-secret", "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}, "_agent_configs": {"codex": {"use_global_connection": True, "use_global_model": False, "model": "gpt-5.5"}}}
+    _client(monkeypatch, tmp_path, cfg)
+    bridge = opencode_bridge.OpencodeBridge()
+    bridge._binary = "opencode"
+    monkeypatch.setattr(opencode_bridge, "_discover_opencode", lambda: "opencode")
+    monkeypatch.setattr(opencode_bridge.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("blocked test process")))
+    result = bridge._run_cli_task(str(tmp_path), "system", "user", model_override=main.agent_opencode_model_override("codex"))
+    command = result["command_shape"]
+    assert command[command.index("--model") + 1] == "openai/gpt-5.5"
+
+
+def test_opencode_command_never_uses_internal_connection_prefix(tmp_path, monkeypatch):
+    import opencode_bridge
+    bridge = opencode_bridge.OpencodeBridge()
+    bridge._binary = "opencode"
+    monkeypatch.setattr(opencode_bridge.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("blocked test process")))
+    result = bridge._run_cli_task(str(tmp_path), "system", "user", model_override="opencode_bridge/nvidia/deepseek-ai/deepseek-v4-pro")
+    command = result["command_shape"]
+    assert command[command.index("--model") + 1] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert "opencode_bridge/nvidia" not in " ".join(command)
+    assert "--auto" not in command
+    assert "--pure" not in command
 
 
 def test_global_selector_lists_text_capable_non_vision_connection(monkeypatch, tmp_path):
@@ -207,3 +368,17 @@ def test_settings_agent_override_fields_are_labeled_and_model_temp_separated():
     assert "Use global model" in global_section
     assert "Use global parameters" in global_section
     assert "disabled={inheritedParams}" in global_section
+
+
+def test_settings_agent_override_ui_has_connection_and_model_selectors():
+    source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
+    section = source.split("function AgentAIOverridesSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
+    assert "Agent AI Overrides" in section
+    assert "Use global connection" in section
+    assert "Connection<select" in section
+    assert "Use global model" in section
+    assert "Model<select" in section
+    assert "Loading models..." in section
+    assert "Model loading error" in section
+    assert "Save agent settings" in section
+    assert "reset_to_defaults" in section
