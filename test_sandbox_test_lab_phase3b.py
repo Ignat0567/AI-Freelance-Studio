@@ -1207,6 +1207,7 @@ def test_host_polls_until_guest_shutdown_really_removes_session():
 def test_owned_fallback_revalidates_exact_client_without_name_or_global_kill(monkeypatch):
     calls = []
     identity = session_module.OwnedSandboxSession(
+        model="legacy_client",
         launcher_pid=4242,
         client_pid=4343,
         client_start_ticks=638800000000000000,
@@ -1244,7 +1245,7 @@ def test_session_capture_pins_only_direct_current_run_client_identity(monkeypatc
     }
 
     monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
-    monkeypatch.setattr(session_module, "_client_path", lambda: client_path)
+    monkeypatch.setattr(session_module, "_system32_process_path", lambda name: client_path if name == session_module.CLIENT_PROCESS_NAME else Path(r"C:\Windows\System32") / name)
     monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
 
     def run(argv, **kwargs):
@@ -1255,6 +1256,7 @@ def test_session_capture_pins_only_direct_current_run_client_identity(monkeypatc
     identity = session_module.capture_owned_sandbox_session(4242, launched_at)
 
     assert identity.launcher_pid == 4242 and identity.client_pid == 4343
+    assert identity.model == "legacy_client"
     assert "ParentProcessId=4242" in commands[0]
     assert "Name='WindowsSandboxClient.exe'" in commands[0]
     assert "SELECT ProcessId,ParentProcessId,CreationDate" in commands[0]
@@ -1378,6 +1380,24 @@ def test_production_runner_malformed_evidence_cleans_owned_session(tmp_path, mon
     assert session.close_calls == 1
 
 
+def test_screenshot_runner_stops_known_launcher_when_session_identity_capture_fails(tmp_path, monkeypatch):
+    request = _request(tmp_path, monkeypatch)
+    process = _Process()
+
+    result = ScreenshotSelfTestRunner(
+        workspace_manager=ScreenshotSelfTestWorkspaceManager(tmp_path / "runtime"),
+        capability_detector=_capability,
+        launcher=lambda argv: process,
+        session_factory=lambda launcher_pid, launched_at: (_ for _ in ()).throw(
+            WorkspaceError("owned Sandbox client discovery failed")
+        ),
+    ).run(request)
+
+    assert result.status == RunStatus.INFRASTRUCTURE_ERROR
+    assert process.terminate_calls == 1
+    assert "owned_sandbox_session_identity_missing" in result.errors
+
+
 def test_valid_evidence_cannot_pass_while_owned_session_remains_active(tmp_path, monkeypatch):
     request = _request(tmp_path, monkeypatch)
     manager = ScreenshotSelfTestWorkspaceManager(tmp_path / "runtime")
@@ -1492,3 +1512,308 @@ def test_static_phase3b_powershell_51_parser_and_ast_have_no_taskkill_command(fi
     assert result.returncode == 0, result.stdout + result.stderr
     commands = {line.strip().replace("/", "\\").rsplit("\\", 1)[-1].casefold() for line in result.stdout.splitlines() if line.strip()}
     assert not commands.intersection({"taskkill", "taskkill.exe"})
+
+
+class _MockProcessHandle:
+    def __init__(self, pid=1234, poll_result=None):
+        self.pid = pid
+        self._poll_result = poll_result
+        self._terminate_called = False
+
+    def poll(self):
+        return self._poll_result
+
+    def terminate(self):
+        self._terminate_called = True
+
+    def kill(self):
+        raise OSError("access denied")
+
+    def wait(self, timeout=None):
+        if self._poll_result is None:
+            raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout, output=b"")
+        return self._poll_result
+
+
+def test_stop_owned_process_handles_already_exited():
+    from sandbox_test_lab.runner import _stop_owned_process
+    process = _MockProcessHandle(poll_result=0)
+    _stop_owned_process(process)
+    assert not process._terminate_called
+
+
+def test_stop_owned_process_handles_kill_oserror():
+    from sandbox_test_lab.runner import _stop_owned_process
+    process = _MockProcessHandle(poll_result=None)
+    _stop_owned_process(process)
+    assert process._terminate_called
+
+
+def test_stop_owned_process_handles_second_wait_timeout():
+    from sandbox_test_lab.runner import _stop_owned_process
+    class _SecondTimeout:
+        def __init__(self):
+            self.pid = 5678
+            self._poll_calls = 0
+            self._terminate_called = False
+        def poll(self):
+            self._poll_calls += 1
+            return None if self._poll_calls <= 1 else 1
+        def terminate(self):
+            self._terminate_called = True
+        def kill(self):
+            pass
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout, output=b"")
+    process = _SecondTimeout()
+    _stop_owned_process(process)
+    assert process._terminate_called
+
+
+def test_execute_catches_system_exit_and_updates_snapshot():
+    from sandbox_test_lab.production_bridge import ProductionSandboxTestLabRunner
+    from sandbox_test_lab.adapter import SandboxProfile, SandboxStatus
+    from uuid import uuid4
+    from threading import Event
+    runner = ProductionSandboxTestLabRunner()
+    class _RaiseRunner:
+        def run(self, request, cancellation):
+            raise SystemExit(1)
+    run_id = str(uuid4())
+    run = type('_Run', (), {
+        'profile': SandboxProfile.PRODUCTION_SCREENSHOT,
+        'request': type('_Req', (), {'run_id': run_id})(),
+        'runner': _RaiseRunner(),
+        'cancellation': Event(),
+        'snapshot': type('_Snap', (), {'status': SandboxStatus.LAUNCHING, 'manual_close_required': False})(),
+    })()
+    runner._execute(run)
+    assert run.snapshot.status is SandboxStatus.INFRASTRUCTURE_ERROR
+
+
+def test_write_host_state_creates_files(tmp_path):
+    from sandbox_test_lab.screenshot_runner import ScreenshotSelfTestRunner
+    from sandbox_test_lab.models import RunStatus, SandboxRunPaths
+    from sandbox_test_lab.workspace import atomic_write_json
+    run_root = tmp_path / "run"
+    logs_dir = run_root / "logs"
+    run_root.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    paths = SandboxRunPaths(run_root, tmp_path, tmp_path, tmp_path, logs_dir, tmp_path / "config.wsb")
+    runner = ScreenshotSelfTestRunner()
+    result = runner._write_host_state(
+        paths, "test-run-id", RunStatus.RUNNING,
+        "2024-01-01T00:00:00Z", 0.0, "cleanup_in_progress", None, [], [],
+    )
+    assert result.status is RunStatus.RUNNING
+    assert result.exit_reason == "cleanup_in_progress"
+    assert (run_root / "host-result.json").is_file()
+    assert (logs_dir / "host.log").is_file()
+
+
+def test_phase_marker_written(tmp_path):
+    from sandbox_test_lab.screenshot_runner import ScreenshotSelfTestRunner
+    runner = ScreenshotSelfTestRunner()
+    runner._write_phase_marker(tmp_path, "test_phase")
+    marker = json.loads((tmp_path / "phase-marker.json").read_text(encoding="utf-8"))
+    assert marker["phase"] == "test_phase"
+
+
+def test_execute_catches_ordinary_exception_and_updates_snapshot():
+    from sandbox_test_lab.production_bridge import ProductionSandboxTestLabRunner
+    from sandbox_test_lab.adapter import SandboxProfile, SandboxStatus
+    from uuid import uuid4
+    from threading import Event
+    runner = ProductionSandboxTestLabRunner()
+    class _RaiseRunner:
+        def run(self, request, cancellation):
+            raise RuntimeError("ordinary failure")
+    run_id = str(uuid4())
+    run = type('_Run', (), {
+        'profile': SandboxProfile.PRODUCTION_SCREENSHOT,
+        'request': type('_Req', (), {'run_id': run_id})(),
+        'runner': _RaiseRunner(),
+        'cancellation': Event(),
+        'snapshot': type('_Snap', (), {'status': SandboxStatus.LAUNCHING, 'manual_close_required': False})(),
+    })()
+    runner._execute(run)
+    assert run.snapshot.status is SandboxStatus.INFRASTRUCTURE_ERROR
+
+
+def test_execute_catches_other_base_exception_and_updates_snapshot():
+    from sandbox_test_lab.production_bridge import ProductionSandboxTestLabRunner
+    from sandbox_test_lab.adapter import SandboxProfile, SandboxStatus
+    from uuid import uuid4
+    from threading import Event
+    runner = ProductionSandboxTestLabRunner()
+    class _RaiseRunner:
+        def run(self, request, cancellation):
+            raise MemoryError("simulated other base exception")
+    run_id = str(uuid4())
+    run = type('_Run', (), {
+        'profile': SandboxProfile.PRODUCTION_SCREENSHOT,
+        'request': type('_Req', (), {'run_id': run_id})(),
+        'runner': _RaiseRunner(),
+        'cancellation': Event(),
+        'snapshot': type('_Snap', (), {'status': SandboxStatus.LAUNCHING, 'manual_close_required': False})(),
+    })()
+    runner._execute(run)
+    assert run.snapshot.status is SandboxStatus.INFRASTRUCTURE_ERROR
+
+
+def test_execute_does_not_silently_convert_cancellation_to_success():
+    from sandbox_test_lab.production_bridge import ProductionSandboxTestLabRunner
+    from sandbox_test_lab.adapter import SandboxProfile, SandboxStatus
+    from uuid import uuid4
+    from threading import Event
+    runner = ProductionSandboxTestLabRunner()
+    class _PassRunner:
+        def run(self, request, cancellation):
+            return type('_Res', (), {
+                'run_id': request.run_id,
+                'status': type('_St', (), {'value': 'passed'}),
+                'evidence_path': None,
+                'errors': (),
+                'warnings': (),
+                'launcher_return_code': None,
+                'launcher_exited_at': None,
+                'launcher_exit_elapsed_seconds': None,
+            })()
+    run_id = str(uuid4())
+    cancel = Event()
+    cancel.set()
+    run = type('_Run', (), {
+        'profile': SandboxProfile.PRODUCTION_SCREENSHOT,
+        'request': type('_Req', (), {'run_id': run_id})(),
+        'runner': _PassRunner(),
+        'cancellation': cancel,
+        'snapshot': type('_Snap', (), {'status': SandboxStatus.LAUNCHING, 'manual_close_required': False})(),
+    })()
+    runner._execute(run)
+    assert run.snapshot.status is SandboxStatus.CANCELLED
+
+
+def test_write_host_state_survives_write_failure(tmp_path):
+    from sandbox_test_lab.screenshot_runner import ScreenshotSelfTestRunner
+    from sandbox_test_lab.models import RunStatus, SandboxRunPaths
+    run_root = tmp_path / "run"
+    logs_dir = run_root / "logs"
+    run_root.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    paths = SandboxRunPaths(run_root, tmp_path, tmp_path, tmp_path, logs_dir, tmp_path / "config.wsb")
+    runner = ScreenshotSelfTestRunner()
+    (run_root / "host-result.json").write_text("garbage", encoding="utf-8")
+    import os
+    os.chmod(str(run_root), 0o444)
+    try:
+        result = runner._write_host_state(
+            paths, "test-write-fail", RunStatus.INFRASTRUCTURE_ERROR,
+            "2024-01-01T00:00:00Z", 0.0, "write_failure", None, [], [],
+        )
+        assert result.status is RunStatus.INFRASTRUCTURE_ERROR
+        assert result.exit_reason == "write_failure"
+    finally:
+        os.chmod(str(run_root), 0o777)
+
+
+def test_phase_marker_includes_thread_name(tmp_path):
+    from sandbox_test_lab.screenshot_runner import ScreenshotSelfTestRunner
+    runner = ScreenshotSelfTestRunner()
+    runner._write_phase_marker(tmp_path, "phase_test", extra={"run_id": "abc-123"})
+    marker = json.loads((tmp_path / "phase-marker.json").read_text(encoding="utf-8"))
+    assert marker["phase"] == "phase_test"
+    assert marker["run_id"] == "abc-123"
+    assert "thread_name" in marker
+    assert "timestamp" in marker
+
+
+def test_finish_is_idempotent(tmp_path):
+    from sandbox_test_lab.screenshot_runner import ScreenshotSelfTestRunner
+    from sandbox_test_lab.models import RunStatus, SandboxRunPaths
+    run_root = tmp_path / "run"
+    logs_dir = run_root / "logs"
+    run_root.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    paths = SandboxRunPaths(run_root, tmp_path, tmp_path, tmp_path, logs_dir, tmp_path / "config.wsb")
+    runner = ScreenshotSelfTestRunner()
+    r1 = runner._finish(paths, "idempotent-test", RunStatus.PASSED, "2024-01-01T00:00:00Z", 0.0, "passed", None, [], [])
+    r2 = runner._finish(paths, "idempotent-test", RunStatus.PASSED, "2024-01-01T00:00:00Z", 0.0, "passed", None, [], [])
+    assert r1.status is RunStatus.PASSED
+    assert r2.status is RunStatus.PASSED
+    assert r1.exit_reason == "passed"
+    assert r2.exit_reason == "passed"
+
+
+def test_control_process_handles_already_exited(monkeypatch):
+    import subprocess
+    from sandbox_test_lab.sandbox_session import OwnedSandboxSession
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: type('_R', (), {'returncode': 1, 'stdout': '', 'stderr': ''})(),
+    )
+    session = OwnedSandboxSession(
+        model="legacy_client", launcher_pid=99999,
+        client_pid=99999, client_start_ticks=1, client_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+    )
+    session._control_process(
+        pid=99999, start_ticks=1,
+        expected_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+        label="client", action="terminate",
+    )
+
+
+def test_control_process_raises_on_pid_reuse(monkeypatch):
+    import subprocess
+    from sandbox_test_lab.sandbox_session import OwnedSandboxSession, WorkspaceError
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: type('_R', (), {'returncode': 11, 'stdout': '', 'stderr': ''})(),
+    )
+    session = OwnedSandboxSession(
+        model="legacy_client", launcher_pid=99999,
+        client_pid=99999, client_start_ticks=1, client_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+    )
+    with pytest.raises(WorkspaceError, match="identity_rejected"):
+        session._control_process(
+            pid=99999, start_ticks=1,
+            expected_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+            label="client", action="terminate",
+        )
+
+
+def test_control_process_raises_on_path_mismatch(monkeypatch):
+    import subprocess
+    from sandbox_test_lab.sandbox_session import OwnedSandboxSession, WorkspaceError
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: type('_R', (), {'returncode': 12, 'stdout': '', 'stderr': ''})(),
+    )
+    session = OwnedSandboxSession(
+        model="legacy_client", launcher_pid=99999,
+        client_pid=99999, client_start_ticks=1, client_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+    )
+    with pytest.raises(WorkspaceError, match="identity_rejected"):
+        session._control_process(
+            pid=99999, start_ticks=1,
+            expected_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+            label="client", action="terminate",
+        )
+
+
+def test_control_process_handles_timeout(monkeypatch):
+    import subprocess
+    from sandbox_test_lab.sandbox_session import OwnedSandboxSession, WorkspaceError
+    def _timeout_run(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="fake", timeout=10, output=b"")
+    monkeypatch.setattr(subprocess, "run", _timeout_run)
+    session = OwnedSandboxSession(
+        model="remote_session", launcher_pid=99999,
+        remote_session_pid=99999, remote_session_start_ticks=1,
+        remote_session_path=r"C:\Program Files\WindowsApps\Microsoft.WindowsSandbox_1.0.0_x64__8wekyb3d8bbwe\WindowsSandboxRemoteSession.exe",
+    )
+    with pytest.raises(WorkspaceError, match="timeout"):
+        session._control_process(
+            pid=99999, start_ticks=1,
+            expected_path=r"C:\Program Files\WindowsApps\Microsoft.WindowsSandbox_1.0.0_x64__8wekyb3d8bbwe\WindowsSandboxRemoteSession.exe",
+            label="remote_session", action="close",
+        )

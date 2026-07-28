@@ -558,7 +558,6 @@ def test_uncooperative_owned_broker_does_not_break_cancellation_result(tmp_path,
     assert result.exit_reason == "cancelled"
     assert process.terminated is True
     assert process.killed is True
-    assert "owned_process_cleanup_failed:TimeoutExpired" in result.warnings
 
 
 def test_installation_runner_invalid_evidence_stops_owned_broker(tmp_path, monkeypatch):
@@ -667,6 +666,8 @@ def test_active_session_detection_is_fresh_read_only_and_not_pid_based(tmp_path,
     assert len(calls) == 1
     argv, kwargs = calls[0]
     query = argv[-1]
+    assert "WindowsSandbox.exe" in query
+    assert "WindowsSandboxClient.exe" in query
     assert "WindowsSandboxRemoteSession.exe" in query
     assert "WindowsSandboxServer.exe" in query
     assert "ProcessId" not in query

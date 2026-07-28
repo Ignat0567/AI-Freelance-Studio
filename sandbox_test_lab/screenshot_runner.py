@@ -16,7 +16,7 @@ from .production_self_test import (
     ensure_no_active_windows_sandbox_session,
     validate_production_deadline_configuration,
 )
-from .runner import ProcessHandle, complete_owned_sandbox_session, launch_sandbox, utc_now
+from .runner import ProcessHandle, _stop_owned_process, complete_owned_sandbox_session, launch_sandbox, utc_now
 from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
 from .screenshot_self_test import (
     ENTRY_SCRIPT_FILENAME,
@@ -53,6 +53,7 @@ class ScreenshotSelfTestRunner:
         utc_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
         session_factory: Callable[[int, datetime], OwnedSandboxSession] = capture_owned_sandbox_session,
+        launch_guard: Callable[[], None] = lambda: None,
     ):
         self.workspace_manager = workspace_manager or ScreenshotSelfTestWorkspaceManager()
         self.capability_detector = capability_detector
@@ -63,6 +64,7 @@ class ScreenshotSelfTestRunner:
         self.utc_clock = utc_clock
         self.session_guard = session_guard
         self.session_factory = session_factory
+        self.launch_guard = launch_guard
 
     def run(self, request: ScreenshotSelfTestRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         validate_production_deadline_configuration()
@@ -91,8 +93,19 @@ class ScreenshotSelfTestRunner:
             if process is None or launcher_cleanup_attempted:
                 return process is None or (launcher_return_code is not None and owned_session is not None)
             launcher_cleanup_attempted = True
+            if paths is not None:
+                try:
+                    (paths.logs_directory / "cleanup-phase.json").write_text(
+                        "launcher_cleanup_started", encoding="utf-8",
+                    )
+                except OSError:
+                    pass
             if owned_session is None:
                 errors.append("owned_sandbox_session_identity_missing")
+                try:
+                    _stop_owned_process(process)
+                except (OSError, subprocess.SubprocessError):
+                    errors.append("owned_sandbox_launcher_cleanup_failed")
                 return False
             try:
                 launcher_return_code, launcher_exited_at = complete_owned_sandbox_session(
@@ -115,6 +128,13 @@ class ScreenshotSelfTestRunner:
             launcher_exit_elapsed_seconds = round(
                 max(0.0, self.monotonic() - (launch_started_monotonic or started_monotonic)), 3,
             )
+            if paths is not None:
+                try:
+                    (paths.logs_directory / "cleanup-phase.json").write_text(
+                        "launcher_cleanup_succeeded", encoding="utf-8",
+                    )
+                except OSError:
+                    pass
             return True
 
         def finish(reason: str, evidence_path: str | None = None) -> SandboxRunResult:
@@ -166,6 +186,7 @@ class ScreenshotSelfTestRunner:
             launch_started_monotonic = self.monotonic()
             launcher_started_utc = self.utc_clock().astimezone(timezone.utc)
             entry_deadline = min(deadline, launch_started_monotonic + ENTRY_MARKER_TIMEOUT_SECONDS)
+            self.launch_guard()
             process = self.launcher([capability.executable_path, str(paths.config_file)])
             owned_session = self.session_factory(process.pid, launcher_started_utc)
             completion = paths.evidence_directory / "completion.json"
@@ -241,11 +262,17 @@ class ScreenshotSelfTestRunner:
                         transition(RunStatus.TIMED_OUT)
                         errors.append("screenshot_evidence_validation_exceeded_host_deadline")
                         return finish("timeout")
-                    # Written only after PNG validation and Phase 3A cleanup validation both succeeded.
                     snapshot = paths.logs_directory / "validated-screenshot-evidence.json"
                     write_validated_screenshot_snapshot(snapshot, validated)
+                    self._write_phase_marker(paths.logs_directory, "screenshot_snapshot_written")
                     if status is RunStatus.LAUNCHING:
                         transition(RunStatus.RUNNING)
+                    self._write_host_state(
+                        paths, request.run_id, status, started_at, started_monotonic,
+                        "cleanup_in_progress", str(snapshot), errors, warnings,
+                        launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
+                    )
+                    self._write_phase_marker(paths.logs_directory, "provisional_host_state_written")
                     if not complete_launcher():
                         transition(RunStatus.INFRASTRUCTURE_ERROR)
                         return finish("sandbox_session_cleanup_failed", str(snapshot))
@@ -332,11 +359,42 @@ class ScreenshotSelfTestRunner:
             launcher_exit_elapsed_seconds=launcher_exit_elapsed_seconds,
         )
 
-    def _finish(self, paths, run_id, status, started_at, started_monotonic, reason, evidence_path, errors, warnings, launcher_return_code=None, launcher_exited_at=None, launcher_exit_elapsed_seconds=None):
+    @staticmethod
+    def _write_phase_marker(logs_dir: Path | None, phase: str, *, extra: dict | None = None) -> None:
+        if logs_dir is not None:
+            marker = {"phase": phase, "timestamp": utc_now()}
+            marker["thread_name"] = threading.current_thread().name
+            if extra:
+                marker.update(extra)
+            atomic_write_json(logs_dir / "phase-marker.json", marker)
+
+    def _write_host_state(self, paths, run_id, status, started_at, started_monotonic, reason, evidence_path, errors, warnings, launcher_return_code=None, launcher_exited_at=None, launcher_exit_elapsed_seconds=None):
         result = self._result(run_id, status, started_at, started_monotonic, reason, evidence_path, errors, warnings, launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds)
         if paths is not None:
-            atomic_write_json(paths.run_root / "host-result.json", result.to_dict())
-            (paths.logs_directory / "host.log").write_text(
-                f"run_id={run_id}\nstatus={status.value}\nexit_reason={reason}\n", encoding="utf-8",
-            )
+            try:
+                atomic_write_json(paths.run_root / "host-result.json", result.to_dict())
+            except (OSError, RuntimeError, ValueError):
+                pass
+            try:
+                (paths.logs_directory / "host.log").write_text(
+                    f"run_id={run_id}\nstatus={status.value}\nexit_reason={reason}\n", encoding="utf-8",
+                )
+            except OSError:
+                pass
+        return result
+
+    def _finish(self, paths, run_id, status, started_at, started_monotonic, reason, evidence_path, errors, warnings, launcher_return_code=None, launcher_exited_at=None, launcher_exit_elapsed_seconds=None):
+        self._write_phase_marker(paths.logs_directory if paths is not None else None, "runner_finish_started")
+        result = self._result(run_id, status, started_at, started_monotonic, reason, evidence_path, errors, warnings, launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds)
+        if paths is not None:
+            try:
+                atomic_write_json(paths.run_root / "host-result.json", result.to_dict())
+            except (OSError, RuntimeError, ValueError):
+                pass
+            try:
+                (paths.logs_directory / "host.log").write_text(
+                    f"run_id={run_id}\nstatus={status.value}\nexit_reason={reason}\n", encoding="utf-8",
+                )
+            except OSError:
+                pass
         return result

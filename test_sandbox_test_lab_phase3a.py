@@ -642,14 +642,25 @@ def test_runner_requires_validated_fully_ready_evidence_and_writes_host_snapshot
         ))
         return process
 
+    cleanup = {}
+
+    def complete(owned_process, **kwargs):
+        cleanup.update(kwargs)
+        return owned_process.wait(), "2026-01-01T00:00:01Z"
+
+    owned_session = object()
+    monkeypatch.setattr(production_runner_module, "complete_owned_sandbox_session", complete)
+
     result = ProductionSelfTestRunner(
         workspace_manager=ProductionSelfTestWorkspaceManager(tmp_path / "runtime"),
         capability_detector=lambda: capability, launcher=launch,
+        session_factory=lambda launcher_pid, launched_at: owned_session,
     ).run(request)
     assert result.status == RunStatus.PASSED
     assert result.exit_reason == "production_self_test_fully_ready"
     assert Path(result.evidence_path).name == "validated-production-evidence.json"
     assert Path(result.evidence_path).is_file()
+    assert cleanup["session"] is owned_session
 
 
 @pytest.mark.parametrize(
@@ -935,16 +946,23 @@ def test_runner_fails_early_when_completed_heartbeat_lacks_terminal_evidence(tmp
     def sleep(seconds):
         clock.value += seconds
 
+    monkeypatch.setattr(
+        production_runner_module,
+        "complete_owned_sandbox_session",
+        lambda owned_process, **kwargs: (owned_process.wait(), "2026-01-01T00:00:31Z"),
+    )
+
     result = ProductionSelfTestRunner(
         workspace_manager=ProductionSelfTestWorkspaceManager(tmp_path / "runtime"),
         capability_detector=lambda: capability, launcher=launch,
         monotonic=lambda: clock.value, sleeper=sleep, poll_interval=1,
+        session_factory=lambda launcher_pid, launched_at: object(),
     ).run(request)
     assert result.status == RunStatus.INFRASTRUCTURE_ERROR
     assert result.exit_reason == "terminal_evidence_missing_after_completed_heartbeat"
     assert result.duration_seconds == production_runner_module.TERMINAL_EVIDENCE_GRACE_SECONDS
     assert result.evidence_path is None
-    assert process.terminated is False
+    assert result.launcher_return_code == 0
 
 
 def test_deadline_configuration_and_pure_phase_budgets_fail_closed(monkeypatch):
@@ -1045,14 +1063,72 @@ def test_runner_host_deadline_exceeds_stable_guest_deadline_by_exact_margin(tmp_
         ))
         return process
 
+    monkeypatch.setattr(
+        production_runner_module,
+        "complete_owned_sandbox_session",
+        lambda owned_process, **kwargs: (owned_process.wait(), "2026-01-01T00:00:01Z"),
+    )
+
     result = ProductionSelfTestRunner(
         workspace_manager=ProductionSelfTestWorkspaceManager(tmp_path / "runtime"),
         capability_detector=lambda: capability, launcher=launch, utc_clock=lambda: authority,
+        session_factory=lambda launcher_pid, launched_at: object(),
     ).run(request)
     terminal = datetime.fromisoformat(observed["deadline"].replace("Z", "+00:00"))
     host_deadline = authority + timedelta(seconds=HOST_TIMEOUT_SECONDS)
     assert (host_deadline - terminal).total_seconds() == HOST_TERMINAL_EVIDENCE_MARGIN_SECONDS
     assert result.status == RunStatus.PASSED
+
+
+def test_runner_stops_known_launcher_when_session_identity_capture_fails(tmp_path, monkeypatch):
+    request = _request(tmp_path, monkeypatch)
+    capability = SandboxCapability(
+        supported_os=True, windows_edition="Professional", windows_build=22631,
+        virtualization_available=True, sandbox_feature_state="enabled",
+        executable_found=True, available=True,
+        executable_path=r"C:\Windows\System32\WindowsSandbox.exe", powershell_found=True,
+    )
+    process = type("FakeProcess", (), {
+        "pid": 4321, "returncode": None, "poll": lambda self: self.returncode,
+        "terminate": lambda self: setattr(self, "returncode", -15),
+        "kill": lambda self: setattr(self, "returncode", -9),
+        "wait": lambda self, timeout=None: self.returncode or 0,
+    })()
+
+    result = ProductionSelfTestRunner(
+        workspace_manager=ProductionSelfTestWorkspaceManager(tmp_path / "runtime"),
+        capability_detector=lambda: capability,
+        launcher=lambda argv: process,
+        session_factory=lambda launcher_pid, launched_at: (_ for _ in ()).throw(
+            WorkspaceError("owned Sandbox client discovery failed")
+        ),
+    ).run(request)
+
+    assert result.status == RunStatus.INFRASTRUCTURE_ERROR
+    assert process.returncode == -15
+    assert "owned_sandbox_session_identity_missing" in result.errors
+
+
+def test_runner_executes_final_launch_guard_before_windows_sandbox(tmp_path, monkeypatch):
+    request = _request(tmp_path, monkeypatch)
+    capability = SandboxCapability(
+        supported_os=True, windows_edition="Professional", windows_build=22631,
+        virtualization_available=True, sandbox_feature_state="enabled",
+        executable_found=True, available=True,
+        executable_path=r"C:\Windows\System32\WindowsSandbox.exe", powershell_found=True,
+    )
+    launched = []
+
+    result = ProductionSelfTestRunner(
+        workspace_manager=ProductionSelfTestWorkspaceManager(tmp_path / "runtime"),
+        capability_detector=lambda: capability,
+        launcher=lambda argv: launched.append(argv),
+        launch_guard=lambda: (_ for _ in ()).throw(RuntimeError("opt_in_required")),
+    ).run(request)
+
+    assert result.status == RunStatus.INFRASTRUCTURE_ERROR
+    assert launched == []
+    assert "opt_in_required" in result.errors
 
 
 def test_evidence_deadline_is_host_authoritative_and_terminal_markers_precede_it(tmp_path):

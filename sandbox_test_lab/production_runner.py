@@ -20,21 +20,16 @@ from .production_self_test import (
     HOST_TERMINAL_EVIDENCE_MARGIN_SECONDS,
     ProductionSelfTestRequest,
     ProductionSelfTestWorkspaceManager,
+    ensure_no_active_windows_sandbox_session,
     validate_production_deadline_configuration,
 )
-from .runner import ProcessHandle, _stop_owned_process, launch_sandbox, utc_now
+from .runner import ProcessHandle, _stop_owned_process, complete_owned_sandbox_session, launch_sandbox, utc_now
+from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
 from .workspace import WorkspaceError, atomic_write_json
 from .wsb_config import WsbConfigError, write_wsb_config
 
 
 TERMINAL_EVIDENCE_GRACE_SECONDS = 30
-
-
-def _stop_broker(process: ProcessHandle, warnings: list[str]) -> None:
-    try:
-        _stop_owned_process(process)
-    except (OSError, subprocess.SubprocessError) as exc:
-        warnings.append(f"owned_sandbox_broker_cleanup_failed_{type(exc).__name__}")
 
 
 class ProductionSelfTestRunner:
@@ -48,6 +43,9 @@ class ProductionSelfTestRunner:
         sleeper: Callable[[float], None] = time.sleep,
         poll_interval: float = 0.5,
         utc_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
+        session_factory: Callable[[int, datetime], OwnedSandboxSession] = capture_owned_sandbox_session,
+        launch_guard: Callable[[], None] = lambda: None,
     ):
         self.workspace_manager = workspace_manager or ProductionSelfTestWorkspaceManager()
         self.capability_detector = capability_detector
@@ -56,6 +54,9 @@ class ProductionSelfTestRunner:
         self.sleeper = sleeper
         self.poll_interval = poll_interval
         self.utc_clock = utc_clock
+        self.session_guard = session_guard
+        self.session_factory = session_factory
+        self.launch_guard = launch_guard
 
     def run(self, request: ProductionSelfTestRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         validate_production_deadline_configuration()
@@ -76,6 +77,51 @@ class ProductionSelfTestRunner:
         launcher_exited_at: str | None = None
         launcher_exit_elapsed_seconds: float | None = None
         terminal_heartbeat_seen_at: float | None = None
+        launch_started_monotonic: float | None = None
+        launcher_cleanup_attempted = False
+        owned_session: OwnedSandboxSession | None = None
+
+        def complete_launcher() -> bool:
+            nonlocal launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds, launcher_cleanup_attempted
+            if process is None or launcher_cleanup_attempted:
+                return process is None or (launcher_return_code is not None and owned_session is not None)
+            launcher_cleanup_attempted = True
+            if owned_session is None:
+                errors.append("owned_sandbox_session_identity_missing")
+                try:
+                    _stop_owned_process(process)
+                except (OSError, subprocess.SubprocessError):
+                    errors.append("owned_sandbox_launcher_cleanup_failed")
+                return False
+            try:
+                launcher_return_code, launcher_exited_at = complete_owned_sandbox_session(
+                    process,
+                    session=owned_session,
+                    session_guard=self.session_guard,
+                    monotonic=self.monotonic,
+                    sleeper=self.sleeper,
+                )
+            except (WorkspaceError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                observed_code = process.poll()
+                if observed_code is not None and launcher_return_code is None:
+                    launcher_return_code = observed_code
+                    launcher_exited_at = utc_now()
+                    launcher_exit_elapsed_seconds = round(
+                        max(0.0, self.monotonic() - (launch_started_monotonic or started_monotonic)), 3,
+                    )
+                errors.append(f"owned_sandbox_session_cleanup_failed_{type(exc).__name__}")
+                return False
+            launcher_exit_elapsed_seconds = round(
+                max(0.0, self.monotonic() - (launch_started_monotonic or started_monotonic)), 3,
+            )
+            return True
+
+        def finish(reason: str, evidence_path: str | None = None) -> SandboxRunResult:
+            complete_launcher()
+            return self._finish(
+                paths, request.run_id, status, started_at, started_monotonic, reason, evidence_path,
+                errors, warnings, launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
+            )
 
         def transition(target: RunStatus) -> None:
             nonlocal status
@@ -126,30 +172,31 @@ class ProductionSelfTestRunner:
                 transition(RunStatus.TIMED_OUT)
                 return self._finish(paths, request.run_id, status, started_at, started_monotonic, "insufficient_execution_budget_before_launch", None, errors, warnings)
             transition(RunStatus.LAUNCHING)
+            launch_started_monotonic = self.monotonic()
+            launcher_started_utc = self.utc_clock().astimezone(timezone.utc)
+            self.launch_guard()
             process = self.launcher([capability.executable_path, str(paths.config_file)])
+            owned_session = self.session_factory(process.pid, launcher_started_utc)
             completion = paths.evidence_directory / "completion.json"
             heartbeat = paths.evidence_directory / "heartbeat.json"
             while True:
                 if cancellation is not None and cancellation.is_set():
                     transition(RunStatus.CANCELLED)
-                    _stop_broker(process, warnings)
-                    warnings.append("sandbox_broker_termination_does_not_prove_guest_tree_termination")
-                    return self._finish(paths, request.run_id, status, started_at, started_monotonic, "cancelled", None, errors, warnings)
+                    return finish("cancelled")
                 validate_partial_production_evidence_directory(paths.evidence_directory)
                 if completion.is_file():
                     if self.monotonic() >= deadline:
                         transition(RunStatus.TIMED_OUT)
-                        _stop_broker(process, warnings)
-                        return self._finish(paths, request.run_id, status, started_at, started_monotonic, "timeout", None, [*errors, "production_completion_after_deadline"], warnings)
+                        errors.append("production_completion_after_deadline")
+                        return finish("timeout")
                     evidence = validate_production_evidence_directory(
                         paths.evidence_directory, request.run_id,
                         expected_guest_terminal_deadline_utc=guest_terminal_deadline_utc,
                     )
                     if self.monotonic() >= deadline:
                         transition(RunStatus.TIMED_OUT)
-                        _stop_broker(process, warnings)
                         errors.append("production_evidence_validation_exceeded_host_deadline")
-                        return self._finish(paths, request.run_id, status, started_at, started_monotonic, "timeout", None, errors, warnings)
+                        return finish("timeout")
                     snapshot = paths.logs_directory / "validated-production-evidence.json"
                     atomic_write_json(snapshot, evidence.raw)
                     if status is RunStatus.LAUNCHING:
@@ -157,11 +204,13 @@ class ProductionSelfTestRunner:
                     errors.extend(evidence.errors)
                     warnings.extend(evidence.warnings)
                     if evidence.status == "passed" and evidence.outcome == "passed" and evidence.fully_ready:
+                        if not complete_launcher():
+                            transition(RunStatus.INFRASTRUCTURE_ERROR)
+                            return finish("sandbox_session_cleanup_failed", str(snapshot))
                         transition(RunStatus.PASSED)
-                        return self._finish(paths, request.run_id, status, started_at, started_monotonic, "production_self_test_fully_ready", str(snapshot), errors, warnings, launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds)
+                        return finish("production_self_test_fully_ready", str(snapshot))
                     transition(RunStatus.TIMED_OUT if evidence.outcome == "timed_out" else RunStatus.FAILED)
-                    _stop_broker(process, warnings)
-                    return self._finish(paths, request.run_id, status, started_at, started_monotonic, evidence.overall_readiness, str(snapshot), errors, warnings, launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds)
+                    return finish(evidence.overall_readiness, str(snapshot))
                 if heartbeat.is_file():
                     heartbeat_payload = read_production_heartbeat(heartbeat, request.run_id)
                     if status is RunStatus.LAUNCHING:
@@ -172,11 +221,7 @@ class ProductionSelfTestRunner:
                         elif self.monotonic() - terminal_heartbeat_seen_at >= TERMINAL_EVIDENCE_GRACE_SECONDS:
                             transition(RunStatus.INFRASTRUCTURE_ERROR)
                             errors.append("terminal_evidence_missing_after_completed_heartbeat")
-                            return self._finish(
-                                paths, request.run_id, status, started_at, started_monotonic,
-                                "terminal_evidence_missing_after_completed_heartbeat", None, errors, warnings,
-                                launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds,
-                            )
+                            return finish("terminal_evidence_missing_after_completed_heartbeat")
                 return_code = process.poll()
                 if return_code is not None and launcher_return_code is None:
                     launcher_return_code = return_code
@@ -184,31 +229,23 @@ class ProductionSelfTestRunner:
                     launcher_exit_elapsed_seconds = round(max(0.0, self.monotonic() - started_monotonic), 3)
                 if self.monotonic() >= deadline:
                     transition(RunStatus.TIMED_OUT)
-                    _stop_broker(process, warnings)
-                    warnings.append("sandbox_broker_termination_does_not_prove_guest_tree_termination")
                     reason = "launcher_exited_without_production_completion" if launcher_return_code is not None else "timeout"
-                    return self._finish(paths, request.run_id, status, started_at, started_monotonic, reason, None, errors, warnings, launcher_return_code, launcher_exited_at, launcher_exit_elapsed_seconds)
+                    return finish(reason)
                 self.sleeper(self.poll_interval)
         except KeyboardInterrupt:
             if status in {RunStatus.CREATED, RunStatus.LAUNCHING, RunStatus.RUNNING}:
                 transition(RunStatus.CANCELLED)
-            if process is not None:
-                _stop_broker(process, warnings)
-            return self._finish(paths, request.run_id, status, started_at, started_monotonic, "keyboard_interrupt", None, errors, warnings)
+            return finish("keyboard_interrupt")
         except ProductionEvidenceError as exc:
             errors.append(str(exc))
             if status in {RunStatus.LAUNCHING, RunStatus.RUNNING}:
                 transition(RunStatus.FAILED)
-            if process is not None:
-                _stop_broker(process, warnings)
-            return self._finish(paths, request.run_id, status, started_at, started_monotonic, "invalid_production_evidence", None, errors, warnings)
+            return finish("invalid_production_evidence")
         except (WorkspaceError, WsbConfigError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append(str(exc))
             if status in {RunStatus.CREATED, RunStatus.LAUNCHING, RunStatus.RUNNING}:
                 transition(RunStatus.INFRASTRUCTURE_ERROR)
-            if process is not None:
-                _stop_broker(process, warnings)
-            return self._finish(paths, request.run_id, status, started_at, started_monotonic, "infrastructure_error", None, errors, warnings)
+            return finish("infrastructure_error")
 
     def _result(self, run_id, status, started_at, started_monotonic, reason, evidence_path, errors, warnings, launcher_return_code=None, launcher_exited_at=None, launcher_exit_elapsed_seconds=None):
         return SandboxRunResult(

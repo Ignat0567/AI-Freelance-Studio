@@ -239,7 +239,7 @@ def install_sandbox_test_lab_api(
     async def shutdown_service() -> None:
         owned_service.shutdown(shutdown_timeout)
 
-    app.add_event_handler("shutdown", shutdown_service)
+    app.router.add_event_handler("shutdown", shutdown_service)
 
 
 def get_test_lab_job_service(request: Request) -> SandboxTestLabJobService:

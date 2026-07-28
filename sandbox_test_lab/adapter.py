@@ -61,6 +61,8 @@ class SandboxDiagnosticCode(str, Enum):
     SANDBOX_CAPABILITY_WARNING = "sandbox_capability_warning"
     SANDBOX_RUNNER_NOT_CONFIGURED = "sandbox_runner_not_configured"
     MANUAL_CLOSE_PENDING = "manual_close_pending"
+    SANDBOX_OWNERSHIP_FAILED = "sandbox_ownership_failed"
+    SANDBOX_GUEST_SUCCEEDED_OWNERSHIP_FAILED = "sandbox_guest_succeeded_ownership_failed"
 
 
 class SandboxCheckCode(str, Enum):

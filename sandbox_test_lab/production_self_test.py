@@ -331,8 +331,17 @@ class ProductionSelfTestWorkspaceManager(SandboxWorkspaceManager):
 
     def create(self, request: ProductionSelfTestRequest):
         validate_trusted_production_artifact()
+        self.runtime_root.mkdir(parents=True, exist_ok=True)
+        runtime_info = self.runtime_root.lstat()
+        if (
+            self.runtime_root.is_symlink()
+            or _is_reparse(self.runtime_root)
+            or not stat.S_ISDIR(runtime_info.st_mode)
+            or self.runtime_root.resolve(strict=True) != self.runtime_root
+        ):
+            raise WorkspaceError("production self-test runtime must be a direct non-reparse directory")
         runtime_parent = self.runtime_root.parent
-        if not runtime_parent.is_dir() or shutil.disk_usage(runtime_parent).free < MINIMUM_FREE_SPACE_BYTES:
+        if shutil.disk_usage(runtime_parent).free < MINIMUM_FREE_SPACE_BYTES:
             raise WorkspaceError("production self-test runtime requires at least 2 GiB free space")
         paths, staged, digest = super().create(request)
         if staged.name != "artifact.exe" or staged.stat().st_size != INSTALLER_SIZE or digest != INSTALLER_SHA256:

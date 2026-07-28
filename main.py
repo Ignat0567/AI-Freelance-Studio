@@ -40,6 +40,10 @@ from api.accounts import router as accounts_router
 from api.android import router as android_router
 from api.sandbox_test_lab import install_sandbox_test_lab_api, router as sandbox_test_lab_router
 from api.system import router as system_router
+from sandbox_test_lab.production_bridge import (
+    PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS,
+    create_production_sandbox_runtime,
+)
 from system_settings import (
     ALLOWED_SYSTEM_KEYS,
     DEFAULT_SYSTEM_SETTINGS,
@@ -176,7 +180,13 @@ app.add_middleware(
     allow_headers=["Content-Type", "Idempotency-Key", "X-FreelancerStudio-Token"],
 )
 app.add_middleware(LocalSecurityMiddleware)
-install_sandbox_test_lab_api(app)
+_sandbox_runtime = create_production_sandbox_runtime(Path(RUNTIME_DIR))
+install_sandbox_test_lab_api(
+    app,
+    service=_sandbox_runtime.service,
+    availability_provider=_sandbox_runtime.availability_provider,
+    shutdown_timeout=PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS,
+)
 
 app.include_router(accounts_router)
 app.include_router(android_router)

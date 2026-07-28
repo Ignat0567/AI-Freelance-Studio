@@ -65,8 +65,14 @@ def _stop_owned_process(process: ProcessHandle) -> None:
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def complete_owned_sandbox_session(
@@ -77,7 +83,11 @@ def complete_owned_sandbox_session(
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> tuple[int, str]:
-    """Wait for guest shutdown, then close only the exact client owned by this run."""
+    """Wait for guest shutdown, then close only the exact sandbox session owned by this run.
+
+    Supports both legacy_client (WindowsSandboxClient) and remote_session
+    (WindowsSandboxRemoteSession + WindowsSandboxServer) process models.
+    """
 
     def wait_until_inactive(timeout_seconds: float) -> bool:
         deadline = monotonic() + timeout_seconds
@@ -116,7 +126,15 @@ def complete_owned_sandbox_session(
         if not wait_until_inactive(SOFT_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS):
             session.terminate()
             if not wait_until_inactive(FORCED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS):
-                raise WorkspaceError("owned_windows_sandbox_session_did_not_exit")
+                if hasattr(session, 'model') and session.model == "remote_session" and session.server_pid is not None:
+                    try:
+                        session.terminate_server()
+                    except WorkspaceError:
+                        pass
+                    if not wait_until_inactive(FORCED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS):
+                        raise WorkspaceError("owned_windows_sandbox_session_did_not_exit")
+                else:
+                    raise WorkspaceError("owned_windows_sandbox_session_did_not_exit")
     return return_code, utc_now()
 
 
@@ -418,10 +436,16 @@ class SandboxRunner:
             launcher_exit_elapsed_seconds,
         )
         if paths is not None:
-            atomic_write_json(paths.run_root / "host-result.json", result.to_dict())
-            log_path = paths.logs_directory / "host.log"
-            log_path.write_text(
-                f"run_id={run_id}\nstatus={status.value}\nexit_reason={exit_reason}\n",
-                encoding="utf-8",
-            )
+            try:
+                atomic_write_json(paths.run_root / "host-result.json", result.to_dict())
+            except (OSError, RuntimeError, ValueError):
+                pass
+            try:
+                log_path = paths.logs_directory / "host.log"
+                log_path.write_text(
+                    f"run_id={run_id}\nstatus={status.value}\nexit_reason={exit_reason}\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
         return result

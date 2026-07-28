@@ -1,0 +1,282 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+import threading
+import time
+
+import pytest
+
+from sandbox_test_lab.adapter import (
+    SandboxProfile,
+    SandboxReadiness,
+    SandboxStatus,
+    SandboxTestLabAdapter,
+)
+from sandbox_test_lab.job_service import SandboxJobDisabledError
+from sandbox_test_lab.models import RunStatus, SandboxCapability, SandboxRunResult
+from sandbox_test_lab.production_bridge import (
+    PRODUCTION_UI_EXTERNAL_OPT_IN,
+    ProductionSandboxTestLabRunner,
+    create_production_sandbox_runtime,
+)
+
+
+RUN_ID = "93bdb128-a642-4f33-b05e-b2ec9cdad1e3"
+
+
+def _result(status: RunStatus, *, evidence: bool = False, errors: tuple[str, ...] = ()) -> SandboxRunResult:
+    return SandboxRunResult(
+        RUN_ID,
+        status,
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:01Z",
+        1.0,
+        status.value,
+        "validated.json" if evidence else None,
+        errors=errors,
+    )
+
+
+class _BlockingRunner:
+    def __init__(self, terminal_status: RunStatus, release: threading.Event | None = None):
+        self.terminal_status = terminal_status
+        self.release = release
+        self.started = threading.Event()
+
+    def run(self, request, cancellation):
+        assert request.run_id == RUN_ID
+        self.started.set()
+        if self.release is not None:
+            self.release.wait(2)
+        elif self.terminal_status is RunStatus.CANCELLED:
+            assert cancellation.wait(2)
+        return _result(self.terminal_status, evidence=self.terminal_status is RunStatus.PASSED)
+
+
+def _runner(blocking: _BlockingRunner, enabled=lambda: True) -> ProductionSandboxTestLabRunner:
+    return ProductionSandboxTestLabRunner(
+        opt_in_enabled=enabled,
+        self_test_runner_factory=lambda: blocking,
+        self_test_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+    )
+
+
+def _adapter(blocking: _BlockingRunner) -> SandboxTestLabAdapter:
+    capability = SandboxCapability(
+        supported_os=True,
+        windows_edition="Professional",
+        windows_build=22631,
+        virtualization_available=True,
+        sandbox_feature_state="enabled",
+        executable_found=True,
+        available=True,
+        executable_path=r"C:\Windows\System32\WindowsSandbox.exe",
+        powershell_found=True,
+    )
+    return SandboxTestLabAdapter(
+        enabled=True,
+        runner=_runner(blocking),
+        capability_detector=lambda: capability,
+    )
+
+
+def _wait_for_status(adapter, status):
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        snapshot = adapter.status(RUN_ID)
+        if snapshot.status is status:
+            return snapshot
+        time.sleep(0.01)
+    pytest.fail(f"runner did not reach {status.value}")
+
+
+def test_bridge_runs_blocking_production_runner_asynchronously_and_maps_evidence():
+    release = threading.Event()
+    blocking = _BlockingRunner(RunStatus.PASSED, release)
+    adapter = _adapter(blocking)
+
+    prepared = adapter.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    launched = adapter.launch(prepared.run_id)
+    assert launched.status is SandboxStatus.LAUNCHING
+    assert blocking.started.wait(1)
+    assert adapter.status(RUN_ID).status is SandboxStatus.RUNNING
+
+    release.set()
+    terminal = _wait_for_status(adapter, SandboxStatus.PASSED)
+    assert terminal.evidence_validated is True
+    assert terminal.evidence_references == (RUN_ID,)
+    assert terminal.validated_checks[0].passed is True
+    assert terminal.manual_close_required is False
+
+
+def test_bridge_cancellation_is_non_blocking_and_reaches_cancelled():
+    blocking = _BlockingRunner(RunStatus.CANCELLED)
+    adapter = _adapter(blocking)
+    adapter.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    adapter.launch(RUN_ID)
+    assert blocking.started.wait(1)
+
+    cancelling = adapter.cancel(RUN_ID)
+    assert cancelling.status is SandboxStatus.CANCELLING
+    assert _wait_for_status(adapter, SandboxStatus.CANCELLED).manual_close_required is False
+
+
+def test_bridge_cancels_prepared_run_without_starting_worker():
+    blocking = _BlockingRunner(RunStatus.CANCELLED)
+    adapter = _adapter(blocking)
+    adapter.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+
+    cancelled = adapter.cancel(RUN_ID)
+
+    assert cancelled.status is SandboxStatus.CANCELLED
+    assert blocking.started.is_set() is False
+
+
+def test_bridge_worker_does_not_regress_cancelling_state_to_running():
+    blocking = _BlockingRunner(RunStatus.CANCELLED)
+    delayed = []
+
+    class DelayedThread:
+        def __init__(self, *, target, args, **kwargs):
+            self.target = target
+            self.args = args
+            delayed.append(self)
+
+        def start(self):
+            return None
+
+    bridge = ProductionSandboxTestLabRunner(
+        opt_in_enabled=lambda: True,
+        self_test_runner_factory=lambda: blocking,
+        self_test_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+        thread_factory=DelayedThread,
+    )
+    bridge.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    bridge.launch(RUN_ID)
+    assert bridge.cancel(RUN_ID).status is SandboxStatus.CANCELLING
+
+    delayed[0].target(*delayed[0].args)
+
+    assert bridge.status(RUN_ID).status is SandboxStatus.CANCELLED
+    assert blocking.started.is_set() is False
+
+
+def test_bridge_late_cancellation_wins_over_racing_passed_result():
+    release = threading.Event()
+    blocking = _BlockingRunner(RunStatus.PASSED, release)
+    adapter = _adapter(blocking)
+    adapter.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    adapter.launch(RUN_ID)
+    assert blocking.started.wait(1)
+    assert adapter.cancel(RUN_ID).status is SandboxStatus.CANCELLING
+
+    release.set()
+
+    terminal = _wait_for_status(adapter, SandboxStatus.CANCELLED)
+    assert terminal.evidence_validated is True
+    assert terminal.validated_checks[0].passed is True
+
+
+def test_bridge_cancellation_after_internal_pass_returns_cancelled_to_adapter():
+    blocking = _BlockingRunner(RunStatus.PASSED)
+    bridge = _runner(blocking)
+    capability = SandboxCapability(
+        supported_os=True, windows_edition="Professional", windows_build=22631,
+        virtualization_available=True, sandbox_feature_state="enabled",
+        executable_found=True, available=True,
+    )
+    adapter = SandboxTestLabAdapter(
+        enabled=True, runner=bridge, capability_detector=lambda: capability,
+    )
+    adapter.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    adapter.launch(RUN_ID)
+    assert blocking.started.wait(1)
+    deadline = time.monotonic() + 1
+    while bridge.status(RUN_ID).status is not SandboxStatus.PASSED:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    cancelled = adapter.cancel(RUN_ID)
+
+    assert cancelled.status is SandboxStatus.CANCELLED
+    assert adapter.status(RUN_ID).status is SandboxStatus.CANCELLED
+
+
+def test_bridge_routes_screenshot_profile_to_screenshot_runner():
+    screenshot = _BlockingRunner(RunStatus.CANCELLED)
+    bridge = ProductionSandboxTestLabRunner(
+        opt_in_enabled=lambda: True,
+        self_test_runner_factory=lambda: pytest.fail("self-test runner was selected"),
+        screenshot_runner_factory=lambda: screenshot,
+        screenshot_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+    )
+
+    prepared = bridge.prepare(SandboxProfile.PRODUCTION_SCREENSHOT)
+    cancelled = bridge.cancel(prepared.run_id)
+
+    assert prepared.profile is SandboxProfile.PRODUCTION_SCREENSHOT
+    assert cancelled.status is SandboxStatus.CANCELLED
+
+
+def test_bridge_rechecks_exact_opt_in_before_launch():
+    environment = {PRODUCTION_UI_EXTERNAL_OPT_IN: "1"}
+    bridge = _runner(_BlockingRunner(RunStatus.PASSED), lambda: environment.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1")
+    bridge.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    environment.pop(PRODUCTION_UI_EXTERNAL_OPT_IN)
+
+    with pytest.raises(RuntimeError, match="opt_in_required"):
+        bridge.launch(RUN_ID)
+
+
+def test_final_external_launch_guard_rejects_an_active_unrelated_session(monkeypatch):
+    bridge = _runner(_BlockingRunner(RunStatus.PASSED))
+    monkeypatch.setattr(
+        "sandbox_test_lab.production_bridge.ensure_no_active_windows_sandbox_session",
+        lambda: (_ for _ in ()).throw(RuntimeError("active_windows_sandbox_session")),
+    )
+
+    with pytest.raises(RuntimeError, match="active_windows_sandbox_session"):
+        bridge._guard_external_launch()
+
+
+def test_bridge_marks_only_exact_session_cleanup_failures_for_manual_close():
+    translated = ProductionSandboxTestLabRunner._translate(
+        SandboxProfile.PRODUCTION_SELF_TEST,
+        _result(
+            RunStatus.INFRASTRUCTURE_ERROR,
+            errors=("owned_sandbox_session_cleanup_failed_WorkspaceError",),
+        ),
+    )
+    assert translated.manual_close_required is True
+
+
+def test_runtime_is_default_off_without_validating_or_launching(tmp_path, monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        "sandbox_test_lab.production_bridge.validate_trusted_production_artifact",
+        lambda: called.append(True),
+    )
+    runtime = create_production_sandbox_runtime(tmp_path, environ={})
+
+    assert runtime.availability_provider().readiness is SandboxReadiness.DISABLED
+    with pytest.raises(SandboxJobDisabledError):
+        runtime.service.start(SandboxProfile.PRODUCTION_SELF_TEST)
+    assert called == []
+
+
+def test_runtime_fails_closed_when_opted_in_artifact_validation_fails(tmp_path, monkeypatch):
+    def fail_validation():
+        raise ValueError("invalid artifact")
+
+    monkeypatch.setattr(
+        "sandbox_test_lab.production_bridge.validate_trusted_production_artifact",
+        fail_validation,
+    )
+    runtime = create_production_sandbox_runtime(
+        tmp_path,
+        environ={PRODUCTION_UI_EXTERNAL_OPT_IN: "1"},
+    )
+
+    assert runtime.availability_provider().readiness is SandboxReadiness.UNAVAILABLE
+    with pytest.raises(SandboxJobDisabledError):
+        runtime.service.start(SandboxProfile.PRODUCTION_SELF_TEST)

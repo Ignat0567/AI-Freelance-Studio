@@ -37,6 +37,7 @@ MAX_HOST_TIMEOUT_SECONDS = 600
 INSTALL_EXTERNAL_OPT_IN = "FREELANCERSTUDIO_RUN_WINDOWS_SANDBOX_NSIS_INSTALL_EXTERNAL"
 _ACTIVE_SANDBOX_QUERY = (
     "$active = @(Get-CimInstance -Query \"SELECT Name FROM Win32_Process WHERE "
+    "Name='WindowsSandbox.exe' OR Name='WindowsSandboxClient.exe' OR "
     "Name='WindowsSandboxRemoteSession.exe' OR Name='WindowsSandboxServer.exe'\" -ErrorAction Stop); "
     "if ($active.Count -gt 0) { exit 10 }; exit 0"
 )
