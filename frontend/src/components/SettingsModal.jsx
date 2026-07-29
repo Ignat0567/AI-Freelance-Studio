@@ -377,13 +377,15 @@ function Section({ label, children, testId }) {
 
 function Toggle({ checked, onChange, label, disabled = false }) {
   return (
-    <label className="flex items-center space-x-3 cursor-pointer select-none" style={{ minHeight: 32, opacity: disabled ? 0.55 : 1 }}>
-      <span
+    <div className="flex items-center space-x-3 select-none" style={{ minHeight: 32, opacity: disabled ? 0.55 : 1 }}>
+      <button
+        type="button"
         role="switch"
+        aria-label={label}
         aria-checked={checked}
         aria-disabled={disabled}
-        tabIndex={disabled ? -1 : 0}
-        onClick={(e) => { e.preventDefault(); if (!disabled) onChange(!checked); }}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
         onKeyDown={(e) => {
           if (!disabled && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault();
@@ -403,6 +405,7 @@ function Toggle({ checked, onChange, label, disabled = false }) {
           backgroundColor: checked ? 'var(--accent)' : 'color-mix(in srgb, var(--text-muted) 28%, transparent)',
           boxShadow: checked ? '0 0 18px var(--accent-bg)' : 'inset 0 0 0 1px var(--border)',
           cursor: disabled ? 'not-allowed' : 'pointer',
+          border: 'none',
         }}
       >
         <span
@@ -416,9 +419,9 @@ function Toggle({ checked, onChange, label, disabled = false }) {
             transform: checked ? 'translateX(20px)' : 'translateX(0)',
           }}
         />
-      </span>
+      </button>
       <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{label}</span>
-    </label>
+    </div>
   );
 }
 
@@ -761,7 +764,7 @@ function GlobalAIInheritanceSettings({ activePort, cfg, reload, addLog }) {
       .then(r => r.json()).then(() => { setMessage(`${agents[agentId]?.name || agentId} settings saved.`); loadAgents(); }).catch(err => setMessage(`Agent save failed: ${err.message}`)).finally(() => setBusy(false));
   };
   const formatList = (items) => (items || []).map(item => typeof item === 'string' ? item : `${item.agent_id} - ${item.reason}`).join('\n');
-  return <section className="provider-setup"><div className="provider-heading"><div><strong>Global AI Configuration</strong><p>Use one Studio provider/model for compatible agents while keeping per-agent generation overrides.</p></div><span className="connection-state">{globalAI.provider || cfg.provider}/{globalAI.model || cfg.model}</span></div><div className="provider-form"><label>Provider connection<select value={connectionId} disabled={busy || loadingConnections} onChange={e => { const next = connections.find(c => c.connection_id === e.target.value); setConnectionId(e.target.value); setModel(next?.available_models?.[0]?.id || ''); loadModels(e.target.value); }}><option value="">{loadingConnections ? 'Loading provider connections...' : textCapableConnections.length ? 'Select provider connection' : 'No tested text-capable connection available'}</option>{textCapableConnections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.display_name || c.name || c.provider}{c.tested_status === 'passed' ? ' - tested' : ' - not tested'}</option>)}</select></label><label>Default model<select value={model} disabled={busy || loadingModels || !connectionId} onChange={e => setModel(e.target.value)}><option value="">{loadingModels ? 'Loading models...' : models.length ? 'Select model' : 'No tested text-capable models are available for this connection'}</option>{models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</select></label><label>Default temperature<input className="ai-settings-field" type="number" min="0" max="2" step="0.05" value={temperature} onChange={e => setTemperature(e.target.value)} /></label><label>Default top_p<input className="ai-settings-field" type="number" min="0" max="1" step="0.05" value={topP ?? ''} placeholder="Not sent" onChange={e => setTopP(e.target.value)} /></label><label>Default top_k<input className="ai-settings-field" type="number" min="1" step="1" value={topK ?? ''} placeholder={supportsTopK ? 'Not sent' : 'Not supported by this provider'} disabled={!supportsTopK} onChange={e => setTopK(e.target.value)} /></label><label>Default max tokens<input className="ai-settings-field" type="number" min="1" step="1" value={maxTokens ?? ''} placeholder="Provider default" onChange={e => setMaxTokens(e.target.value)} /></label></div>{selectedModel?.capabilities?.image_input !== true && <p className="provider-message">Product Judge note: this global model is not eligible for Product Judge because image input is not proven.</p>}<div className="provider-actions"><button type="button" className="primary" onClick={saveGlobal} disabled={busy || !connectionId || !model}>Save global configuration</button><button type="button" onClick={applyAll} disabled={busy || !connectionId || !model}>Apply inheritance to all agents</button><button type="button" onClick={() => { loadGlobal(); loadAgents(); }} disabled={busy}>Refresh preview</button></div>{message && <p className="provider-message" role="status">{message}</p>}{applyResult && <pre className="provider-message whitespace-pre-wrap">{`Applied successfully:\n${formatList(applyResult.updated).split('\n').filter(Boolean).map(x => `- ${agents[x]?.name || x}`).join('\n') || '- none'}\n\nSkipped:\n${(applyResult.skipped || []).map(x => `- ${agents[x.agent_id]?.name || x.agent_id} - ${x.reason}`).join('\n') || '- none'}`}</pre>}<div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">{Object.entries(agents).map(([agentId, agent]) => { const eff = agent.effective_ai || {}; const draft = agentDrafts[agentId] || {}; const inheritedParams = !!eff.use_global_generation_parameters; const isJudge = agentId === 'product_judge'; return <article key={agentId} className="rounded-xl border p-3 space-y-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)' }}><div className="flex items-start justify-between gap-3"><div><strong className="text-xs" style={{ color: 'var(--text-primary)' }}>{agent.name || agentId}</strong><p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{agent.role || agent.display_role || agentId}</p></div><span className="text-[10px] font-bold" style={{ color: eff.capability_status === 'compatible' ? 'var(--success)' : 'var(--warning)' }}>{eff.capability_status || 'unresolved'}</span></div><div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]" style={{ color: 'var(--text-secondary)' }}><span>Provider: <b>{eff.provider || 'Unresolved'}</b></span><span>Model: <b>{eff.model || 'No model selected'}</b></span><span>Temperature: <b>{eff.temperature ?? 'Provider default'}</b></span><span>Source: <b>{eff.configuration_source?.model === 'global' ? 'Global model' : 'Agent model override'} / {eff.configuration_source?.generation_parameters === 'global' ? 'Global parameters' : 'Agent parameters'}</b></span>{isJudge && <span className="md:col-span-2">Product Judge: <b>{eff.capability_validation?.valid ? 'global model eligible' : (eff.capability_validation?.reason || 'Global model is not eligible for Product Judge because image input is not proven.')}</b></span>}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><Toggle checked={!!eff.use_global_connection} onChange={value => updateAgent(agentId, { use_global_connection: value, use_global: value && eff.use_global_model })} label="Use global connection" disabled={busy} /><Toggle checked={!!eff.use_global_model} onChange={value => updateAgent(agentId, { use_global_model: value, use_global: value && eff.use_global_connection })} label="Use global model" disabled={busy} /><Toggle checked={inheritedParams} onChange={value => updateAgent(agentId, { use_global_generation_parameters: value })} label="Use global parameters" disabled={busy} /></div><div className="provider-form"><label>Temperature<input className="ai-settings-field" type="number" min="0" max="2" step="0.05" value={draft.temperature ?? ''} disabled={inheritedParams} placeholder={inheritedParams ? 'Inherited from Global' : 'Agent override'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), temperature: e.target.value } }))} /></label><label>Top_p<input className="ai-settings-field" type="number" min="0" max="1" step="0.05" value={draft.top_p ?? ''} disabled={inheritedParams} placeholder={inheritedParams ? 'Inherited from Global' : 'Not sent'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), top_p: e.target.value } }))} /></label><label>Top_k<input className="ai-settings-field" type="number" min="1" step="1" value={draft.top_k ?? ''} disabled={inheritedParams || !!eff.unsupported_generation_parameters?.top_k} placeholder={eff.unsupported_generation_parameters?.top_k || (inheritedParams ? 'Inherited from Global' : 'Not sent')} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), top_k: e.target.value } }))} /></label><label>Max tokens<input className="ai-settings-field" type="number" min="1" step="1" value={draft.max_tokens ?? ''} disabled={inheritedParams} placeholder={inheritedParams ? 'Inherited from Global' : 'Provider default'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...(prev[agentId] || {}), max_tokens: e.target.value } }))} /></label></div><div className="provider-actions"><button type="button" className="primary" disabled={busy} onClick={() => updateAgent(agentId, { use_global_generation_parameters: inheritedParams, temperature: draft.temperature === '' ? null : parseFloat(draft.temperature), top_p: draft.top_p === '' ? null : parseFloat(draft.top_p), top_k: draft.top_k === '' ? null : parseInt(draft.top_k, 10), max_tokens: draft.max_tokens === '' ? null : parseInt(draft.max_tokens, 10) })}>Save agent settings</button><button type="button" disabled={busy} onClick={() => updateAgent(agentId, { use_global_connection: true, use_global_model: true, use_global_generation_parameters: false, use_global: true })}>Reset to defaults</button></div></article>; })}</div></section>;
+  return <section className="provider-setup"><div className="provider-heading"><div><strong>Global AI Configuration</strong><p>Use one Studio provider/model for compatible agents while keeping per-agent generation overrides.</p></div><span className="connection-state">{globalAI.provider || cfg.provider}/{globalAI.model || cfg.model}</span></div><div className="provider-form"><label>Provider connection<select value={connectionId} disabled={busy || loadingConnections} onChange={e => { setConnectionId(e.target.value); setModel(''); loadModels(e.target.value); }}><option value="">{loadingConnections ? 'Loading provider connections...' : textCapableConnections.length ? 'Select provider connection' : 'No tested text-capable connection available'}</option>{textCapableConnections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.display_name || c.name || c.provider}{c.tested_status === 'passed' ? ' - tested' : ' - not tested'}</option>)}</select></label><label>Default model<select value={model} disabled={busy || loadingModels || !connectionId} onChange={e => setModel(e.target.value)}><option value="">{loadingModels ? 'Loading models...' : models.length ? 'Select model' : 'No tested text-capable models are available for this connection'}</option>{models.map(m => <option key={m.id} value={m.id}>{m.id}{m.unavailable ? ' (unavailable for this connection)' : ''}</option>)}</select></label><label>Default temperature<input className="ai-settings-field" type="number" min="0" max="2" step="0.05" value={temperature} onChange={e => setTemperature(e.target.value)} /></label><label>Default top_p<input className="ai-settings-field" type="number" min="0" max="1" step="0.05" value={topP ?? ''} placeholder="Not sent" onChange={e => setTopP(e.target.value)} /></label><label>Default top_k<input className="ai-settings-field" type="number" min="1" step="1" value={topK ?? ''} placeholder={supportsTopK ? 'Not sent' : 'Not supported by this provider'} onChange={e => setTopK(e.target.value)} /></label><label>Default max tokens<input className="ai-settings-field" type="number" min="1" step="1" value={maxTokens ?? ''} placeholder="Not sent" onChange={e => setMaxTokens(e.target.value)} /></label></div>{selectedModel && <div className="capability-grid"><span>Text <b>{selectedModel.capabilities?.text_input === false ? 'No' : 'Yes'}</b></span><span>Images <b>{selectedModel.capabilities?.image_input === true ? 'Yes' : selectedModel.capabilities?.image_input === false ? 'No' : 'Unknown'}</b></span><span>Structured output <b>{selectedModel.capabilities?.structured_output === false ? 'No' : 'Available/Unknown'}</b></span><span>Streaming <b>{selectedModel.capabilities?.streaming === false ? 'No' : 'Available/Unknown'}</b></span></div>}{message && <p className="provider-message" role="status">{message}</p>}<div className="provider-actions"><button type="button" className="primary" onClick={saveGlobal} disabled={busy || !connectionId || !model}>Save global AI</button><button type="button" onClick={applyAll} disabled={busy || !connectionId || !model}>Apply to compatible agents</button><button type="button" onClick={loadGlobal} disabled={busy}>Refresh connections</button></div>{applyResult?.updated?.length > 0 && <pre className="mini-log">Applied successfully:\n{formatList(applyResult.updated)}</pre>}{applyResult?.skipped?.length > 0 && <pre className="mini-log">Skipped:\n{formatList(applyResult.skipped)}</pre>}</section>;
 }
 
 function AgentAIOverridesSettings({ activePort }) {
@@ -769,39 +772,37 @@ function AgentAIOverridesSettings({ activePort }) {
   const [connections, setConnections] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [modelOptions, setModelOptions] = useState({});
-  const [loadingModels, setLoadingModels] = useState({});
   const [modelErrors, setModelErrors] = useState({});
   const [saving, setSaving] = useState({});
+  const [selectedAgentId, setSelectedAgentId] = useState('');
   const [message, setMessage] = useState('');
 
+  const textConnections = connections.filter(c => (c.available_models || []).some(m => m?.capabilities?.text_input !== false));
   const normalizeNumber = value => String(value ?? '').trim().replace(',', '.');
   const connectionLabel = c => `${c.display_name || c.name || c.provider || c.connection_id} (${c.provider || c.connection_type || 'provider'})`;
-  const textConnections = connections.filter(c => (c.available_models || []).some(m => m?.capabilities?.text_input !== false));
 
-  const draftFor = (id, agent) => drafts[id] || {
-    use_global_connection: agent.effective_ai?.use_global_connection !== false,
-    connection_id: agent.effective_ai?.use_global_connection === false ? agent.effective_ai?.connection_id || '' : '',
-    use_global_model: agent.effective_ai?.use_global_model !== false,
-    model: agent.effective_ai?.use_global_model === false ? agent.effective_ai?.model || '' : '',
-    use_global_generation_parameters: agent.effective_ai?.use_global_generation_parameters !== false,
-    temperature: agent.effective_ai?.use_global_generation_parameters === false ? agent.effective_ai?.temperature ?? '' : '',
-    top_p: agent.effective_ai?.use_global_generation_parameters === false ? agent.effective_ai?.top_p ?? '' : '',
-    top_k: agent.effective_ai?.use_global_generation_parameters === false ? agent.effective_ai?.top_k ?? '' : '',
-    max_tokens: agent.effective_ai?.use_global_generation_parameters === false ? agent.effective_ai?.max_tokens ?? '' : '',
+  const initialDraft = (agent) => {
+    const eff = agent.effective_ai || {};
+    return {
+      use_global_connection: eff.use_global_connection !== false,
+      connection_id: eff.connection_id || '',
+      use_global_model: eff.use_global_model !== false,
+      model: eff.model || '',
+      use_global_generation_parameters: eff.use_global_generation_parameters !== false,
+      temperature: eff.temperature ?? '',
+      top_p: eff.top_p ?? '',
+      top_k: eff.top_k ?? '',
+      max_tokens: eff.max_tokens ?? '',
+    };
   };
 
   const loadModels = (agentId, connectionId) => {
-    if (!connectionId) return Promise.resolve();
-    setLoadingModels(prev => ({ ...prev, [agentId]: true }));
+    if (!connectionId) { setModelOptions(prev => ({ ...prev, [agentId]: [] })); return Promise.resolve(); }
     setModelErrors(prev => ({ ...prev, [agentId]: '' }));
     return fetch(`http://localhost:${activePort}/api/provider-connections/${encodeURIComponent(connectionId)}/models`)
-      .then(async r => {
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Models could not be loaded');
-        setModelOptions(prev => ({ ...prev, [agentId]: (data.models || []).filter(m => m?.capabilities?.text_input !== false) }));
-      })
-      .catch(err => setModelErrors(prev => ({ ...prev, [agentId]: err.message })))
-      .finally(() => setLoadingModels(prev => ({ ...prev, [agentId]: false })));
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Models could not be loaded'); return data; })
+      .then(data => setModelOptions(prev => ({ ...prev, [agentId]: (data.models || []).filter(m => m?.capabilities?.text_input !== false) })))
+      .catch(err => setModelErrors(prev => ({ ...prev, [agentId]: err.message })));
   };
 
   const load = () => Promise.all([
@@ -810,25 +811,23 @@ function AgentAIOverridesSettings({ activePort }) {
   ]).then(([agentData, connectionData]) => {
     setAgents(agentData || {});
     setConnections(connectionData.connections || []);
-    setDrafts(Object.fromEntries(Object.entries(agentData || {}).map(([id, agent]) => {
-      const eff = agent.effective_ai || {};
-      return [id, {
-        use_global_connection: eff.use_global_connection !== false,
-        connection_id: eff.use_global_connection === false ? eff.connection_id || '' : '',
-        use_global_model: eff.use_global_model !== false,
-        model: eff.use_global_model === false ? eff.model || '' : '',
-        use_global_generation_parameters: eff.use_global_generation_parameters !== false,
-        temperature: eff.use_global_generation_parameters === false ? eff.temperature ?? '' : '',
-        top_p: eff.use_global_generation_parameters === false ? eff.top_p ?? '' : '',
-        top_k: eff.use_global_generation_parameters === false ? eff.top_k ?? '' : '',
-        max_tokens: eff.use_global_generation_parameters === false ? eff.max_tokens ?? '' : '',
-      }];
-    })));
+    const nextDrafts = Object.fromEntries(Object.entries(agentData || {}).map(([id, agent]) => [id, initialDraft(agent)]));
+    setDrafts(nextDrafts);
+    setSelectedAgentId(current => current && agentData?.[current] ? current : Object.keys(agentData || {})[0] || '');
+    Object.entries(nextDrafts).forEach(([id, draft]) => loadModels(id, draft.connection_id));
   }).catch(err => setMessage(`Agent settings failed to load: ${err.message}`));
 
   useEffect(() => { load(); }, [activePort]);
 
   const setDraft = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  const chooseConnection = (id, connectionId) => {
+    const connection = connections.find(c => c.connection_id === connectionId);
+    const models = (connection?.available_models || []).filter(m => m?.capabilities?.text_input !== false);
+    setDraft(id, { connection_id: connectionId });
+    setModelOptions(prev => ({ ...prev, [id]: models }));
+    loadModels(id, connectionId);
+  };
+
   const saveAgent = (id) => {
     const d = drafts[id] || {};
     const body = {
@@ -849,6 +848,7 @@ function AgentAIOverridesSettings({ activePort }) {
       .catch(err => setMessage(`${agents[id]?.name || id} save failed: ${err.message}`))
       .finally(() => setSaving(prev => ({ ...prev, [id]: false })));
   };
+
   const resetAgent = (id) => {
     if (!window.confirm(`Reset ${agents[id]?.name || id} to global AI defaults?`)) return;
     setSaving(prev => ({ ...prev, [id]: true }));
@@ -860,7 +860,8 @@ function AgentAIOverridesSettings({ activePort }) {
   };
 
   const entries = Object.entries(agents).filter(([, agent]) => agent?.builtin !== false);
-  return <section className="provider-setup"><div className="provider-heading"><div><strong>Agent AI Overrides</strong><p>Choose per-agent connection, model, and generation parameters. API keys are never shown or copied here.</p></div><span className="connection-state">{entries.length} agents</span></div>{message && <p className="provider-message" role="status">{message}</p>}<div className="grid grid-cols-1 xl:grid-cols-2 gap-3">{entries.map(([id, agent]) => { const eff = agent.effective_ai || {}; const d = draftFor(id, agent); const effectiveConnectionId = d.use_global_connection ? eff.connection_id : d.connection_id; const selectedConnection = connections.find(c => c.connection_id === effectiveConnectionId); const availableModels = modelOptions[id] || selectedConnection?.available_models || []; const modelIds = availableModels.filter(m => m?.capabilities?.text_input !== false).map(m => m.id); const shownModel = d.use_global_model ? eff.model || '' : d.model || ''; const modelUnavailable = shownModel && modelIds.length > 0 && !modelIds.includes(shownModel); const inheritedParams = !!d.use_global_generation_parameters; return <div key={id} className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="flex items-center justify-between gap-2"><div><strong>{agent.name || id}</strong><div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{id}</div></div><span className="text-[10px] uppercase" style={{ color: eff.capability_status === 'compatible' ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_status || 'unknown'}</span></div><div className="text-[11px] mt-2" style={{ color: 'var(--text-secondary)' }}>Effective connection: <span className="font-mono">{eff.connection_display_name || eff.connection_id || '-'}</span> ({eff.configuration_source?.connection || 'global'})</div><div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Effective provider/model: <span className="font-mono">{eff.provider}/{eff.model}</span> ({eff.configuration_source?.model || 'global'})</div>{eff.capability_validation?.reason && <div className="text-[11px] mt-1" role="status" style={{ color: eff.capability_validation?.valid ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_validation.reason}</div>}<div className="mt-3 space-y-3"><Toggle checked={!!d.use_global_connection} disabled={!!saving[id]} onChange={v => setDraft(id, { use_global_connection: v })} label="Use global connection" /><label htmlFor={`agent-${id}-connection`}>Connection<select id={`agent-${id}-connection`} value={d.use_global_connection ? eff.connection_id || '' : d.connection_id || ''} disabled={!!saving[id] || d.use_global_connection} onChange={e => { setDraft(id, { connection_id: e.target.value }); loadModels(id, e.target.value); }}><option value="">{d.use_global_connection ? 'Inherited global connection' : 'Select agent connection'}</option>{textConnections.map(c => <option key={c.connection_id} value={c.connection_id}>{connectionLabel(c)} · {c.connection_id}</option>)}</select></label><Toggle checked={!!d.use_global_model} disabled={!!saving[id]} onChange={v => { setDraft(id, { use_global_model: v }); loadModels(id, effectiveConnectionId); }} label="Use global model" /><label htmlFor={`agent-${id}-model`}>Model<select id={`agent-${id}-model`} value={shownModel} disabled={!!saving[id] || d.use_global_model || loadingModels[id] || !effectiveConnectionId} onChange={e => setDraft(id, { model: e.target.value })}><option value="">{loadingModels[id] ? 'Loading models...' : d.use_global_model ? 'Inherited global model' : 'Select agent model'}</option>{modelUnavailable && <option value={shownModel}>{shownModel} (unavailable for this connection)</option>}{modelIds.map(m => <option key={m} value={m}>{m}</option>)}</select></label>{modelErrors[id] && <div className="text-[11px]" role="alert" style={{ color: 'var(--danger)' }}>Model loading error: {modelErrors[id]}</div>}{modelUnavailable && <div className="text-[11px]" role="alert" style={{ color: 'var(--danger)' }}>Selected model is unavailable for the effective connection. Choose another model or enable global model.</div>}<Toggle checked={!!d.use_global_generation_parameters} disabled={!!saving[id]} onChange={v => setDraft(id, { use_global_generation_parameters: v })} label="Use global parameters" /><div className="provider-form"><label>Temperature<input className="ai-settings-field" value={inheritedParams ? eff.temperature ?? '' : d.temperature ?? ''} disabled={!!saving[id] || inheritedParams} onChange={e => setDraft(id, { temperature: e.target.value })} placeholder="0.25" /></label><label>Top_p<input className="ai-settings-field" value={inheritedParams ? eff.top_p ?? '' : d.top_p ?? ''} disabled={!!saving[id] || inheritedParams} onChange={e => setDraft(id, { top_p: e.target.value })} placeholder="0.85" /></label><label>Top_k<input className="ai-settings-field" value={inheritedParams ? eff.top_k ?? '' : d.top_k ?? ''} disabled={!!saving[id] || inheritedParams} onChange={e => setDraft(id, { top_k: e.target.value })} placeholder="Not sent" /></label><label>Max tokens<input className="ai-settings-field" value={inheritedParams ? eff.max_tokens ?? '' : d.max_tokens ?? ''} disabled={!!saving[id] || inheritedParams} onChange={e => setDraft(id, { max_tokens: e.target.value })} placeholder="Provider default" /></label></div><div className="provider-actions"><button type="button" className="primary" disabled={!!saving[id]} onClick={() => saveAgent(id)}>Save agent settings</button><button type="button" disabled={!!saving[id]} onClick={() => resetAgent(id)}>Reset to defaults</button></div></div></div>; })}</div></section>;
+  const selectedEntry = entries.find(([id]) => id === selectedAgentId) || entries[0];
+  return <section className="provider-setup"><div className="provider-heading"><div><strong>Agent AI Overrides</strong><p>Choose one agent, then edit its connection, provider model, and generation parameters. API keys are never shown or copied here.</p></div><span className="connection-state">{entries.length} agents</span></div>{message && <p className="provider-message" role="status">{message}</p>}<label>Agent<select value={selectedEntry?.[0] || ''} onChange={e => setSelectedAgentId(e.target.value)}><option value="">Select agent</option>{entries.map(([id, agent]) => <option key={id} value={id}>{agent.name || id} - {id}</option>)}</select></label>{selectedEntry && (() => { const [id, agent] = selectedEntry; const eff = agent.effective_ai || {}; const d = drafts[id] || initialDraft(agent); const connectionId = d.use_global_connection ? eff.connection_id : d.connection_id; const selectedConnection = connections.find(c => c.connection_id === connectionId); const models = modelOptions[id] || (selectedConnection?.available_models || []).filter(m => m?.capabilities?.text_input !== false); const modelIds = models.map(m => m.id); const shownModel = d.use_global_model ? eff.model || '' : d.model || ''; const modelUnavailable = shownModel && modelIds.length > 0 && !modelIds.includes(shownModel); const disabled = !!saving[id]; return <div key={id} className="rounded-lg border p-3 mt-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="flex items-center justify-between gap-2"><div><strong>{agent.name || id}</strong><div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{id}</div></div><span className="text-[10px] uppercase" style={{ color: eff.capability_status === 'compatible' ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_status || 'unknown'}</span></div><div className="text-[11px] mt-2" style={{ color: 'var(--text-secondary)' }}>Effective connection: <span className="font-mono">{eff.connection_display_name || eff.connection_id || '-'}</span> ({eff.configuration_source?.connection || 'global'})</div><div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Effective provider/model: <span className="font-mono">{eff.provider || '-'}/{eff.model || '-'}</span> ({eff.configuration_source?.model || 'global'})</div><div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Effective parameters: temperature {eff.temperature ?? '-'}, top_p {eff.top_p ?? '-'}, top_k {eff.top_k ?? '-'}, max_tokens {eff.max_tokens ?? '-'} ({eff.configuration_source?.generation_parameters || 'global'})</div>{eff.capability_validation?.reason && <div className="text-[11px] mt-1" role="status" style={{ color: eff.capability_validation?.valid ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_validation.reason}</div>}<div className="mt-3 space-y-3"><Toggle checked={!!d.use_global_connection} disabled={disabled} onChange={v => setDraft(id, { use_global_connection: v, connection_id: v ? eff.connection_id || '' : d.connection_id || eff.connection_id || '' })} label="Use global connection" /><label>Connection<select value={d.use_global_connection ? eff.connection_id || '' : d.connection_id || ''} disabled={disabled || d.use_global_connection} onChange={e => chooseConnection(id, e.target.value)}><option value="">Select agent connection</option>{textConnections.map(c => <option key={c.connection_id} value={c.connection_id}>{connectionLabel(c)} - {c.connection_id}</option>)}</select></label><Toggle checked={!!d.use_global_model} disabled={disabled} onChange={v => setDraft(id, { use_global_model: v, model: v ? eff.model || '' : d.model || eff.model || '' })} label="Use global model" /><label>Model<select value={shownModel} disabled={disabled || d.use_global_model || !connectionId} onChange={e => setDraft(id, { model: e.target.value })}><option value="">{modelOptions[id] === undefined && connectionId ? 'Loading models...' : 'Select agent model'}</option>{modelUnavailable && <option value={shownModel}>{shownModel} (unavailable for this connection)</option>}{modelIds.map(modelId => <option key={modelId} value={modelId}>{modelId}</option>)}</select></label>{modelErrors[id] && <div className="text-[11px]" role="alert" style={{ color: 'var(--danger)' }}>Model loading error: {modelErrors[id]}</div>}{modelUnavailable && <div className="text-[11px]" role="alert" style={{ color: 'var(--danger)' }}>Selected model is unavailable for this connection.</div>}<Toggle checked={!!d.use_global_generation_parameters} disabled={disabled} onChange={v => setDraft(id, { use_global_generation_parameters: v })} label="Use global parameters" /><div className="provider-form"><label>Temperature<input className="ai-settings-field" value={d.temperature ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { temperature: e.target.value })} placeholder="0.25" /></label><label>Top_p<input className="ai-settings-field" value={d.top_p ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { top_p: e.target.value })} placeholder="0.85" /></label><label>Top_k<input className="ai-settings-field" value={d.top_k ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { top_k: e.target.value })} placeholder="Not sent" /></label><label>Max tokens<input className="ai-settings-field" value={d.max_tokens ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { max_tokens: e.target.value })} placeholder="Provider default" /></label></div><div className="provider-actions"><button type="button" className="primary" disabled={disabled} onClick={() => saveAgent(id)}>Save agent settings</button><button type="button" disabled={disabled} onClick={() => resetAgent(id)}>Reset to defaults</button></div></div></div>; })()}</section>;
 }
 
 function AgentRoleContractsSettings({ activePort }) {

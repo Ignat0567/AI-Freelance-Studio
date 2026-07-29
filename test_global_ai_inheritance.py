@@ -380,32 +380,39 @@ def test_legacy_global_provider_model_is_displayed_safely(monkeypatch, tmp_path)
 
 def test_settings_global_ai_ui_uses_styled_cards_and_no_raw_checkboxes():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
-    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function ProductJudgeSettings", 1)[0]
+    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function AgentAIOverridesSettings", 1)[0]
     assert 'input type="checkbox"' not in global_section
-    assert "<Toggle checked={!!eff.use_global_connection}" in global_section
-    assert "Save agent settings" in global_section
-    assert "Reset to defaults" in global_section
     assert "Provider connection" in global_section
     assert "Default model" in global_section
     assert "No tested text-capable models are available for this connection" in global_section
     assert "Applied successfully:" in global_section
-    assert "grid grid-cols-1 xl:grid-cols-2" in global_section
+    assert "Save agent settings" not in global_section
+    assert "Use global connection" not in global_section
+    assert "setModel(next?.available_models" not in global_section
+    assert "setModel(''); loadModels(e.target.value)" in global_section
+    assert "m.unavailable ? ' (unavailable for this connection)'" in global_section
 
 
 def test_settings_agent_override_fields_are_labeled_and_model_temp_separated():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
-    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function ProductJudgeSettings", 1)[0]
+    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function AgentAIOverridesSettings", 1)[0]
+    agent_section = source.split("function AgentAIOverridesSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
+    for label in ("temperature", "top_p", "top_k", "max tokens"):
+        assert f"<label>Default {label}" in global_section
     for label in ("Temperature", "Top_p", "Top_k", "Max tokens"):
-        assert f"<label>{label}" in global_section
-    assert "Use global model" in global_section
-    assert "Use global parameters" in global_section
-    assert "disabled={inheritedParams}" in global_section
+        assert f"<label>{label}" in agent_section
+    assert "Use global model" in agent_section
+    assert "Use global parameters" in agent_section
+    assert "disabled={disabled || d.use_global_generation_parameters}" in agent_section
 
 
 def test_settings_agent_override_ui_has_connection_and_model_selectors():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
     section = source.split("function AgentAIOverridesSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
     assert "Agent AI Overrides" in section
+    assert "<label>Agent<select" in section
+    assert "selectedAgentId" in section
+    assert "entries.map(([id, agent])" in section
     assert "Use global connection" in section
     assert "Connection<select" in section
     assert "Use global model" in section
@@ -414,3 +421,29 @@ def test_settings_agent_override_ui_has_connection_and_model_selectors():
     assert "Model loading error" in section
     assert "Save agent settings" in section
     assert "reset_to_defaults" in section
+    assert "capability_validation?.reason" in section
+    assert "Effective connection" in section
+    assert "Effective parameters" in section
+
+
+def test_settings_agent_override_state_is_scoped_and_preserves_native_models():
+    source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
+    section = source.split("function AgentAIOverridesSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
+    assert "fetch(`http://localhost:${activePort}/api/agents/${id}/config`" in section
+    assert "setSelectedAgentId(current => current && agentData?.[current]" in section
+    assert "model: models[0]?.id" not in section
+    assert "setDraft(id, { connection_id: connectionId })" in section
+    assert "modelUnavailable && <option value={shownModel}" in section
+    assert "model: `${" not in section
+    assert "model: connectionId" not in section
+
+
+def test_settings_toggle_markup_is_accessible_button_switch():
+    source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
+    toggle_section = source.split("function Toggle", 1)[1].split("function StoragePathsSettings", 1)[0]
+    assert '<button' in toggle_section
+    assert 'role="switch"' in toggle_section
+    assert "aria-label={label}" in toggle_section
+    assert "aria-checked={checked}" in toggle_section
+    assert "disabled={disabled}" in toggle_section
+    assert "onKeyDown" in toggle_section
