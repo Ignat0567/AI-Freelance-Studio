@@ -454,6 +454,11 @@ async function createWindow(backendPort) {
         });
     });
 
+    try {
+        await mainWindow.webContents.session.clearCache();
+    } catch (error) {
+        console.warn(`[Electron]: Failed to clear renderer HTTP cache before load: ${error.message}`);
+    }
     mainWindow.loadURL(`${expectedRendererOrigin}/`);
     if (process.env.ELECTRON_OPEN_DEVTOOLS === '1') {
         mainWindow.webContents.openDevTools();

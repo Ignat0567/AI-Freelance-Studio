@@ -6528,6 +6528,25 @@ async def debug_frontend():
 if os.path.isdir(FRONTEND_DIST):
     print(f"[Backend]: Frontend dist found at {FRONTEND_DIST}")
 
+    FRONTEND_SHELL_CACHE_HEADERS = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    def _is_hashed_frontend_asset(path: str) -> bool:
+        normalized = path.replace("\\", "/")
+        name = os.path.basename(normalized)
+        stem, ext = os.path.splitext(name)
+        return normalized.startswith("assets/") and ext.lower() in {".js", ".css", ".png", ".svg", ".ico", ".woff2"} and bool(re.search(r"-[A-Za-z0-9_-]{6,}$", stem))
+
+    def _frontend_cache_headers(path: str, *, spa_shell: bool = False) -> dict[str, str]:
+        if spa_shell or path == "index.html" or path.endswith(".html"):
+            return FRONTEND_SHELL_CACHE_HEADERS
+        if _is_hashed_frontend_asset(path):
+            return {"Cache-Control": "public, max-age=31536000, immutable"}
+        return {"Cache-Control": "no-cache, max-age=0"}
+
     @app.get("/", include_in_schema=False)
     async def serve_index():
         idx = os.path.join(FRONTEND_DIST, "index.html")
@@ -6535,7 +6554,7 @@ if os.path.isdir(FRONTEND_DIST):
             raise HTTPException(404)
         with open(idx, "r", encoding="utf-8") as f:
             html = f.read()
-        return HTMLResponse(html, media_type="text/html")
+        return HTMLResponse(html, media_type="text/html", headers=_frontend_cache_headers("index.html", spa_shell=True))
 
     MEDIA_TYPES = {".js": "application/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2", ".html": "text/html", ".map": "application/json"}
 
@@ -6546,10 +6565,10 @@ if os.path.isdir(FRONTEND_DIST):
         file_path = os.path.join(FRONTEND_DIST, path)
         if os.path.isfile(file_path):
             ext = os.path.splitext(path)[1].lower()
-            return FileResponse(file_path, media_type=MEDIA_TYPES.get(ext))
+            return FileResponse(file_path, media_type=MEDIA_TYPES.get(ext), headers=_frontend_cache_headers(path))
         idx = os.path.join(FRONTEND_DIST, "index.html")
         if os.path.isfile(idx):
-            return FileResponse(idx, media_type="text/html")
+            return FileResponse(idx, media_type="text/html", headers=_frontend_cache_headers("index.html", spa_shell=True))
         raise HTTPException(404)
 else:
     print(f"[Backend Warning]: Frontend dist not found at {FRONTEND_DIST}")
