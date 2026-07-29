@@ -24,6 +24,7 @@ from typing import Optional
 import httpx
 import config_storage
 import secret_store
+from execution_config import build_effective_execution_config, normalize_model_id, validate_native_model_id
 from repair_scope import resolve_inside
 
 logger = logging.getLogger(__name__)
@@ -85,15 +86,7 @@ _OPENCODE_MODEL_LIST_CACHE: dict[str, object] = {"binary": "", "models": [], "ch
 
 def normalize_opencode_model_id(model: str, connection_id: str = "", known_connection_ids: set[str] | None = None) -> dict:
     """Return a native OpenCode model ID, removing only proven Studio connection prefixes."""
-    raw = str(model or "").strip()
-    known = {str(item) for item in (known_connection_ids or set()) if item}
-    if connection_id:
-        known.add(str(connection_id))
-    if raw and "/" in raw:
-        first, rest = raw.split("/", 1)
-        if first in known and rest and "/" in rest:
-            return {"model_id": rest, "connection_id": first, "provider_id": rest.split("/", 1)[0], "migrated": True, "legacy_model": raw}
-    return {"model_id": raw, "connection_id": connection_id or "", "provider_id": raw.split("/", 1)[0] if "/" in raw else "", "migrated": False, "legacy_model": raw}
+    return normalize_model_id(model, connection_id, known_connection_ids)
 
 
 def _is_internal_model_reference(model: str, known_connection_ids: set[str] | None = None) -> bool:
@@ -220,17 +213,12 @@ def sync_opencode_config() -> bool:
 def _preferred_provider_model() -> tuple[str, str]:
     """Return provider/model using the same Studio config rules as OpenCode config generation."""
     studio_cfg = _get_studio_config()
-    known_connection_ids = {str(item.get("connection_id")) for item in studio_cfg.get("_provider_connections", []) if isinstance(item, dict) and item.get("connection_id")}
-    system_cfg = studio_cfg.get("_system", {}) if isinstance(studio_cfg.get("_system"), dict) else {}
-    provider_raw = system_cfg.get("global_provider") or studio_cfg.get("global_provider") or "nvidia"
-    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
-    model = _native_opencode_model(model, known_connection_ids=known_connection_ids)
-    oc_provider, model, _note = _effective_opencode_provider_model(provider_raw, model, studio_cfg)
-    if oc_provider == "openai" and model in ("gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"):
-        model = _MODEL_MAP["openai"]
-    if "/" in model and model.startswith(f"{oc_provider}/"):
+    effective = build_effective_execution_config(studio_cfg)
+    model = effective.model_id or _MODEL_MAP.get(effective.provider_id, "meta/llama-3.3-70b-instruct")
+    provider = model.split("/", 1)[0] if effective.backend_type == "opencode" and "/" in model else effective.provider_id
+    if model.startswith(f"{provider}/"):
         model = model.split("/", 1)[1]
-    return oc_provider, model
+    return provider, model
 
 
 def _discover_opencode() -> Optional[str]:
@@ -459,6 +447,10 @@ def test_opencode_readiness(executable_path: str = "", selected_model: str = "",
     selected = selected_model.strip()
     selected_provider = _normalize_provider_id(selected.split("/", 1)[0]) if "/" in selected else ""
     checks["selection"] = {"status": "failed", "provider": selected_provider, "model": selected}
+    valid_model, invalid_reason = validate_native_model_id(selected, "opencode")
+    if not valid_model:
+        checks["selection"]["error_code"] = invalid_reason
+        return _readiness_result(invalid_reason, "Select a native OpenCode model ID in provider/model format.", checks, executable_path=binary, server_url="", authorized_providers=providers, available_models=models)
     if not selected_provider or not selected:
         checks["selection"]["error_code"] = "selected_model_missing"
         return _readiness_result("selected_model_missing", "Select an OpenCode provider/model before testing.", checks, executable_path=binary, server_url="", authorized_providers=providers, available_models=models)
@@ -574,16 +566,19 @@ def get_opencode_status() -> dict:
         "web_url": _opencode_web_url if _opencode_web_url and _opencode_web_ready(_opencode_web_url) else "",
     }
     studio_cfg = _get_studio_config()
-    system_cfg = studio_cfg.get("_system", {}) if isinstance(studio_cfg.get("_system"), dict) else {}
-    provider_raw = system_cfg.get("global_provider") or studio_cfg.get("global_provider") or "nvidia"
-    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
-    eff_provider, eff_model, eff_note = _effective_opencode_provider_model(provider_raw, model, studio_cfg)
+    effective = build_effective_execution_config(studio_cfg)
+    provider_raw = effective.provider_id
+    model = effective.model_id
+    eff_provider = effective.provider_id
+    eff_model = effective.model_id
+    eff_note = ""
     status.update({
         "selected_provider": provider_raw,
         "selected_model": model,
         "effective_provider": eff_provider,
         "effective_model": eff_model,
         "effective_note": eff_note,
+        "effective_execution_config": effective.to_dict(),
     })
     if not binary:
         return status
@@ -1082,6 +1077,9 @@ class OpencodeBridge:
         native_model_id = model if "/" in model else f"{provider}/{model}"
         if not native_model_id:
             return {"success": False, "error": "OpenCode model is empty", "error_category": "opencode_model_reference_invalid", "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "command_shape": [], **task_metadata}
+        valid_model, invalid_reason = validate_native_model_id(native_model_id, "opencode")
+        if not valid_model:
+            return {"success": False, "error": f"Invalid OpenCode model reference: {native_model_id}", "error_category": invalid_reason, "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "command_shape": [], **task_metadata}
         if _is_internal_model_reference(native_model_id, {"opencode_bridge", "opencode_oauth_bridge"}):
             return {"success": False, "error": f"Invalid OpenCode model reference: {native_model_id}", "error_category": "opencode_model_reference_invalid", "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "command_shape": [], **task_metadata}
         cmd = [

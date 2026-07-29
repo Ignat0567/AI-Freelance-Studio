@@ -1299,9 +1299,19 @@ asyncio.run(main())
             error_text += f"\n... and {len(errors) - 20} more issues"
 
         opencode_result = self._request_opencode_fix(errors, error_text, repair_report)
-        if opencode_result:
-            self.log(f"[QA OpenCode Fix] Direct repair applied — {opencode_result.get('changed_files', '?')} file(s) changed. Skipping legacy fallback.")
-            return opencode_result
+        if isinstance(opencode_result, dict):
+            direct_status = str(opencode_result.get("status") or "")
+            changed = bool(opencode_result.get(OPENCODE_FIX_APPLIED) or opencode_result.get("meaningful_changes_detected"))
+            if changed:
+                self.log(f"[QA OpenCode Fix] Direct repair applied — {opencode_result.get('changed_files', '?')} file(s) changed. Skipping legacy fallback.")
+                if not opencode_result.get(OPENCODE_FIX_APPLIED):
+                    opencode_result[OPENCODE_FIX_APPLIED] = True
+                return opencode_result
+            if opencode_result.get("timeout") or direct_status == "subprocess_timeout":
+                self.log("[QA OpenCode Fix] OpenCode timed out and no meaningful files changed. Legacy JSON fallback is disabled for direct-backend timeout results.")
+                return None
+            if opencode_result:
+                self.log("[QA OpenCode Fix] Direct repair produced no file changes; continuing to labelled legacy JSON fallback.")
 
         self.log("[LEGACY JSON FALLBACK] OpenCode direct repair produced no meaningful disk changes. Attempting JSON-based repair.")
 

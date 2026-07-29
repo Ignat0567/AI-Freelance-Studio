@@ -36,6 +36,15 @@ import project_state
 import secret_store
 from repair_scope import SUPPORTED_LOCK_FILES, walk_repairable_files
 from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
+from execution_config import (
+    build_effective_execution_config,
+    is_opencode_connection_type,
+    migrate_legacy_execution_config,
+    normalize_model_id as normalize_execution_model_id,
+    provider_connection_id as execution_provider_connection_id,
+    validate_native_model_id,
+)
+from workflow_contracts import ExecutionBrief, WorkflowState, validate_transition
 from api.accounts import router as accounts_router
 from api.android import router as android_router
 from api.sandbox_test_lab import install_sandbox_test_lab_api, router as sandbox_test_lab_router
@@ -399,6 +408,7 @@ class ProductJudgeConfigPayload(BaseModel):
 
 
 class OpenCodeConnectionPayload(BaseModel):
+    connection_id: str = ""
     name: str = "My OpenCode"
     configured_model: str = ""
     transport_type: str = "cli"
@@ -777,13 +787,14 @@ def get_ai_settings():
     response = _ai_settings_response(data)
     response["global_ai"] = _load_global_ai_config(data)
     response["provider_connections"] = _frontend_provider_connections(data)
+    response["effective_execution_config"] = build_effective_execution_config(data).to_dict()
     return response
 
 
 @app.get("/api/config/ai/global")
 def get_global_ai_config():
     data = load_studio_keys()
-    return {"global_ai": _load_global_ai_config(data), "connections": _frontend_provider_connections(data)}
+    return {"global_ai": _load_global_ai_config(data), "connections": _frontend_provider_connections(data), "effective_execution_config": build_effective_execution_config(data).to_dict()}
 
 
 @app.post("/api/config/ai/global")
@@ -959,7 +970,7 @@ def _provider_credential_exists(data: dict, provider: str) -> bool:
 
 
 def _provider_connection_id(provider: str) -> str:
-    return f"provider-{provider}"
+    return execution_provider_connection_id(provider)
 
 
 def _canonical_connection_type(value: str, provider: str = "") -> str:
@@ -994,7 +1005,7 @@ def _connection_uses_opencode_transport(connection: dict[str, Any], effective: d
         str((effective or {}).get("backend") or "").lower(),
         str((effective or {}).get("transport_type") or "").lower(),
     }
-    return bool(values.intersection({"opencode", "opencode_bridge", "opencode_oauth_bridge"}))
+    return any(is_opencode_connection_type(item) for item in values)
 
 
 def _opencode_model_registry(readiness: dict[str, Any], provider_id: str = "") -> list[dict[str, Any]]:
@@ -1276,17 +1287,17 @@ def _normalize_model_for_connection(model: str, connection_id: str = "", data: d
         known_ids.add(str(connection_id))
     if _HAS_OPENCODE:
         return normalize_opencode_model_id(model, connection_id, known_ids)
-    raw = str(model or "").strip()
-    if "/" in raw:
-        first, rest = raw.split("/", 1)
-        if first in known_ids and rest and "/" in rest:
-            return {"model_id": rest, "connection_id": first, "provider_id": rest.split("/", 1)[0], "migrated": True, "legacy_model": raw}
-    return {"model_id": raw, "connection_id": connection_id, "provider_id": raw.split("/", 1)[0] if "/" in raw else "", "migrated": False, "legacy_model": raw}
+    return normalize_execution_model_id(model, connection_id, known_ids)
 
 
 def _migrate_legacy_opencode_model_references(data: dict) -> bool:
-    changed = False
+    changed = migrate_legacy_execution_config(data)
     global_cfg = data.get("_global_ai", {}) if isinstance(data.get("_global_ai"), dict) else {}
+    if changed and global_cfg.get("connection_type") == "opencode_oauth_bridge" and global_cfg.get("model"):
+        system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
+        system["global_provider"] = "opencode_bridge"
+        system["global_model"] = global_cfg["model"]
+        data["_system"] = system
     global_connection_id = str(global_cfg.get("connection_id") or "")
     normalized = _normalize_model_for_connection(str(global_cfg.get("model") or ""), global_connection_id, data)
     if normalized.get("migrated"):
@@ -1417,7 +1428,10 @@ def refresh_provider_connection_models(connection_id: str):
 def save_opencode_connection(payload: OpenCodeConnectionPayload):
     if payload.transport_type not in {"auto", "cli", "local_service"}:
         raise HTTPException(400, "Unsupported OpenCode transport")
-    selected_model = str(_normalize_model_for_connection(payload.configured_model.strip(), payload.connection_id if hasattr(payload, "connection_id") else "").get("model_id") or payload.configured_model.strip())
+    selected_model = str(_normalize_model_for_connection(payload.configured_model.strip(), payload.connection_id).get("model_id") or payload.configured_model.strip())
+    valid_model, invalid_reason = validate_native_model_id(selected_model, "opencode")
+    if not valid_model:
+        raise HTTPException(400, {"error_code": invalid_reason, "message": "OpenCode model must use native provider/model format."})
     result = test_opencode_readiness(payload.executable_path.strip(), selected_model, payload.local_endpoint.strip())
     if result.get("ready") is not True:
         raise HTTPException(409, {"error_code": result.get("error_code", "readiness_failed"), "message": result.get("message", "OpenCode readiness check failed"), "checks": result.get("checks", {})})
@@ -1426,7 +1440,7 @@ def save_opencode_connection(payload: OpenCodeConnectionPayload):
     selection = result["checks"]["selection"]
     server_url = result.get("server_url", "")
     connection = {
-        "connection_id": f"opencode-{uuid.uuid4().hex[:12]}",
+        "connection_id": payload.connection_id.strip() or f"opencode-{uuid.uuid4().hex[:12]}",
         "connection_type": "opencode_oauth_bridge",
         "name": payload.name.strip() or "My OpenCode",
         "enabled": bool(payload.enabled),
@@ -1444,10 +1458,28 @@ def save_opencode_connection(payload: OpenCodeConnectionPayload):
     }
     data = load_studio_keys()
     connections = _load_provider_connections(data)
-    connections.append(connection)
+    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection["connection_id"]), None)
+    if existing is None:
+        connections.append(connection)
+    else:
+        connections[existing] = {**connections[existing], **connection}
     _store_provider_connections(data, connections)
+    data["_global_ai"] = {
+        "connection_id": connection["connection_id"],
+        "connection_type": "opencode_oauth_bridge",
+        "provider": "opencode_bridge",
+        "model": connection["configured_model"],
+        "enabled": bool(payload.enabled),
+        "updated_at": now,
+    }
+    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
+    system["global_provider"] = "opencode_bridge"
+    system["global_model"] = connection["configured_model"]
+    data["_system"] = system
+    SYSTEM_SETTINGS["global_provider"] = "opencode_bridge"
+    SYSTEM_SETTINGS["global_model"] = connection["configured_model"]
     save_studio_keys(data)
-    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "message": "OpenCode authentication remains owned by OpenCode; only verified connection metadata was stored."}
+    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "effective_execution_config": build_effective_execution_config(data).to_dict(), "message": "OpenCode authentication remains owned by OpenCode; only verified connection metadata was stored."}
 
 
 @app.post("/api/provider-connections/opencode/detect")
@@ -1456,7 +1488,7 @@ def detect_opencode_connection(payload: OpenCodeConnectionPayload):
     dependencies = get_opencode_onboarding_dependencies()
     opencode_dependency = dependencies["components"]["opencode"]
     connection = OpenCodeBridgeConnection(
-        connection_id="transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
+        connection_id=payload.connection_id.strip() or "transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
         configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
         transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
         local_endpoint=payload.local_endpoint.strip(), executable_path=opencode_dependency["path"],
@@ -1478,7 +1510,7 @@ def detect_opencode_connection(payload: OpenCodeConnectionPayload):
 def test_transient_opencode_connection(payload: OpenCodeConnectionPayload):
     """Verify local OpenCode readiness without invoking a paid model request."""
     connection = OpenCodeBridgeConnection(
-        connection_id="transient-opencode-test", name=payload.name.strip() or "My OpenCode",
+        connection_id=payload.connection_id.strip() or "transient-opencode-test", name=payload.name.strip() or "My OpenCode",
         configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
         transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
         local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
@@ -4962,12 +4994,16 @@ def _opencode_recovery_instruction(error_code: str) -> str:
 def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None, *, repair_attempted: bool = False) -> dict[str, Any]:
     if not _HAS_OPENCODE:
         return {"ready": False, "blocking_reason": "opencode_executable_not_found", "message": "OpenCode bridge is not available.", "server_required": False, "checks": {}}
+    execution_config = build_effective_execution_config(load_studio_keys(), project_dir or "")
+    if not execution_config.live_execution_enabled:
+        return {"ready": False, "blocking_reason": "live_execution_opt_in_required", "message": "Live coding backend execution is disabled in the effective execution configuration.", "server_required": False, "checks": {"live_execution": {"status": "failed", "error_code": "live_execution_opt_in_required"}}, "effective_execution_config": execution_config.to_dict()}
     effective = resolve_effective_agent_ai_config(agent_id)
-    connection_id = str(effective.get("connection_id") or "")
-    model_id = agent_opencode_model_override(agent_id)
+    connection_id = str(effective.get("connection_id") or execution_config.connection_id or "")
+    model_id = agent_opencode_model_override(agent_id) or execution_config.model_id
     normalized = _normalize_model_for_connection(model_id, connection_id)
     model_id = str(normalized.get("model_id") or model_id)
-    if not model_id or _normalize_model_for_connection(model_id, connection_id).get("migrated"):
+    valid_model, invalid_reason = validate_native_model_id(model_id, "opencode")
+    if not model_id or _normalize_model_for_connection(model_id, connection_id).get("migrated") or not valid_model:
         return {"ready": False, "blocking_reason": "opencode_model_reference_invalid", "message": "The selected OpenCode model is invalid.", "connection_id": connection_id, "model_id": model_id, "server_required": False, "checks": {}}
     if project_dir:
         path = Path(project_dir)
@@ -4984,7 +5020,7 @@ def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None,
     executable = str(connection.get("executable_path") or "")
     readiness = test_opencode_readiness(executable, model_id, "")
     if readiness.get("ready"):
-        return {"ready": True, "connection_id": connection_id, "transport": "opencode", "provider_id": model_id.split("/", 1)[0] if "/" in model_id else "", "model_id": model_id, "server_required": False, "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}}, "readiness": readiness}
+        return {"ready": True, "connection_id": connection_id, "transport": "opencode", "provider_id": model_id.split("/", 1)[0] if "/" in model_id else "", "model_id": model_id, "server_required": False, "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}, "live_execution": {"status": "passed"}}, "readiness": readiness, "effective_execution_config": execution_config.to_dict()}
     code = str(readiness.get("error_code") or "opencode_connection_not_ready")
     provider_id = model_id.split("/", 1)[0] if "/" in model_id else str(effective.get("provider") or "")
     if code == "selected_model_unavailable":
@@ -5023,7 +5059,7 @@ def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None,
         "selected_provider_not_authenticated": "opencode_authentication_failure",
         "provider_not_authenticated": "opencode_authentication_failure",
     }.get(code, code)
-    return {"ready": False, "connection_id": connection_id, "transport": "opencode", "provider_id": provider_id, "model_id": model_id, "server_required": False, "blocking_reason": mapped, "message": readiness.get("message", "OpenCode readiness failed."), "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}}, "readiness": readiness, "recoverable": mapped in {"opencode_model_not_found", "opencode_executable_not_found", "opencode_authentication_failure"}}
+    return {"ready": False, "connection_id": connection_id, "transport": "opencode", "provider_id": provider_id, "model_id": model_id, "server_required": False, "blocking_reason": mapped, "message": readiness.get("message", "OpenCode readiness failed."), "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}, "live_execution": {"status": "passed"}}, "readiness": readiness, "effective_execution_config": execution_config.to_dict(), "recoverable": mapped in {"opencode_model_not_found", "opencode_executable_not_found", "opencode_authentication_failure"}}
 
 
 @app.get("/api/opencode/preflight/{agent_id}")
@@ -5390,6 +5426,28 @@ def async_studio_production_pipeline(project_id: str):
                             "- For JS/Vite projects, run 'npm install' and 'npm run build' from the project root and fix failures.\n"
                             "- Do not include placeholder/stub code, fake tests, stale audit notes, or documentation that contradicts implementation."
                         )
+                        execution_brief = ExecutionBrief(
+                            project_id=project_id,
+                            task_id=f"{project_id}-codex-implementation",
+                            title=f"Implement {project.get('title', '')}",
+                            objective="Implement the approved project specification on disk using the configured coding backend.",
+                            project_root=target_path,
+                            requirements=[str(project.get("description", ""))],
+                            constraints=["Use the existing generated project workspace only", "Do not fake tests or evidence", "Do not write outside project root"],
+                            acceptance_criteria=[line for line in ac_text.splitlines() if line.strip()],
+                            allowed_paths=[target_path],
+                            forbidden_paths=[str(Path.home()), str(Path(DATA_DIR).parent)],
+                            implementation_steps=["Inspect project", "Implement files", "Run relevant tests", "Report changed files and command results"],
+                            test_commands=["python -m pytest -q", "npm run build"],
+                            validation_commands=["Final Delivery Audit"],
+                            requires_browser_validation=project.get("_project_type") in {"landing_page"} or "frontend" in str(project.get("description", "")).lower(),
+                            requires_security_review=True,
+                            approval_policy="plan_approved_or_existing_pipeline_phase",
+                            sandbox_policy="project_root_containment",
+                            metadata={"backend_type": "opencode", "effective_execution_config": preflight.get("effective_execution_config", {})},
+                        )
+                        project["execution_brief"] = execution_brief.to_dict()
+                        project["execution_brief_validation"] = execution_brief.validate()
                         oc_result = oc_bridge.execute_coding_task(
                             project_dir=target_path,
                             task_spec=task_spec,

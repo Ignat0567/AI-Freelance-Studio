@@ -138,3 +138,13 @@ def test_opencode_model_normalization_contract():
     assert legacy["migrated"] is True
     assert unknown["model_id"] == "unknown/nvidia/deepseek-ai/deepseek-v4-pro"
     assert unknown["migrated"] is False
+
+
+def test_readiness_rejects_non_native_model_id(monkeypatch):
+    monkeypatch.setattr(opencode_bridge, "_run_capture", _run_capture)
+
+    result = opencode_bridge.test_opencode_readiness("opencode.cmd", "provider-nvidia")
+
+    assert result["ready"] is False
+    assert result["error_code"] == "model_id_must_use_provider_slash_model"
+    assert result["checks"]["selection"]["error_code"] == "model_id_must_use_provider_slash_model"

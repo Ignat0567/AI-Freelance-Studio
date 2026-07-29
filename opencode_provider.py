@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from execution_config import normalize_model_id, validate_native_model_id
+
 logger = logging.getLogger(__name__)
 
 PROVIDER_REGISTRY = {
@@ -35,13 +37,7 @@ SECRET_VALUE_RE = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|authoriz
 
 
 def _native_opencode_model(model: str, connection_id: str = "") -> str:
-    raw = str(model or "").strip()
-    known = {"opencode_bridge", "opencode_oauth_bridge", str(connection_id or "")}
-    if "/" in raw:
-        first, rest = raw.split("/", 1)
-        if first in known and rest and "/" in rest:
-            return rest
-    return raw
+    return str(normalize_model_id(model, connection_id, {"opencode_bridge", "opencode_oauth_bridge"}).get("model_id") or "")
 
 
 class BrowserAuthConnectionAdapter(ABC):
@@ -241,6 +237,9 @@ class OpenCodeBridgeConnection:
             return {"status": "unavailable", "failure_stage": "before_invocation", "error_category": "misconfigured", "errors": ["Connection is disabled"], "text": ""}
         if not model:
             return {"status": "unavailable", "failure_stage": "before_invocation", "error_category": "model_unavailable", "errors": ["No OpenCode model is configured"], "text": ""}
+        valid_model, invalid_reason = validate_native_model_id(model, "opencode")
+        if not valid_model:
+            return {"status": "unavailable", "failure_stage": "before_invocation", "error_category": invalid_reason, "errors": ["OpenCode model must use native provider/model format"], "text": ""}
         requested_attachments = request.get("image_attachments", []) + request.get("file_attachments", [])
         attachments = [str(path) for path in requested_attachments if os.path.isfile(str(path))]
         if len(attachments) != len(requested_attachments):

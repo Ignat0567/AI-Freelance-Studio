@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import config_storage
+import execution_config
 import opencode_bridge
 
 
@@ -113,3 +114,52 @@ def test_opencode_config_dir_allows_explicit_absolute_override(monkeypatch, tmp_
     config_dir = opencode_bridge._get_opencode_config_dir()
 
     assert config_dir == str(override)
+
+
+def test_effective_execution_config_separates_connection_provider_and_model():
+    cfg = {
+        "_global_ai": {
+            "connection_id": "provider-nvidia",
+            "connection_type": "opencode_oauth_bridge",
+            "provider": "opencode_bridge",
+            "model": "nvidia/gpt-4o",
+            "enabled": True,
+        },
+        "_provider_connections": [
+            {"connection_id": "provider-nvidia", "connection_type": "opencode_oauth_bridge", "configured_model": "nvidia/gpt-4o"}
+        ],
+    }
+
+    effective = execution_config.build_effective_execution_config(cfg, str(Path.cwd()))
+
+    assert effective.connection_id == "provider-nvidia"
+    assert effective.provider_id == "nvidia"
+    assert effective.model_id == "nvidia/gpt-4o"
+    assert effective.backend_type == "opencode"
+    assert effective.connection_id != effective.provider_id
+    assert effective.connection_id != effective.model_id
+
+
+def test_effective_execution_config_migrates_legacy_connection_prefixed_model():
+    cfg = {
+        "_global_ai": {
+            "connection_id": "oc-live",
+            "connection_type": "opencode_oauth_bridge",
+            "provider": "opencode_bridge",
+            "model": "oc-live/nvidia/deepseek-ai/deepseek-v4-pro",
+        },
+        "_provider_connections": [{"connection_id": "oc-live", "connection_type": "opencode_oauth_bridge"}],
+    }
+
+    changed = execution_config.migrate_legacy_execution_config(cfg)
+    effective = execution_config.build_effective_execution_config(cfg)
+
+    assert changed is True
+    assert cfg["_global_ai"]["model"] == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert effective.model_id == "nvidia/deepseek-ai/deepseek-v4-pro"
+    assert "oc-live/nvidia" not in effective.model_id
+
+
+def test_native_opencode_model_validation_rejects_connection_id_only():
+    assert execution_config.validate_native_model_id("provider-nvidia", "opencode") == (False, "model_id_must_use_provider_slash_model")
+    assert execution_config.validate_native_model_id("nvidia/gpt-4o", "opencode") == (True, "")
