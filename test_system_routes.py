@@ -289,17 +289,38 @@ def test_editor_candidates_use_shared_system_settings():
 
 
 def test_system_config_routes_are_not_duplicated():
-    get_routes = [
-        route for route in main.app.routes
-        if getattr(route, "path", "") == "/api/config/system" and "GET" in getattr(route, "methods", set())
-    ]
-    post_routes = [
-        route for route in main.app.routes
-        if getattr(route, "path", "") == "/api/config/system" and "POST" in getattr(route, "methods", set())
-    ]
+    get_routes = main.find_app_routes(main.app, path="/api/config/system", method="GET")
+    post_routes = main.find_app_routes(main.app, path="/api/config/system", method="POST")
 
     assert len(get_routes) == 1
     assert len(post_routes) == 1
+
+
+class _FakeFlatRoute:
+    def __init__(self, path, methods):
+        self.path = path
+        self.methods = methods
+
+
+class _FakeIncludedRouterWrapper:
+    """Mimics FastAPI's lazily-wrapped include_router() route (no .path)."""
+
+    def __init__(self, routes):
+        self.original_router = type("R", (), {"routes": routes})()
+
+
+def test_route_helpers_resolve_wrapped_included_routers_without_path_attribute():
+    wrapped = _FakeIncludedRouterWrapper([
+        _FakeFlatRoute("/api/config/system", {"GET"}),
+        _FakeFlatRoute("/api/config/system", {"POST"}),
+        _FakeFlatRoute("/health", {"GET"}),
+    ])
+    routes = [_FakeFlatRoute("/", {"GET"}), wrapped]
+
+    assert main.iter_app_route_paths(routes) == ["/", "/api/config/system", "/api/config/system", "/health"]
+    assert len(main.find_app_routes(routes, path="/api/config/system", method="GET")) == 1
+    assert len(main.find_app_routes(routes, path="/api/config/system", method="POST")) == 1
+    assert main.find_app_routes(routes, path="/does-not-exist") == []
 
 
 def test_health_returns_existing_payload():
@@ -445,3 +466,30 @@ def test_system_open_editor_returns_404_when_editor_missing(monkeypatch, tmp_pat
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Editor 'missing' not found. Checked: missing-editor"}
+
+
+def test_system_open_editor_launches_claude_workspace_terminal(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(
+        system_routes.claude_bridge,
+        "start_claude_workspace_terminal",
+        lambda workdir: captured.update(workdir=workdir) or {"status": "started", "manual_command": "claude"},
+    )
+
+    response = client.post("/api/system/open-editor", json={"editor": "claude", "path": str(tmp_path)})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "opened", "editor": "claude", "executable": "claude", "path": str(tmp_path.resolve())}
+    assert captured["workdir"] == str(tmp_path.resolve())
+
+
+def test_system_open_editor_claude_missing_returns_404(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        system_routes.claude_bridge,
+        "start_claude_workspace_terminal",
+        lambda workdir: {"status": "error", "error_code": "executable_missing", "message": "Claude Code executable was not found. Install the Claude Code CLI first."},
+    )
+
+    response = client.post("/api/system/open-editor", json={"editor": "claude", "path": str(tmp_path)})
+
+    assert response.status_code == 404

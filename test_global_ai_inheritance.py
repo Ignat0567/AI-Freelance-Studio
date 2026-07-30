@@ -104,6 +104,16 @@ def test_agent_specific_model_override_and_temperature_override(monkeypatch, tmp
     assert effective["elena"]["temperature"] == 0.7
 
 
+def test_agent_model_changes_preserve_custom_prompt(monkeypatch, tmp_path):
+    cfg = {"openai_key": "sk-secret", "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}, "_agent_configs": {"maya": {"custom_prompt": "Stay in Maya persona.", "use_global_model": True}}}
+    client, config_path = _client(monkeypatch, tmp_path, cfg)
+    response = client.post("/api/agents/maya/config", json={"use_global_connection": True, "use_global_model": False, "model": "gpt-5.5"})
+    assert response.status_code == 200
+    saved = json.loads(config_path.read_text(encoding="utf-8"))["_agent_configs"]["maya"]
+    assert saved["custom_prompt"] == "Stay in Maya persona."
+    assert saved["model"] == "gpt-5.5"
+
+
 def test_changing_global_model_updates_inherited_but_not_overridden_agents(monkeypatch, tmp_path):
     cfg = {"openai_key": "sk-secret", "_provider_connections": [_vision_connection()], "_global_ai": {"connection_id": "provider-openai", "provider": "openai", "model": "gpt-4o"}, "_agent_configs": {"alex": {"use_global_model": True}, "codex": {"use_global_model": False, "model": "gpt-4o"}}}
     client, _ = _client(monkeypatch, tmp_path, cfg)
@@ -393,49 +403,75 @@ def test_settings_global_ai_ui_uses_styled_cards_and_no_raw_checkboxes():
     assert "m.unavailable ? ' (unavailable for this connection)'" in global_section
 
 
+def test_settings_layout_expands_and_animation_speed_ui_removed():
+    settings_source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
+    dashboard_source = Path("frontend/src/components/StudioDashboard.jsx").read_text(encoding="utf-8")
+    css = Path("frontend/src/index.css").read_text(encoding="utf-8")
+    assert "settings-window-wide" in settings_source
+    assert "max-w-2xl" not in settings_source
+    assert "animation_speed" not in settings_source
+    assert "workspaceWide" in dashboard_source
+    assert "workspace-wide" in dashboard_source
+    assert ".fs-shell.workspace-wide .fs-body" in css
+
+
+def test_ai_connections_exposes_subscription_provider_templates():
+    source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
+    section = source.split("function UniversalProviderConnectionsSettings", 1)[1].split("function GlobalAIInheritanceSettings", 1)[0]
+    assert "Add provider" in section
+    assert "ChatGPT / OpenAI via OpenCode subscription" in section
+    assert "ChatGPT Subscription (Codex CLI)" in section
+    assert "codex_chatgpt_subscription" in section
+    assert "opencode_provider" in section
+    assert "OpenAI API Key" in section
+
+
 def test_settings_agent_override_fields_are_labeled_and_model_temp_separated():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
     global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function AgentAIOverridesSettings", 1)[0]
-    agent_section = source.split("function AgentAIOverridesSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
+    agent_section = source.split("function AgentModelManagerSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
     for label in ("temperature", "top_p", "top_k", "max tokens"):
         assert f"<label>Default {label}" in global_section
     for label in ("Temperature", "Top_p", "Top_k", "Max tokens"):
         assert f"<label>{label}" in agent_section
-    assert "Use global model" in agent_section
+    assert "Use Default" in agent_section
     assert "Use global parameters" in agent_section
     assert "disabled={disabled || d.use_global_generation_parameters}" in agent_section
+    assert "Authenticate Provider" in agent_section
+    assert "subscription/delegated" in agent_section
 
 
 def test_settings_agent_override_ui_has_connection_and_model_selectors():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
-    section = source.split("function AgentAIOverridesSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
-    assert "Agent AI Overrides" in section
-    assert "<label>Agent<select" in section
+    section = source.split("function AgentModelManagerSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
+    assert "Agent Model Manager" in section
+    assert "Search providers" in section
+    assert "Search models" in section
     assert "selectedAgentId" in section
-    assert "entries.map(([id, agent])" in section
-    assert "Use global connection" in section
-    assert "Connection<select" in section
-    assert "Use global model" in section
-    assert "Model<select" in section
-    assert "Loading models..." in section
-    assert "Model loading error" in section
-    assert "Save agent settings" in section
-    assert "reset_to_defaults" in section
-    assert "capability_validation?.reason" in section
-    assert "Effective connection" in section
-    assert "Effective parameters" in section
+    assert "entries.map(([agentId, item])" in section
+    assert "Use Default" in section
+    assert "Provider" in section
+    assert "Model" in section
+    assert "Authenticate Provider" in section
+    assert "Test Connection" in section
+    assert "Save AI Choice" in section
+    assert "Current provider" in section
+    assert "Current model" in section
+    assert "Agent Prompt" in section
+    assert "Reset to Default Prompt" in section
 
 
 def test_settings_agent_override_state_is_scoped_and_preserves_native_models():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
-    section = source.split("function AgentAIOverridesSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
+    section = source.split("function AgentModelManagerSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
     assert "fetch(`http://localhost:${activePort}/api/agents/${id}/config`" in section
     assert "setSelectedAgentId(current => current && agentData?.[current]" in section
     assert "model: models[0]?.id" not in section
-    assert "setDraft(id, { connection_id: connectionId })" in section
-    assert "modelUnavailable && <option value={shownModel}" in section
+    assert "setDraft(id, { use_global_connection: false" in section
+    assert "modelUnavailable" in section
     assert "model: `${" not in section
     assert "model: connectionId" not in section
+    assert "custom_prompt" not in section.split("const saveAgent", 1)[1].split("const savePrompt", 1)[0]
 
 
 def test_settings_toggle_markup_is_accessible_button_switch():
@@ -447,3 +483,24 @@ def test_settings_toggle_markup_is_accessible_button_switch():
     assert "aria-checked={checked}" in toggle_section
     assert "disabled={disabled}" in toggle_section
     assert "onKeyDown" in toggle_section
+
+
+def test_product_judge_chat_uses_product_judge_identity():
+    normal_prompt = main.get_agent_prompt("product_judge")
+    fast_prompt = main.get_fast_agent_prompt("product_judge")
+    assert "You are Product Judge" in normal_prompt
+    assert "You are Product Judge" in fast_prompt
+    assert "professional AI assistant" not in normal_prompt
+    assert "professional AI assistant" not in fast_prompt
+
+
+def test_alex_prompt_intake_gates_codex_assignment():
+    normal_prompt = main.get_agent_prompt("alex")
+    fast_prompt = main.get_fast_agent_prompt("alex")
+    for prompt in (normal_prompt, fast_prompt):
+        assert "Before assigning Codex, run prompt intake" in prompt
+        assert "desktop packaging" in prompt
+        assert "AI/RAG requirements" in prompt
+        assert "voice input/output" in prompt
+        assert "ready-to-send Codex brief" in prompt
+        assert "Codex may receive implementation only after" in prompt

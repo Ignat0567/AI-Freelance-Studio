@@ -104,7 +104,48 @@ def test_retry_generation_resumes_blocked_project_from_saved_phase(monkeypatch):
 def test_blocked_dashboard_retry_uses_generation_retry_endpoint():
     source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
 
-    assert "activeProject.status === 'blocked' ? handleQARetry(activePort, activeProject) : handleRestart()" in source
+    assert "'failed_final_audit'" in source
+    assert "handleQARetry(activePort, activeProject)" in source
+    assert "handleRestart()" in source
+
+
+def test_failed_final_audit_retry_reruns_qa_when_no_auto_repair(monkeypatch, tmp_path):
+    scheduled = []
+
+    class BackgroundTasks:
+        def add_task(self, function, *args):
+            scheduled.append((function, args))
+
+    project = {
+        "project_id": "audit-project",
+        "title": "Audit Project",
+        "status": "failed final audit",
+        "target_path": str(tmp_path),
+        "logs": [],
+    }
+    monkeypatch.setattr(main, "active_projects", {project["project_id"]: project})
+    monkeypatch.setattr(main, "_save_projects_state", lambda: None)
+    monkeypatch.setattr(main, "_repair_final_audit_issues", lambda *_args, **_kwargs: False)
+
+    result = main.retry_project_qa(project["project_id"], BackgroundTasks())
+
+    assert result == {"status": "retrying", "message": "QA verification restarted."}
+    assert project["status"] == "verifying"
+    assert scheduled == [(main._run_qa_only, (project["project_id"], str(tmp_path)))]
+
+
+def test_repairing_can_transition_to_final_audit_after_successful_retry_qa():
+    project = {"status": "repairing", "logs": []}
+    assert main._set_project_status(project, "final_audit") is True
+    assert project["status"] == "final_audit"
+
+
+def test_dashboard_exposes_fix_final_audit_action():
+    source = Path("frontend/src/components/StudioDashboard.jsx").read_text(encoding="utf-8")
+    assert "normalizeStatus(project.status)" in source
+    assert "failed_final_audit" in source
+    assert "Повторить / исправить" in source
+    assert "onRetryProject" in source
 
 
 def _write_config(monkeypatch, tmp_path, config):

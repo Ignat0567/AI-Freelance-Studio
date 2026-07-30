@@ -14,6 +14,7 @@ from project_spec import (
     Issue,
     acceptance_evidence_is_direct,
     append_agent_review_issues,
+    close_resolved_review_issues,
     build_product_judge_input,
     detect_project_profiles,
     detect_requirement_gaps,
@@ -122,6 +123,24 @@ def test_agent_pass_text_does_not_close_existing_issue():
     assert appended == []
     assert len(project["issues"]) == 1
     assert project["issues"][0]["status"] == "open"
+
+
+def test_close_resolved_review_issues_closes_prior_open_findings_from_same_agent():
+    project = {
+        "issues": [
+            Issue("ISSUE-SENTINEL-001-001", "sentinel", "high", "", "", "Exposed API", status="open").to_dict(),
+            Issue("ISSUE-BUGCATCHER-001-001", "bugcatcher", "high", "", "", "Unrelated", status="open").to_dict(),
+            Issue("ISSUE-SENTINEL-000-001", "sentinel", "critical", "", "", "Already closed", status="closed").to_dict(),
+        ]
+    }
+
+    closed = close_resolved_review_issues(project, "sentinel", iteration=2)
+
+    assert [issue["id"] for issue in closed] == ["ISSUE-SENTINEL-001-001"]
+    by_id = {issue["id"]: issue for issue in project["issues"]}
+    assert by_id["ISSUE-SENTINEL-001-001"]["status"] == "closed"
+    assert by_id["ISSUE-SENTINEL-001-001"]["evidence"]["resolution"]["status"] == "passed"
+    assert by_id["ISSUE-BUGCATCHER-001-001"]["status"] == "open"
 
 
 def test_product_judge_input_contains_only_allowed_serialized_fields():
@@ -592,6 +611,56 @@ def test_scenario_5_credential_requirement_is_explicit():
 
     assert any(c["name"] == "OPENAI_API_KEY" for c in spec["required_credentials"])
     assert "Credentials are documented safely" in titles
+
+
+def test_local_llm_fallback_does_not_block_completion_for_cloud_ai_keys():
+    project = _project(
+        "Local-First AI Assistant",
+        """
+        Build a desktop app whose backend orchestrates calls to an LLM.
+        The app must work offline for core features and only needs network access
+        to call an external OpenAI or Anthropic provider if a cloud mode is selected.
+        Local mode uses Ollama or an llama.cpp / LM Studio OpenAI-compatible server on localhost.
+        """,
+    )
+
+    bundle = ensure_project_spec_bundle(project)
+    credentials = {c["name"]: c for c in bundle["project_spec"]["required_credentials"]}
+
+    assert {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"} <= set(credentials)
+    assert credentials["OPENAI_API_KEY"]["blocks_completion"] is False
+    assert credentials["ANTHROPIC_API_KEY"]["blocks_completion"] is False
+    assert credentials["OPENAI_API_KEY"]["mock_or_local_fallback_available"] is True
+
+
+def test_local_llm_fallback_detection_supports_russian_request_text():
+    project = _project(
+        "Локальный ассистент",
+        """
+        Локальный backend отвечает за оркестрацию запроса к LLM.
+        Приложение должно работать офлайн для базовых функций и требовать сеть только
+        для вызова внешнего LLM-провайдера (OpenAI/Anthropic), если выбран облачный режим.
+        Поддержка Ollama и llama.cpp server / LM Studio для локального режима.
+        """,
+    )
+
+    bundle = ensure_project_spec_bundle(project)
+    credentials = {c["name"]: c for c in bundle["project_spec"]["required_credentials"]}
+
+    assert credentials["OPENAI_API_KEY"]["blocks_completion"] is False
+    assert credentials["ANTHROPIC_API_KEY"]["blocks_completion"] is False
+
+
+def test_cloud_only_ai_key_request_still_blocks_completion():
+    project = _project(
+        "OpenAI Tool",
+        "Build an AI application that calls OpenAI using an API key and stores no secrets in code.",
+    )
+
+    bundle = ensure_project_spec_bundle(project)
+    credentials = {c["name"]: c for c in bundle["project_spec"]["required_credentials"]}
+
+    assert credentials["OPENAI_API_KEY"]["blocks_completion"] is True
 
 
 def test_credential_fallback_strategy_does_not_block_generation():

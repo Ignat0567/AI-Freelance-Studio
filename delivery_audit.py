@@ -23,10 +23,11 @@ from project_state import append_evidence_record, atomic_write_json, latest_vali
 from quality_profiles import LEVEL_1_STRUCTURAL, LEVEL_2_BUILD, LEVEL_3_RUNTIME, LEVEL_4_INTERACTION, LEVEL_5_E2E, LEVEL_6_NATIVE_RUNTIME, LEVEL_7_PACKAGED_ARTIFACT, LEVEL_8_INSTALLED_APPLICATION, ensure_quality_settings, evaluate_quality_completion, evidence_level_satisfies, evidence_maturity_badges, milestone_from_checks, normalize_evidence_level, target_check_name, target_required_evidence_level
 from feature_matrix import ensure_feature_matrix, feature_matrix_report, matrix_blocks_completion
 from architecture_policy import analyze_architecture
+from repair_scope import EXCLUDED_REPAIR_DIRS, EXCLUDED_REPAIR_EXTENSIONS
 
 
-IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", "__pycache__", "local_backups", ".opencode_backups"}
-IGNORED_EXTS = {".pyc", ".db", ".sqlite", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".glb"}
+IGNORED_DIRS = set(EXCLUDED_REPAIR_DIRS) | {"local_backups", ".opencode_backups"}
+IGNORED_EXTS = set(EXCLUDED_REPAIR_EXTENSIONS)
 SECRET_PATTERNS = [
     r"\b\d{7,}:[A-Za-z0-9_-]{20,}\b",
     r"sk-[A-Za-z0-9_-]{16,}",

@@ -81,6 +81,7 @@ POLICY_GROUP_PROMPT_RULES = {
 
 IGNORED_QA_DIRS = EXCLUDED_REPAIR_DIRS
 IGNORED_QA_EXTENSIONS = EXCLUDED_REPAIR_EXTENSIONS
+SYNTAX_CHECK_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".txt", ".md", ".yml", ".yaml", ".toml", ""}
 
 
 def _npm_command() -> str:
@@ -434,29 +435,33 @@ class QAEngine:
         self.log("[QA Syntax]: Checking source code syntax...")
         errors = []
         for root, fname, fpath in _walk_project_files(self.target_path):
-                ext = os.path.splitext(fname)[1]
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                except Exception as e:
-                    errors.append(f"[{fname}] Read error: {e}")
-                    continue
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in IGNORED_QA_EXTENSIONS:
+                continue
+            if fname not in {"Dockerfile", "requirements.txt"} and ext not in SYNTAX_CHECK_EXTENSIONS:
+                continue
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError as e:
+                errors.append(f"[{fname}] Read error: {e}")
+                continue
 
-                if fname.endswith(".py"):
-                    try:
-                        compile(content, fname, "exec")
-                    except SyntaxError as e:
-                        errors.append(f"[{fname}] SyntaxError line {e.lineno}: {e.msg}")
-                elif fname == "Dockerfile":
-                    if "FROM" not in content:
-                        errors.append("[Dockerfile] Missing FROM instruction")
-                    if "CMD" not in content and "ENTRYPOINT" not in content:
-                        errors.append("[Dockerfile] Missing CMD or ENTRYPOINT")
-                elif fname == "requirements.txt":
-                    for line in content.strip().split("\n"):
-                        line = line.strip()
-                        if line and not line.startswith("#") and " " in line and "==" not in line and not line.startswith("git+"):
-                            pass
+            if fname.endswith(".py"):
+                try:
+                    compile(content, fname, "exec")
+                except SyntaxError as e:
+                    errors.append(f"[{fname}] SyntaxError line {e.lineno}: {e.msg}")
+            elif fname == "Dockerfile":
+                if "FROM" not in content:
+                    errors.append("[Dockerfile] Missing FROM instruction")
+                if "CMD" not in content and "ENTRYPOINT" not in content:
+                    errors.append("[Dockerfile] Missing CMD or ENTRYPOINT")
+            elif fname == "requirements.txt":
+                for line in content.strip().split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("#") and " " in line and "==" not in line and not line.startswith("git+"):
+                        pass
 
         if errors:
             self.log(f"[QA Syntax]: {len(errors)} issue(s) found.")
@@ -684,7 +689,7 @@ class QAEngine:
 
         if has_package_json:
             try:
-                with open(os.path.join(self.target_path, "package.json"), "r", encoding="utf-8") as f:
+                with open(os.path.join(self.target_path, "package.json"), "r", encoding="utf-8", errors="replace") as f:
                     pkg = json.load(f)
                 scripts = pkg.get("scripts", {}) if isinstance(pkg, dict) else {}
                 if "build" in scripts:

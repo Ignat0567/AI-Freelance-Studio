@@ -29,12 +29,17 @@ function pretty(value, fallback = 'Unavailable') {
   return String(value).replace(/_/g, ' ');
 }
 
+function normalizeStatus(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+}
+
 function compactText(value, fallback = 'No description available.') {
   const text = String(value || '').trim();
   return text || fallback;
 }
 
 function statusTone(status) {
+  status = normalizeStatus(status);
   if (['completed', 'passed', 'done'].includes(status)) return 'success';
   if (['working', 'running', 'in_progress', 'planning', 'building', 'qa'].includes(status)) return 'active';
   if (['failed', 'failed_qa', 'blocked', 'needs_credentials', 'error'].includes(status)) return 'danger';
@@ -82,12 +87,14 @@ function getAgentInitials(agent) {
 
 function getPrimaryAction(project, handlers) {
   if (!project) return { label: 'New project', onClick: handlers.onNewProject };
-  if (project.status === 'spec_clarification') return { label: 'Open briefing', onClick: handlers.onOpenBriefing };
-  if (project.status === 'needs_user_input') return { label: 'Continue', onClick: handlers.onContinueDone };
-  if (project.status === 'blocked') return { label: 'Retry Generation', onClick: handlers.onRetry };
-  if (['failed', 'failed_qa', 'needs_credentials'].includes(project.status)) return { label: 'Resolve issue', onClick: handlers.onRetry };
-  if (project._phase && ['created', 'cancelled'].includes(project.status)) return { label: 'Continue', onClick: handlers.onResume };
-  if (project.status === 'completed') return { label: 'Open project', onClick: handlers.onFiles };
+  const status = normalizeStatus(project.status);
+  if (status === 'spec_clarification') return { label: 'Open briefing', onClick: handlers.onOpenBriefing };
+  if (status === 'needs_user_input') return { label: 'Continue', onClick: handlers.onContinueDone };
+  if (status === 'blocked') return { label: 'Retry Generation', onClick: handlers.onRetry };
+  if (status === 'failed_final_audit') return { label: 'Повторить / исправить', onClick: handlers.onRetry };
+  if (['failed', 'failed_qa', 'needs_credentials'].includes(status)) return { label: 'Повторить / исправить', onClick: handlers.onRetry };
+  if (project._phase && ['created', 'cancelled'].includes(status)) return { label: 'Continue', onClick: handlers.onResume };
+  if (status === 'completed') return { label: 'Open project', onClick: handlers.onFiles };
   return { label: 'View pipeline', onClick: handlers.onPipeline };
 }
 
@@ -104,6 +111,7 @@ export default function StudioDashboard({
   infoContent,
   projects,
   onProjects,
+  onRetryProject,
   onDeleteProject,
   onRemoveProjectFromList,
   onFiles,
@@ -163,8 +171,10 @@ export default function StudioDashboard({
   const openSettings = () => setActiveView('settings');
   const openInfo = () => setActiveView('info');
 
-  return (
-    <div className={`fs-shell ${chatOpen ? '' : 'chat-collapsed'}`}>
+  const workspaceWide = ['settings', 'info', 'sandbox'].includes(activeView);
+
+    return (
+    <div className={`fs-shell ${chatOpen ? '' : 'chat-collapsed'} ${workspaceWide ? 'workspace-wide' : ''}`}>
       <aside className="fs-sidebar" aria-label="FreelancerStudio navigation">
         <div className="fs-brand">
           <div className="fs-brand-mark" aria-hidden="true">FS</div>
@@ -236,7 +246,7 @@ export default function StudioDashboard({
               </>
             )}
             {activeView === 'team' && <AgentActivity agents={agentEntries} statuses={statuses} onAgentChat={onAgentChat} expanded />}
-            {activeView === 'projects' && <ProjectListPanel projects={projects} onRefresh={onProjects} onResume={onResume} onDeleteProject={onDeleteProject} onRemoveProjectFromList={onRemoveProjectFromList} />}
+            {activeView === 'projects' && <ProjectListPanel projects={projects} onRefresh={onProjects} onResume={onResume} onRetry={onRetryProject || onRetry} onDeleteProject={onDeleteProject} onRemoveProjectFromList={onRemoveProjectFromList} />}
             {activeView === 'features' && <FeatureCompletenessPanel project={project} />}
             {activeView === 'pipeline' && <section className="fs-panel fs-pipeline-detail-page"><div className="fs-panel-title"><div><span>Pipeline</span><strong>{project?.title || 'No active project'}</strong></div></div>{project ? <PipelineDetailContent project={project} agentStatuses={statuses} agents={agents} pipelineMetadata={pipelineMetadata} inline /> : <p className="fs-empty">No active project.</p>}</section>}
             {activeView === 'mobile' && <MobilePreviewPanel activePort={activePort} project={project} />}
@@ -249,7 +259,7 @@ export default function StudioDashboard({
             <div className="fs-workspace-bottom-sentinel" data-testid="workspace-bottom-sentinel" aria-hidden="true" />
           </main>
 
-          {chatOpen ? (
+          {chatOpen && !workspaceWide ? (
             <AIChatPanel
               id="fs-ai-chat-panel"
               chatTabs={chatTabs}
@@ -260,9 +270,9 @@ export default function StudioDashboard({
               project={project}
               onCollapse={() => setChatOpen(false)}
             />
-          ) : (
+          ) : !workspaceWide ? (
             <button type="button" className="fs-chat-rail" onClick={() => setChatOpen(true)} title="Open AI Chat panel">AI Chat</button>
-          )}
+          ) : null}
         </div>
       </section>
     </div>
@@ -404,7 +414,7 @@ function ProjectOverview({ project, primaryAction, isGenerating, onStopGeneratio
   );
 }
 
-function ProjectListPanel({ projects = [], onRefresh, onResume, onDeleteProject, onRemoveProjectFromList }) {
+function ProjectListPanel({ projects = [], onRefresh, onResume, onRetry, onDeleteProject, onRemoveProjectFromList }) {
   useEffect(() => { onRefresh?.(); }, []);
   return (
     <section className="fs-panel fs-project-list-page">
@@ -413,19 +423,23 @@ function ProjectListPanel({ projects = [], onRefresh, onResume, onDeleteProject,
         <button type="button" onClick={onRefresh}>Refresh</button>
       </div>
       <div className="fs-project-list">
-        {projects.length ? projects.map(project => (
+        {projects.length ? projects.map(project => {
+          const status = normalizeStatus(project.status);
+          const retryable = ['failed_final_audit', 'failed_qa', 'failed', 'blocked', 'needs_credentials', 'needs_user_input'].includes(status);
+          return (
           <article className="fs-project-row" key={project.project_id}>
             <div>
               <strong>{project.title || 'Untitled'}</strong>
               <span>{pretty(project.status, 'unknown')} {project.target_path ? `- ${project.target_path}` : ''}</span>
             </div>
             <div className="fs-project-actions">
-              {project._phase && ['created', 'failed', 'failed_qa', 'blocked', 'needs_credentials', 'cancelled'].includes(project.status) && <button type="button" onClick={() => onResume(project)}>Resume</button>}
+              {retryable && <button type="button" className="primary" onClick={() => onRetry(project)}>Повторить / исправить</button>}
+              {project._phase && ['created', 'cancelled'].includes(status) && <button type="button" onClick={() => onResume(project)}>Resume</button>}
               <button type="button" className="danger" onClick={() => onDeleteProject(project)}>Удалить с компьютера</button>
               <button type="button" onClick={() => onRemoveProjectFromList(project)}>Удалить из списка</button>
             </div>
           </article>
-        )) : <p className="fs-empty">No projects are currently registered.</p>}
+        ); }) : <p className="fs-empty">No projects are currently registered.</p>}
       </div>
     </section>
   );
@@ -482,7 +496,7 @@ function AttentionPanel({ issues, project, onRetry, onContinueDone, expanded = f
     <section className="fs-panel fs-attention-panel">
       <div className="fs-panel-title"><div><span>Attention Required</span><strong>{issues.length || manualSteps.length || (needsInput ? 1 : 0) || 'Clear'}</strong></div></div>
       {needsInput && <div className="fs-alert warning"><b>User input required</b><span>{manualSteps[0] || 'The active project is waiting for guidance.'}</span><button type="button" onClick={onContinueDone}>Continue</button></div>}
-      {issues.length ? issues.slice(0, expanded ? issues.length : 3).map((issue, index) => <div className="fs-alert" key={`${issue.title || issue.message || index}`}><b>{issue.title || issue.type || `Issue ${index + 1}`}</b><span>{issue.message || issue.detail || pretty(issue.status)}</span><button type="button" onClick={onRetry}>{project?.status === 'blocked' ? 'Retry Generation' : 'Resolve'}</button></div>) : !needsInput && <p className="fs-empty">No open issues are currently reported.</p>}
+      {issues.length ? issues.slice(0, expanded ? issues.length : 3).map((issue, index) => <div className="fs-alert" key={`${issue.title || issue.message || index}`}><b>{issue.title || issue.type || `Issue ${index + 1}`}</b><span>{issue.message || issue.detail || pretty(issue.status)}</span><button type="button" onClick={onRetry}>{normalizeStatus(project?.status) === 'blocked' ? 'Retry Generation' : normalizeStatus(project?.status) === 'failed_final_audit' ? 'Повторить / исправить' : 'Resolve'}</button></div>) : !needsInput && <p className="fs-empty">No open issues are currently reported.</p>}
     </section>
   );
 }
@@ -508,7 +522,7 @@ function DevelopmentTools({ project, onOpenEditor, onOpenCode, onFiles, onPush, 
     { id: 'pycharm', name: 'PyCharm', mark: 'PC', action: () => onOpenEditor('pycharm'), available: true },
     { id: 'cursor', name: 'Cursor', mark: 'CU', action: () => onOpenEditor('cursor'), available: true },
     { id: 'opencode', name: 'OpenCode', mark: 'OC', action: onOpenCode, available: true },
-    { id: 'claude', name: 'Claude Code', mark: 'CC', action: undefined, available: false },
+    { id: 'claude', name: 'Claude Code', mark: 'CC', action: () => onOpenEditor('claude'), available: true },
   ];
   return (
     <section className="fs-panel fs-dev-tools-panel">

@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+import claude_bridge
 import config_storage
 from backend_security import StrictRequestModel, get_app_security_context
 
@@ -419,6 +420,13 @@ def _open_editor(editor: str, raw_path: str):
     target_path = os.path.abspath(raw_path)
     if not os.path.exists(target_path):
         raise HTTPException(status_code=404, detail="Project path not found")
+    if (editor or "").strip().lower() == "claude":
+        result = claude_bridge.start_claude_workspace_terminal(target_path)
+        if result.get("status") == "error":
+            raise HTTPException(status_code=404, detail=result.get("message", "Claude Code was not found."))
+        if result.get("status") != "started":
+            raise HTTPException(status_code=500, detail=result.get("message", "Failed to open Claude Code."))
+        return {"status": "opened", "editor": "claude", "executable": result.get("manual_command", "claude"), "path": target_path}
     executable = _resolve_editor_executable(editor)
     try:
         if os.name == "nt" and executable.lower().endswith((".cmd", ".bat")):

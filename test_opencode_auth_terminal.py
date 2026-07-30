@@ -52,9 +52,11 @@ def test_terminal_launch_failure_returns_copyable_manual_command(monkeypatch):
 def test_authentication_flow_never_reads_opencode_auth_storage():
     bridge_source = Path("opencode_bridge.py").read_text(encoding="utf-8")
     main_source = Path("main.py").read_text(encoding="utf-8")
+    routes_source = Path("api/opencode_routes.py").read_text(encoding="utf-8")
 
     assert "auth.json" not in bridge_source
     assert "auth.json" not in main_source
+    assert "auth.json" not in routes_source
 
 
 def test_frontend_exposes_separate_authenticate_provider_action():
@@ -68,8 +70,10 @@ def test_frontend_exposes_separate_authenticate_provider_action():
 
 
 def test_backend_authentication_route_uses_interactive_terminal_flow():
-    source = Path("main.py").read_text(encoding="utf-8")
+    main_source = Path("main.py").read_text(encoding="utf-8")
+    routes_source = Path("api/opencode_routes.py").read_text(encoding="utf-8")
 
-    assert '@app.post("/api/opencode/authenticate")' in source
-    assert "start_opencode_auth_terminal(workdir=BASE_DIR)" in source
-    assert "/api/opencode/login" not in source
+    assert '@router.post("/api/opencode/authenticate")' in routes_source
+    assert "start_opencode_auth_terminal(workdir=base_dir)" in routes_source
+    assert "/api/opencode/login" not in main_source
+    assert "/api/opencode/login" not in routes_source

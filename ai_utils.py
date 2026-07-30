@@ -58,14 +58,26 @@ def ask_studio_ai_with_history(
     try:
         provider_lower = provider.lower()
         if provider_lower in {"opencode_bridge", "opencode"}:
+            cfg = {}
             connections = []
             try:
-                connections = config_storage.load_studio_keys().get("_provider_connections", [])
+                cfg = config_storage.load_studio_keys()
+                connections = cfg.get("_provider_connections", [])
             except AttributeError:
                 pass
-            connection_data = next((item for item in connections if isinstance(item, dict) and item.get("connection_type") in {"opencode_bridge", "opencode_oauth_bridge"} and item.get("enabled", True) and (not model_name or item.get("configured_model") == model_name or any(isinstance(m, dict) and m.get("id") == model_name for m in item.get("available_models", [])))), None)
+            opencode_connections = [
+                item for item in connections
+                if isinstance(item, dict)
+                and item.get("connection_type") in {"opencode_bridge", "opencode_oauth_bridge"}
+                and item.get("enabled", True)
+            ]
+            connection_data = next((item for item in opencode_connections if not model_name or item.get("configured_model") == model_name or any(isinstance(m, dict) and m.get("id") == model_name for m in item.get("available_models", []))), None)
+            if not connection_data and opencode_connections:
+                # Direct OpenCode OAuth mode: the official CLI owns auth and can run any available
+                # native provider/model even if the old saved connection still stores another model.
+                connection_data = {**opencode_connections[0], "configured_model": model_name or opencode_connections[0].get("configured_model", "")}
             if not connection_data:
-                return "OpenCode bridge is not configured for this model. Add and test a local OpenCode connection in AI Providers."
+                return "OpenCode OAuth is not configured yet. Open Settings -> AI Provider and select Authenticate Provider."
             from opencode_provider import OpenCodeBridgeConnection
             text = "\n".join(str(message.get("content", "")) for message in chat_history if message.get("role") == "user")
             response = OpenCodeBridgeConnection.from_dict(connection_data).execute({"system_instruction": system_prompt, "user_content": text, "requested_model": model_name, "timeout": 300})

@@ -69,6 +69,10 @@ frontend/installers/
 local_backups/
 .opencode_backups/
 /backups/
+/project_file_backups/
+
+# OpenCode CLI local runtime/session state (not Studio source)
+/.opencode/
 
 # Local runtime state
 /studio_port.txt

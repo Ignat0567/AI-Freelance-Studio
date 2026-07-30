@@ -123,13 +123,14 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
     { id: 'appearance', label: t('appearance') },
     { id: 'general', label: t('general') },
     { id: 'ai', label: 'AI Provider' },
+    { id: 'ai-connections', label: 'AI Connections' },
     { id: 'storage', label: 'Storage' },
     { id: 'studio', label: t('studio') },
   ];
 
   return (
     <div className={embedded ? "settings-inline" : "settings-modal-overlay animate-fade-in"} onMouseDown={(event) => { if (!embedded && event.target === event.currentTarget) onClose?.(); }}>
-      <div ref={dialogRef} role={embedded ? undefined : "dialog"} aria-modal={embedded ? undefined : "true"} aria-labelledby="settings-modal-title" className={`settings-modal-container ${embedded ? "settings-inline-container" : "max-w-2xl shadow-2xl"} bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full`} style={{ borderColor: 'var(--border)' }}>
+      <div ref={dialogRef} role={embedded ? undefined : "dialog"} aria-modal={embedded ? undefined : "true"} aria-labelledby="settings-modal-title" className={`settings-modal-container ${embedded ? "settings-inline-container" : "settings-window-wide shadow-2xl"} bg-[var(--bg-card)] border border-[var(--border)] rounded-xl w-full`} style={{ borderColor: 'var(--border)' }}>
 
         <div className="settings-modal-header p-4 border-b border-[var(--border)] flex justify-between items-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
           <h3 id="settings-modal-title" className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{t('systemPreferences')}</h3>
@@ -195,28 +196,6 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
                 </div>
               </Section>
 
-              {/* Animation Speed */}
-              <Section label={t('animationSpeed')}>
-                <div className="flex space-x-2">
-                  {[
-                    { value: 'off', label: '🚫 Off' },
-                    { value: 'reduced', label: '🔹 Reduced' },
-                    { value: 'normal', label: '▶ Normal' },
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      onClick={() => updateSetting('animation_speed', opt.value)}
-                      className="flex-1 py-2 rounded-lg text-[11px] font-medium transition-all border"
-                      style={{
-                        backgroundColor: s.animation_speed === opt.value ? 'var(--accent-bg)' : 'var(--bg-secondary)',
-                        borderColor: s.animation_speed === opt.value ? 'var(--accent)' : 'var(--border)',
-                        color: s.animation_speed === opt.value ? 'var(--accent)' : 'var(--text-secondary)',
-                      }}
-                    >{opt.label}</button>
-                  ))}
-                </div>
-              </Section>
-
               {/* Font Size */}
               <Section label={t('fontSize')} testId="settings-last-appearance">
                 <div className="flex space-x-2">
@@ -267,6 +246,10 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
 
           {activeTab === 'ai' && (
             <AIProviderSettings activePort={activePort} addLog={addLog} />
+          )}
+
+          {activeTab === 'ai-connections' && (
+            <UniversalProviderConnectionsSettings activePort={activePort} addLog={addLog} />
           )}
 
           {activeTab === 'storage' && (
@@ -429,6 +412,7 @@ function StoragePathsSettings({ activePort }) {
   const [paths, setPaths] = useState(null);
   const [draft, setDraft] = useState({});
   const [message, setMessage] = useState('');
+  const [results, setResults] = useState({});
   const [busy, setBusy] = useState(false);
   const editableKeys = ['studio_root', 'data_dir', 'runtime_dir', 'generated_projects', 'projects_data', 'opencode_config', 'backups'];
   const draftFrom = data => Object.fromEntries(editableKeys.map(key => [key, data.paths?.[key]?.configured_value || data.paths?.[key]?.configured_override || '']));
@@ -594,7 +578,7 @@ function AIProviderSettings({ activePort, addLog }) {
     <div className="space-y-5">
       <OpenCodeConnectionSetup activePort={activePort} addLog={addLog} />
       <GlobalAIInheritanceSettings activePort={activePort} cfg={cfg} reload={load} addLog={addLog} />
-      <AgentAIOverridesSettings activePort={activePort} />
+      <AgentModelManagerSettings activePort={activePort} />
       <ProductJudgeSettings activePort={activePort} addLog={addLog} />
       <div className="rounded-xl p-4 border" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
         <div className="flex items-center justify-between gap-3 mb-3">
@@ -687,6 +671,122 @@ function AIProviderSettings({ activePort, addLog }) {
       </div>
     </div>
   );
+}
+
+function UniversalProviderConnectionsSettings({ activePort, addLog }) {
+  const [state, setState] = useState(null);
+  const [testing, setTesting] = useState('');
+  const [message, setMessage] = useState('');
+  const [results, setResults] = useState({});
+  const [apiKeys, setApiKeys] = useState({});
+  const [models, setModels] = useState({});
+  const [manualModels, setManualModels] = useState({});
+  const [agentDrafts, setAgentDrafts] = useState({});
+  const [providerTemplate, setProviderTemplate] = useState('opencode-openai-subscription');
+  const providerTemplates = {
+    'opencode-openai-subscription': { connection_id: 'opencode-openai-subscription', provider_id: 'opencode_bridge', connection_type: 'opencode_provider', auth_method: 'delegated_cli_login', display_name: 'ChatGPT / OpenAI via OpenCode subscription', model_id: 'openai/gpt-5.5', priority: 10, metadata: { preset: 'subscription', user_label: 'ChatGPT subscription through OpenCode OAuth' } },
+    'codex-chatgpt-subscription': { connection_id: 'codex-chatgpt-subscription', provider_id: 'openai', connection_type: 'codex_chatgpt_subscription', auth_method: 'delegated_cli_login', display_name: 'ChatGPT Subscription (Codex CLI)', model_id: 'codex/default', priority: 20, metadata: { preset: 'subscription', user_label: 'ChatGPT subscription through official Codex CLI' } },
+    'claude-subscription': { connection_id: 'claude-subscription', provider_id: 'anthropic', connection_type: 'claude_subscription', auth_method: 'delegated_cli_login', display_name: 'Claude Subscription (Claude CLI)', model_id: 'claude/default', priority: 30, metadata: { preset: 'subscription' } },
+    'gemini-google-account': { connection_id: 'gemini-google-account', provider_id: 'google', connection_type: 'gemini_google_account', auth_method: 'delegated_cli_login', display_name: 'Google Gemini Account', model_id: 'gemini/default', priority: 40, metadata: { preset: 'subscription' } },
+    'openai-api-key': { connection_id: 'openai-api-key', provider_id: 'openai', connection_type: 'openai_api_key', auth_method: 'api_key', display_name: 'OpenAI API Key', model_id: 'gpt-5.5', priority: 100, metadata: { preset: 'api_key' } },
+    'anthropic-api-key': { connection_id: 'anthropic-api-key', provider_id: 'anthropic', connection_type: 'anthropic_api_key', auth_method: 'api_key', display_name: 'Anthropic API Key', model_id: 'claude-sonnet-4-20250514', priority: 110, metadata: { preset: 'api_key' } },
+    'gemini-api-key': { connection_id: 'gemini-api-key', provider_id: 'google', connection_type: 'gemini_api_key', auth_method: 'api_key', display_name: 'Google Gemini API Key', model_id: 'gemini-2.5-pro', priority: 120, metadata: { preset: 'api_key' } },
+    'ollama-local': { connection_id: 'ollama-local', provider_id: 'ollama', connection_type: 'ollama_local', auth_method: 'local', display_name: 'Ollama Local', model_id: 'llama3.1', endpoint: 'http://127.0.0.1:11434', priority: 200, metadata: { preset: 'local' } },
+  };
+  const load = () => fetch(`http://localhost:${activePort}/api/provider-layer`)
+    .then(r => r.json())
+    .then(data => setState(data))
+    .catch(err => setMessage(`Provider layer unavailable: ${err.message}`));
+  useEffect(() => { load(); }, [activePort]);
+  const kind = (connection) => {
+    const type = connection.connection_type || '';
+    if (type.includes('subscription') || type.includes('google_account')) return 'subscription / official CLI';
+    if (type.includes('api_key')) return 'official API key';
+    if (type.includes('local') || type.includes('ollama') || type.includes('llama') || type.includes('vllm')) return 'local runtime';
+    if (type.includes('opencode')) return 'OpenCode-owned provider';
+    return 'custom';
+  };
+  const testConnection = (connectionId) => {
+    setTesting(connectionId); setMessage('Testing connection readiness...');
+    fetch(`http://localhost:${activePort}/api/provider-connections/${connectionId}/test`, { method: 'POST' })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || 'Connection test failed'); return data; })
+      .then(data => { setResults(prev => ({ ...prev, [connectionId]: data })); setMessage(`${connectionId}: ${data.result?.ready ? 'READY' : data.result?.status || 'not ready'} ${data.result?.message || ''}`); addLog?.(`[Provider Layer]: ${connectionId} ${data.result?.status || 'tested'}.`); load(); })
+      .catch(err => setMessage(`Test failed: ${err.message}`))
+      .finally(() => setTesting(''));
+  };
+  const patchConnection = (connectionId, patch) => fetch(`http://localhost:${activePort}/api/provider-connections/${connectionId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+    .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Connection update failed'); return data; })
+    .then(data => { setMessage(`${connectionId}: saved`); addLog?.(`[Provider Layer]: ${connectionId} updated.`); load(); return data; })
+    .catch(err => setMessage(`Update failed: ${err.message}`));
+  const saveCredential = (connectionId) => {
+    const api_key = apiKeys[connectionId] || '';
+    if (!api_key.trim()) { setMessage('API key is required.'); return; }
+    fetch(`http://localhost:${activePort}/api/provider-connections/${connectionId}/credential`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key }) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Credential save failed'); return data; })
+      .then(data => { setApiKeys(prev => ({ ...prev, [connectionId]: '' })); setMessage(`${connectionId}: credential saved ${data.masked || ''}`); testConnection(connectionId); })
+      .catch(err => setMessage(`Credential save failed: ${err.message}`));
+  };
+  const removeCredential = (connectionId) => {
+    if (!window.confirm('Remove the saved API credential reference secret from the secure backend?')) return;
+    fetch(`http://localhost:${activePort}/api/provider-connections/${connectionId}/credential`, { method: 'DELETE' })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Credential removal failed'); return data; })
+      .then(() => { setMessage(`${connectionId}: credential removed`); load(); })
+      .catch(err => setMessage(`Credential removal failed: ${err.message}`));
+  };
+  const loadModels = (connectionId) => fetch(`http://localhost:${activePort}/api/provider-connections/${connectionId}/models`)
+    .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail || 'Model listing failed'); return data; })
+    .then(data => { setModels(prev => ({ ...prev, [connectionId]: data })); setMessage(data.supported === false ? data.message : `${connectionId}: models loaded`); })
+    .catch(err => setMessage(`Model listing failed: ${err.message}`));
+  const login = (connectionId) => {
+    const connection = connections.find(item => item.connection_id === connectionId);
+    const isOpenCode = ['opencode_provider', 'opencode_oauth_bridge'].includes(connection?.connection_type) || connection?.provider_id === 'opencode_bridge';
+    const url = isOpenCode ? '/api/opencode/authenticate' : `/api/provider-connections/${connectionId}/login`;
+    return fetch(`http://localhost:${activePort}${url}`, { method: 'POST' }).then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Login unsupported'); setMessage(data.message || data.result?.message || 'Login started'); });
+  };
+  const logout = (connectionId) => fetch(`http://localhost:${activePort}/api/provider-connections/${connectionId}/logout`, { method: 'POST' }).then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Logout unsupported'); setMessage('Logout completed'); load(); }).catch(err => setMessage(`Logout failed: ${err.message}`));
+  const deleteConnection = (connectionId, assigned) => {
+    const delete_credential = window.confirm('Also delete the secure credential for this connection?');
+    if (assigned.length && !window.confirm(`Connection is assigned to: ${assigned.join(', ')}. Delete and clean assignments?`)) return;
+    if (!window.confirm(`Delete provider connection ${connectionId}?`)) return;
+    fetch(`http://localhost:${activePort}/api/provider-connections/${connectionId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true, delete_credential }) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Delete failed'); return data; })
+      .then(() => { setMessage(`${connectionId}: deleted`); load(); })
+      .catch(err => setMessage(`Delete failed: ${err.message}`));
+  };
+  const saveAgentAssignment = (agentId) => {
+    const draft = agentDrafts[agentId] || state.agent_assignments?.[agentId] || {};
+    fetch(`http://localhost:${activePort}/api/agents/${agentId}/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Agent assignment save failed'); return data; })
+      .then(() => { setMessage(`${agentId}: assignment saved`); load(); })
+      .catch(err => setMessage(`Agent assignment failed: ${err.message}`));
+  };
+  const addProviderTemplate = () => {
+    const template = providerTemplates[providerTemplate];
+    if (!template) return;
+    fetch(`http://localhost:${activePort}/api/provider-connections`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(template) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Provider creation failed'); return data; })
+      .then(data => { setMessage(`${data.connection?.display_name || template.display_name} added. Authenticate or test it next.`); addLog?.(`[Provider Layer]: Added ${template.display_name}.`); load(); })
+      .catch(err => setMessage(`Add provider failed: ${err.message}`));
+  };
+  if (!state) return <section className="provider-setup"><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Loading AI provider connection layer...</div></section>;
+  const connections = state.connections || [];
+  return <section className="provider-setup">
+    <div className="provider-heading"><div><strong>AI Providers and Connections</strong><p>Universal connection layer using the existing ExecutionBrief to ProviderAdapter to AgentEvent contract. Subscription login belongs to official CLIs; Studio never reads CLI OAuth tokens. API fallback is disabled by default.</p></div><span className="connection-state">{connections.length} connections</span></div>
+    {message && <p className="provider-message" role="status">{message}</p>}
+    <div className="capability-grid"><span>Adapter contract <b>{state.adapter_contract}</b></span><span>Registered adapters <b>{(state.registered_connection_types || []).length}</b></span><span>API fallback <b>{state.api_fallback_default}</b></span><span>Subscription auth <b>{state.subscription_auth_owner}</b></span></div>
+    <div className="saved-connection"><strong>Add provider</strong><span>Choose a ready-made provider template, then authenticate/test it.</span><label>Provider template<select value={providerTemplate} onChange={e => setProviderTemplate(e.target.value)}>{Object.entries(providerTemplates).map(([key, item]) => <option key={key} value={key}>{item.display_name}</option>)}</select></label><code>{providerTemplates[providerTemplate]?.connection_type}</code><button type="button" onClick={addProviderTemplate}>Add Provider</button></div>
+    <div className="provider-actions"><button type="button" onClick={load}>Refresh</button></div>
+    <div className="provider-message">Credential backend: <b>{state.credential_backend?.mode || 'unknown'}</b> · {state.credential_backend?.remediation || (state.credential_backend?.can_save ? 'secure save available' : 'save unavailable')}</div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {connections.map(connection => { const detail = results[connection.connection_id] || {}; const caps = detail.capabilities || {}; const status = detail.result?.status || connection.metadata?.last_validation_status || 'CONFIGURED'; const isApi = (connection.connection_type || '').includes('api_key'); const isCli = connection.auth_method === 'delegated_cli_login'; const unsupported = status === 'unsupported'; const assigned = Object.entries(state.agent_assignments || {}).filter(([, cfg]) => cfg?.connection_id === connection.connection_id || cfg?.primary_connection === connection.connection_id || (cfg?.fallbacks || []).includes(connection.connection_id)).map(([id]) => id); const modelState = models[connection.connection_id] || {}; const modelList = modelState.models || []; return <div className="saved-connection" key={connection.connection_id}><strong>{connection.display_name || connection.connection_id}</strong><span>{kind(connection)} · {connection.enabled === false ? 'disabled' : 'enabled'} · priority {connection.priority ?? 100}</span><code>{connection.connection_type}</code><small>Provider: {connection.provider_id || '-'} · Model: {connection.model_id || 'not selected'}{modelState.selected_available === false ? ' (unavailable)' : ''} · Credential: {detail.credential_state || (connection.credential_reference ? 'reference only' : 'none')} · Endpoint: {connection.endpoint || 'not configured'}</small><small>Status: {status} · Cost: {detail.cost_mode || 'unknown'} · Locality: {detail.privacy_locality || 'unknown'} · Last validation: {detail.last_validation || connection.metadata?.last_validation || 'never'}</small>{assigned.length > 0 && <small style={{ color: 'var(--warning)' }}>Assigned to: {assigned.join(', ')}</small>}<small>Capabilities: {Object.entries(caps).filter(([, v]) => v === true).map(([k]) => k).join(', ') || 'not validated'}</small>{detail.diagnostics && <details><summary>Sanitized diagnostics</summary><pre>{JSON.stringify(detail.diagnostics, null, 2)}</pre></details>}{isApi && <div className="provider-form"><label>API key<input type="password" autoComplete="off" value={apiKeys[connection.connection_id] || ''} onChange={e => setApiKeys(prev => ({ ...prev, [connection.connection_id]: e.target.value }))} placeholder="Paste new key" /></label><button type="button" onClick={() => saveCredential(connection.connection_id)} disabled={!state.credential_backend?.can_save}>Save/replace key</button><button type="button" onClick={() => removeCredential(connection.connection_id)}>Remove key</button>{!state.credential_backend?.can_save && <small style={{ color: 'var(--danger)' }}>Credential backend unavailable/read-only: {state.credential_backend?.remediation || 'secure save disabled'}</small>}</div>}<div className="provider-form"><button type="button" onClick={() => loadModels(connection.connection_id)}>Load models</button>{modelList.length > 0 && <select value={connection.model_id || ''} onChange={e => patchConnection(connection.connection_id, { model_id: e.target.value })}><option value="">Select model</option>{modelList.map(m => <option key={m.id || m} value={m.id || m}>{m.id || m}</option>)}</select>}<input value={manualModels[connection.connection_id] ?? connection.model_id ?? ''} onChange={e => setManualModels(prev => ({ ...prev, [connection.connection_id]: e.target.value }))} placeholder="Manual model ID" /><button type="button" onClick={() => patchConnection(connection.connection_id, { model_id: manualModels[connection.connection_id] ?? connection.model_id ?? '' })}>Save model</button></div><div className="provider-actions"><button type="button" disabled={testing === connection.connection_id} onClick={() => testConnection(connection.connection_id)}>{testing === connection.connection_id ? 'Testing...' : 'Detect/Test'}</button><button type="button" disabled={!isCli || unsupported || status === 'not_installed'} title={!isCli ? 'Login only applies to delegated CLI connections' : unsupported ? 'Unsupported by official contract' : 'Provider-owned login'} onClick={() => login(connection.connection_id).catch(err => setMessage(`Login failed: ${err.message}`))}>Login</button><button type="button" disabled={!isCli} onClick={() => logout(connection.connection_id)}>Logout</button><button type="button" onClick={() => patchConnection(connection.connection_id, { enabled: connection.enabled === false })}>{connection.enabled === false ? 'Enable' : 'Disable'}</button><input style={{ width: 72 }} type="number" value={connection.priority ?? 100} onChange={e => patchConnection(connection.connection_id, { priority: Number(e.target.value) })} title="Priority" /><button type="button" onClick={() => deleteConnection(connection.connection_id, assigned)}>Delete</button></div></div>; })}
+      {!connections.length && <p className="provider-message">No universal provider connections migrated yet. Existing OpenCode setup remains available in AI Provider.</p>}
+    </div>
+    <div className="provider-message">Agent assignments: primary connection, preferred model, fallbacks, fallback mode, paid API permission, required capabilities and locality policy are saved in the existing per-agent AI settings.</div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {Object.keys(state.agent_assignments || {}).map(agentId => { const draft = { ...(state.agent_assignments?.[agentId] || {}), ...(agentDrafts[agentId] || {}) }; const selected = connections.find(c => c.connection_id === (draft.primary_connection || draft.connection_id)); const localOnlyWarning = draft.locality_policy === 'local_only' && selected && !(selected.connection_type || '').includes('local') && !(selected.connection_type || '').includes('ollama'); const disabledWarning = selected && selected.enabled === false; return <div className="saved-connection" key={`agent-${agentId}`}><strong>{agentId}</strong><small>Primary assignment: {draft.primary_connection || draft.connection_id || 'global/default'}</small>{localOnlyWarning && <small style={{ color: 'var(--warning)' }}>LOCAL_ONLY blocks the selected non-local connection.</small>}{disabledWarning && <small style={{ color: 'var(--warning)' }}>Selected connection is disabled.</small>}<label>Primary connection<select value={draft.primary_connection || draft.connection_id || ''} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...draft, primary_connection: e.target.value, connection_id: e.target.value, use_global_connection: false } }))}><option value="">Use global/default</option>{connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.display_name || c.connection_id}{c.enabled === false ? ' (disabled)' : ''}</option>)}</select></label><label>Preferred model<input value={draft.preferred_model || draft.model || ''} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...draft, preferred_model: e.target.value, model: e.target.value, use_global_model: false } }))} /></label><label>Fallbacks<input value={(draft.fallbacks || []).join(',')} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...draft, fallbacks: e.target.value.split(',').map(v => v.trim()).filter(Boolean) } }))} placeholder="connection-a,connection-b" /></label><label>Fallback mode<select value={draft.fallback_mode || 'ask_user'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...draft, fallback_mode: e.target.value } }))}><option value="ask_user">Ask user</option><option value="stop">Stop</option><option value="subscription_only">Subscription only</option><option value="local_only">Local only</option><option value="allow_api">Allow API</option></select></label><label>Locality<select value={draft.locality_policy || 'any'} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...draft, locality_policy: e.target.value } }))}><option value="any">Any</option><option value="local_only">Local only</option><option value="subscription_allowed">Subscription allowed</option><option value="api_allowed">API allowed</option></select></label><label>Required capabilities<input value={(draft.required_capabilities || []).join(',')} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...draft, required_capabilities: e.target.value.split(',').map(v => v.trim()).filter(Boolean) } }))} placeholder="streaming,code_generation" /></label><label><input type="checkbox" checked={!!draft.allow_paid_api} onChange={e => setAgentDrafts(prev => ({ ...prev, [agentId]: { ...draft, allow_paid_api: e.target.checked } }))} /> Allow paid API fallback</label><button type="button" onClick={() => saveAgentAssignment(agentId)}>Save assignment</button></div>; })}
+    </div>
+    <div className="provider-message">Local model note: Без отдельной оплаты API. Используются ресурсы вашего компьютера.</div>
+  </section>;
 }
 
 function GlobalAIInheritanceSettings({ activePort, cfg, reload, addLog }) {
@@ -862,6 +962,229 @@ function AgentAIOverridesSettings({ activePort }) {
   const entries = Object.entries(agents).filter(([, agent]) => agent?.builtin !== false);
   const selectedEntry = entries.find(([id]) => id === selectedAgentId) || entries[0];
   return <section className="provider-setup"><div className="provider-heading"><div><strong>Agent AI Overrides</strong><p>Choose one agent, then edit its connection, provider model, and generation parameters. API keys are never shown or copied here.</p></div><span className="connection-state">{entries.length} agents</span></div>{message && <p className="provider-message" role="status">{message}</p>}<label>Agent<select value={selectedEntry?.[0] || ''} onChange={e => setSelectedAgentId(e.target.value)}><option value="">Select agent</option>{entries.map(([id, agent]) => <option key={id} value={id}>{agent.name || id} - {id}</option>)}</select></label>{selectedEntry && (() => { const [id, agent] = selectedEntry; const eff = agent.effective_ai || {}; const d = drafts[id] || initialDraft(agent); const connectionId = d.use_global_connection ? eff.connection_id : d.connection_id; const selectedConnection = connections.find(c => c.connection_id === connectionId); const models = modelOptions[id] || (selectedConnection?.available_models || []).filter(m => m?.capabilities?.text_input !== false); const modelIds = models.map(m => m.id); const shownModel = d.use_global_model ? eff.model || '' : d.model || ''; const modelUnavailable = shownModel && modelIds.length > 0 && !modelIds.includes(shownModel); const disabled = !!saving[id]; return <div key={id} className="rounded-lg border p-3 mt-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="flex items-center justify-between gap-2"><div><strong>{agent.name || id}</strong><div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{id}</div></div><span className="text-[10px] uppercase" style={{ color: eff.capability_status === 'compatible' ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_status || 'unknown'}</span></div><div className="text-[11px] mt-2" style={{ color: 'var(--text-secondary)' }}>Effective connection: <span className="font-mono">{eff.connection_display_name || eff.connection_id || '-'}</span> ({eff.configuration_source?.connection || 'global'})</div><div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Effective provider/model: <span className="font-mono">{eff.provider || '-'}/{eff.model || '-'}</span> ({eff.configuration_source?.model || 'global'})</div><div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Effective parameters: temperature {eff.temperature ?? '-'}, top_p {eff.top_p ?? '-'}, top_k {eff.top_k ?? '-'}, max_tokens {eff.max_tokens ?? '-'} ({eff.configuration_source?.generation_parameters || 'global'})</div>{eff.capability_validation?.reason && <div className="text-[11px] mt-1" role="status" style={{ color: eff.capability_validation?.valid ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_validation.reason}</div>}<div className="mt-3 space-y-3"><Toggle checked={!!d.use_global_connection} disabled={disabled} onChange={v => setDraft(id, { use_global_connection: v, connection_id: v ? eff.connection_id || '' : d.connection_id || eff.connection_id || '' })} label="Use global connection" /><label>Connection<select value={d.use_global_connection ? eff.connection_id || '' : d.connection_id || ''} disabled={disabled || d.use_global_connection} onChange={e => chooseConnection(id, e.target.value)}><option value="">Select agent connection</option>{textConnections.map(c => <option key={c.connection_id} value={c.connection_id}>{connectionLabel(c)} - {c.connection_id}</option>)}</select></label><Toggle checked={!!d.use_global_model} disabled={disabled} onChange={v => setDraft(id, { use_global_model: v, model: v ? eff.model || '' : d.model || eff.model || '' })} label="Use global model" /><label>Model<select value={shownModel} disabled={disabled || d.use_global_model || !connectionId} onChange={e => setDraft(id, { model: e.target.value })}><option value="">{modelOptions[id] === undefined && connectionId ? 'Loading models...' : 'Select agent model'}</option>{modelUnavailable && <option value={shownModel}>{shownModel} (unavailable for this connection)</option>}{modelIds.map(modelId => <option key={modelId} value={modelId}>{modelId}</option>)}</select></label>{modelErrors[id] && <div className="text-[11px]" role="alert" style={{ color: 'var(--danger)' }}>Model loading error: {modelErrors[id]}</div>}{modelUnavailable && <div className="text-[11px]" role="alert" style={{ color: 'var(--danger)' }}>Selected model is unavailable for this connection.</div>}<Toggle checked={!!d.use_global_generation_parameters} disabled={disabled} onChange={v => setDraft(id, { use_global_generation_parameters: v })} label="Use global parameters" /><div className="provider-form"><label>Temperature<input className="ai-settings-field" value={d.temperature ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { temperature: e.target.value })} placeholder="0.25" /></label><label>Top_p<input className="ai-settings-field" value={d.top_p ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { top_p: e.target.value })} placeholder="0.85" /></label><label>Top_k<input className="ai-settings-field" value={d.top_k ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { top_k: e.target.value })} placeholder="Not sent" /></label><label>Max tokens<input className="ai-settings-field" value={d.max_tokens ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { max_tokens: e.target.value })} placeholder="Provider default" /></label></div><div className="provider-actions"><button type="button" className="primary" disabled={disabled} onClick={() => saveAgent(id)}>Save agent settings</button><button type="button" disabled={disabled} onClick={() => resetAgent(id)}>Reset to defaults</button></div></div></div>; })()}</section>;
+}
+
+function AgentAIOverridesSettingsV2({ activePort }) {
+  const [agents, setAgents] = useState({});
+  const [connections, setConnections] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [modelOptions, setModelOptions] = useState({});
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [saving, setSaving] = useState({});
+  const [message, setMessage] = useState('');
+
+  const normalizeNumber = value => String(value ?? '').trim().replace(',', '.');
+  const textConnections = connections.filter(c => (c.available_models || []).some(m => m?.capabilities?.text_input !== false) || c.supports_provider_auth || c.auth_method === 'delegated_cli_login');
+  const initialDraft = (agent) => {
+    const eff = agent.effective_ai || {};
+    return {
+      use_global_connection: eff.use_global_connection !== false,
+      connection_id: eff.connection_id || '',
+      use_global_model: eff.use_global_model !== false,
+      model: eff.model || '',
+      use_global_generation_parameters: eff.use_global_generation_parameters !== false,
+      temperature: eff.temperature ?? '',
+      top_p: eff.top_p ?? '',
+      top_k: eff.top_k ?? '',
+      max_tokens: eff.max_tokens ?? '',
+    };
+  };
+  const setDraft = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  const loadModels = (agentId, connectionId) => {
+    if (!connectionId) { setModelOptions(prev => ({ ...prev, [agentId]: [] })); return Promise.resolve(); }
+    return fetch(`http://localhost:${activePort}/api/provider-connections/${encodeURIComponent(connectionId)}/models`)
+      .then(r => r.json())
+      .then(data => setModelOptions(prev => ({ ...prev, [agentId]: (data.models || []).filter(m => m?.capabilities?.text_input !== false) })))
+      .catch(() => setModelOptions(prev => ({ ...prev, [agentId]: [] })));
+  };
+  const load = () => Promise.all([
+    fetch(`http://localhost:${activePort}/api/agents`).then(r => r.json()),
+    fetch(`http://localhost:${activePort}/api/provider-connections`).then(r => r.json()),
+  ]).then(([agentData, connectionData]) => {
+    const nextConnections = connectionData.connections || [];
+    setAgents(agentData || {});
+    setConnections(nextConnections);
+    const nextDrafts = Object.fromEntries(Object.entries(agentData || {}).map(([id, agent]) => [id, initialDraft(agent)]));
+    setDrafts(nextDrafts);
+    setSelectedAgentId(current => current && agentData?.[current] ? current : Object.keys(agentData || {})[0] || '');
+    Object.entries(nextDrafts).forEach(([id, draft]) => loadModels(id, draft.connection_id));
+  }).catch(err => setMessage(`Agent settings failed to load: ${err.message}`));
+  useEffect(() => { load(); }, [activePort]);
+
+  const chooseConnection = (id, connectionId) => {
+    setDraft(id, { connection_id: connectionId });
+    loadModels(id, connectionId);
+  };
+  const authenticateConnection = (connection) => {
+    if (!connection) return;
+    const isOpenCode = ['opencode_oauth_bridge', 'opencode_provider'].includes(connection.connection_type) || connection.provider === 'opencode_bridge';
+    const url = isOpenCode ? `/api/opencode/authenticate` : `/api/provider-connections/${encodeURIComponent(connection.connection_id)}/login`;
+    setMessage('Opening provider authentication...');
+    fetch(`http://localhost:${activePort}${url}`, { method: 'POST' })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Authentication is not supported for this connection'); return data; })
+      .then(data => setMessage(data.message || data.result?.message || 'Complete authentication in the provider-owned terminal/browser flow, then test the connection.'))
+      .catch(err => setMessage(`Authentication failed: ${err.message}`));
+  };
+  const saveAgent = (id) => {
+    const d = drafts[id] || {};
+    const body = {
+      use_global_connection: !!d.use_global_connection,
+      connection_id: d.use_global_connection ? null : d.connection_id,
+      use_global_model: !!d.use_global_model,
+      model: d.use_global_model ? null : d.model,
+      use_global_generation_parameters: !!d.use_global_generation_parameters,
+      temperature: d.use_global_generation_parameters ? null : normalizeNumber(d.temperature),
+      top_p: d.use_global_generation_parameters ? null : normalizeNumber(d.top_p),
+      top_k: d.use_global_generation_parameters ? null : normalizeNumber(d.top_k),
+      max_tokens: d.use_global_generation_parameters ? null : normalizeNumber(d.max_tokens),
+    };
+    setSaving(prev => ({ ...prev, [id]: true }));
+    fetch(`http://localhost:${activePort}/api/agents/${id}/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Save failed'); return data; })
+      .then(() => { setMessage(`${agents[id]?.name || id} settings saved.`); load(); })
+      .catch(err => setMessage(`${agents[id]?.name || id} save failed: ${err.message}`))
+      .finally(() => setSaving(prev => ({ ...prev, [id]: false })));
+  };
+
+  const entries = Object.entries(agents).filter(([, agent]) => agent?.builtin !== false);
+  const selectedEntry = entries.find(([id]) => id === selectedAgentId) || entries[0];
+  return <section className="provider-setup"><div className="provider-heading"><div><strong>Agent AI Overrides</strong><p>Choose one agent, then edit its connection, provider model, and generation parameters. Subscription/delegated CLI connections can authenticate here.</p></div><span className="connection-state">{entries.length} agents</span></div>{message && <p className="provider-message" role="status">{message}</p>}<label>Agent<select value={selectedEntry?.[0] || ''} onChange={e => setSelectedAgentId(e.target.value)}><option value="">Select agent</option>{entries.map(([id, agent]) => <option key={id} value={id}>{agent.name || id} - {id}</option>)}</select></label>{selectedEntry && (() => { const [id, agent] = selectedEntry; const eff = agent.effective_ai || {}; const d = drafts[id] || initialDraft(agent); const connectionId = d.use_global_connection ? eff.connection_id : d.connection_id; const selectedConnection = connections.find(c => c.connection_id === connectionId); const models = modelOptions[id] || (selectedConnection?.available_models || []).filter(m => m?.capabilities?.text_input !== false); const modelIds = models.map(m => m.id); const shownModel = d.use_global_model ? eff.model || '' : d.model || ''; const modelUnavailable = shownModel && modelIds.length > 0 && !modelIds.includes(shownModel); const disabled = !!saving[id]; const canAuth = selectedConnection && (selectedConnection.supports_provider_auth || selectedConnection.auth_method === 'delegated_cli_login' || ['opencode_oauth_bridge', 'opencode_provider'].includes(selectedConnection.connection_type)); return <div key={id} className="rounded-lg border p-3 mt-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="flex items-center justify-between gap-2"><div><strong>{agent.name || id}</strong><div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{id}</div></div><span className="text-[10px] uppercase" style={{ color: eff.capability_status === 'compatible' ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_status || 'unknown'}</span></div><div className="text-[11px] mt-2" style={{ color: 'var(--text-secondary)' }}>Effective connection: <span className="font-mono">{eff.connection_display || eff.connection_id || 'not configured'}</span></div><div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Effective provider/model: <span className="font-mono">{eff.provider}/{eff.model}</span></div>{modelUnavailable && <p className="provider-message" style={{ color: 'var(--danger)' }}>Model is not available on the selected connection.</p>}<div className="provider-form"><label><input type="checkbox" checked={!!d.use_global_connection} onChange={e => setDraft(id, { use_global_connection: e.target.checked })} /> Use global connection</label><label>Connection<select value={d.connection_id || ''} disabled={disabled || d.use_global_connection} onChange={e => chooseConnection(id, e.target.value)}><option value="">Select agent connection</option>{textConnections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.display_name || c.name || c.provider || c.connection_id}{c.auth_method === 'delegated_cli_login' || c.supports_provider_auth ? ' - subscription/delegated' : ''}</option>)}</select></label>{canAuth && <button type="button" onClick={() => authenticateConnection(selectedConnection)} disabled={disabled}>Authenticate Provider</button>}<button type="button" onClick={() => selectedConnection && fetch(`http://localhost:${activePort}/api/provider-connections/${encodeURIComponent(selectedConnection.connection_id)}/test`, { method: 'POST' }).then(r => r.json()).then(data => setMessage(`${selectedConnection.display_name || selectedConnection.connection_id}: ${data.result?.status || data.status || 'tested'}`)).catch(err => setMessage(`Test failed: ${err.message}`))} disabled={disabled || !selectedConnection}>Test Connection</button><label><input type="checkbox" checked={!!d.use_global_model} onChange={e => setDraft(id, { use_global_model: e.target.checked })} /> Use global model</label><label>Model<select value={d.model || ''} disabled={disabled || d.use_global_model} onChange={e => setDraft(id, { model: e.target.value })}><option value="">Select model</option>{models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</select></label><label><input type="checkbox" checked={!!d.use_global_generation_parameters} onChange={e => setDraft(id, { use_global_generation_parameters: e.target.checked })} /> Use global parameters</label><label>Temperature<input className="ai-settings-field" type="number" min="0" max="2" step="0.05" value={d.temperature ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { temperature: e.target.value })} /></label><label>Top_p<input className="ai-settings-field" type="number" min="0" max="1" step="0.05" value={d.top_p ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { top_p: e.target.value })} /></label><label>Top_k<input className="ai-settings-field" type="number" min="1" step="1" value={d.top_k ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { top_k: e.target.value })} /></label><label>Max tokens<input className="ai-settings-field" type="number" min="1" step="1" value={d.max_tokens ?? ''} disabled={disabled || d.use_global_generation_parameters} onChange={e => setDraft(id, { max_tokens: e.target.value })} /></label></div><div className="provider-actions"><button type="button" onClick={() => saveAgent(id)} disabled={disabled}>Save agent settings</button></div></div>; })()}</section>;
+}
+
+function AgentModelManagerSettings({ activePort }) {
+  const [agents, setAgents] = useState({});
+  const [connections, setConnections] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [modelOptions, setModelOptions] = useState({});
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [saving, setSaving] = useState({});
+  const [message, setMessage] = useState('');
+  const [providerSearch, setProviderSearch] = useState('');
+  const [modelSearch, setModelSearch] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [editingPrompt, setEditingPrompt] = useState(false);
+  const [promptDrafts, setPromptDrafts] = useState({});
+
+  const normalizeNumber = value => String(value ?? '').trim().replace(',', '.');
+  const initialDraft = (agent) => {
+    const eff = agent.effective_ai || {};
+    return {
+      use_global_connection: eff.use_global_connection !== false,
+      connection_id: eff.connection_id || '',
+      use_global_model: eff.use_global_model !== false,
+      model: eff.model || '',
+      use_global_generation_parameters: eff.use_global_generation_parameters !== false,
+      temperature: eff.temperature ?? '',
+      top_p: eff.top_p ?? '',
+      top_k: eff.top_k ?? '',
+      max_tokens: eff.max_tokens ?? '',
+    };
+  };
+  const textConnections = connections.filter(c => (c.available_models || []).some(m => m?.capabilities?.text_input !== false) || c.supports_provider_auth || c.auth_method === 'delegated_cli_login');
+  const setDraft = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  const loadModels = (agentId, connectionId) => {
+    if (!connectionId) { setModelOptions(prev => ({ ...prev, [agentId]: [] })); return Promise.resolve(); }
+    return fetch(`http://localhost:${activePort}/api/provider-connections/${encodeURIComponent(connectionId)}/models`)
+      .then(r => r.json())
+      .then(data => setModelOptions(prev => ({ ...prev, [agentId]: (data.models || []).filter(m => m?.capabilities?.text_input !== false) })))
+      .catch(() => setModelOptions(prev => ({ ...prev, [agentId]: [] })));
+  };
+  const load = () => Promise.all([
+    fetch(`http://localhost:${activePort}/api/agents`).then(r => r.json()),
+    fetch(`http://localhost:${activePort}/api/provider-connections`).then(r => r.json()),
+  ]).then(([agentData, connectionData]) => {
+    const nextDrafts = Object.fromEntries(Object.entries(agentData || {}).map(([id, agent]) => [id, initialDraft(agent)]));
+    setAgents(agentData || {});
+    setConnections(connectionData.connections || []);
+    setDrafts(nextDrafts);
+    setPromptDrafts(Object.fromEntries(Object.entries(agentData || {}).map(([id, agent]) => [id, agent.custom_prompt || ''])));
+    setSelectedAgentId(current => current && agentData?.[current] ? current : Object.keys(agentData || {})[0] || '');
+    Object.entries(nextDrafts).forEach(([id, draft]) => loadModels(id, draft.connection_id));
+  }).catch(err => setMessage(`Agent model settings failed to load: ${err.message}`));
+  useEffect(() => { load(); }, [activePort]);
+
+  const chooseConnection = (id, connectionId) => {
+    const connection = connections.find(c => c.connection_id === connectionId);
+    const firstModel = ((connection?.available_models || []).find(m => m?.capabilities?.text_input !== false) || {}).id || '';
+    setDraft(id, { use_global_connection: false, connection_id: connectionId, use_global_model: !firstModel, model: firstModel });
+    loadModels(id, connectionId);
+  };
+  const saveAgent = (id) => {
+    const d = drafts[id] || {};
+    const body = {
+      use_global_connection: !!d.use_global_connection,
+      connection_id: d.use_global_connection ? null : d.connection_id,
+      use_global_model: !!d.use_global_model,
+      model: d.use_global_model ? null : d.model,
+      use_global_generation_parameters: !!d.use_global_generation_parameters,
+      temperature: d.use_global_generation_parameters ? null : normalizeNumber(d.temperature),
+      top_p: d.use_global_generation_parameters ? null : normalizeNumber(d.top_p),
+      top_k: d.use_global_generation_parameters ? null : normalizeNumber(d.top_k),
+      max_tokens: d.use_global_generation_parameters ? null : normalizeNumber(d.max_tokens),
+    };
+    setSaving(prev => ({ ...prev, [id]: true }));
+    fetch(`http://localhost:${activePort}/api/agents/${id}/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Save failed'); return data; })
+      .then(() => { setMessage(`${agents[id]?.name || id} AI choice saved. Prompt was not changed.`); load(); })
+      .catch(err => setMessage(`${agents[id]?.name || id} save failed: ${err.message}`))
+      .finally(() => setSaving(prev => ({ ...prev, [id]: false })));
+  };
+  const savePrompt = (id) => {
+    setSaving(prev => ({ ...prev, [id]: true }));
+    fetch(`http://localhost:${activePort}/api/agents/${id}/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ custom_prompt: promptDrafts[id] || '' }) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Prompt save failed'); return data; })
+      .then(() => { setMessage(`${agents[id]?.name || id} prompt saved.`); setEditingPrompt(false); load(); })
+      .catch(err => setMessage(`${agents[id]?.name || id} prompt save failed: ${err.message}`))
+      .finally(() => setSaving(prev => ({ ...prev, [id]: false })));
+  };
+  const resetPrompt = (id) => {
+    setPromptDrafts(prev => ({ ...prev, [id]: '' }));
+    setSaving(prev => ({ ...prev, [id]: true }));
+    fetch(`http://localhost:${activePort}/api/agents/${id}/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ custom_prompt: '' }) })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Prompt reset failed'); return data; })
+      .then(() => { setMessage(`${agents[id]?.name || id} prompt reset to default.`); setEditingPrompt(false); load(); })
+      .catch(err => setMessage(`${agents[id]?.name || id} prompt reset failed: ${err.message}`))
+      .finally(() => setSaving(prev => ({ ...prev, [id]: false })));
+  };
+  const authenticateConnection = (connection) => {
+    if (!connection) return;
+    const isOpenCode = ['opencode_oauth_bridge', 'opencode_provider'].includes(connection.connection_type) || connection.provider === 'opencode_bridge';
+    const url = isOpenCode ? `/api/opencode/authenticate` : `/api/provider-connections/${encodeURIComponent(connection.connection_id)}/login`;
+    setMessage('Opening provider authentication...');
+    fetch(`http://localhost:${activePort}${url}`, { method: 'POST' })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Authentication is not supported for this connection'); return data; })
+      .then(data => setMessage(data.message || data.result?.message || 'Complete authentication in the provider-owned flow, then test the connection.'))
+      .catch(err => setMessage(`Authentication failed: ${err.message}`));
+  };
+  const testConnection = (connection) => {
+    if (!connection) return;
+    setMessage(`Testing ${connection.display_name || connection.name || connection.connection_id}...`);
+    fetch(`http://localhost:${activePort}/api/provider-connections/${encodeURIComponent(connection.connection_id)}/test`, { method: 'POST' })
+      .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail?.message || data.detail || 'Test failed'); return data; })
+      .then(data => setMessage(data.result?.message || data.message || 'Connection test completed.'))
+      .catch(err => setMessage(`Connection test failed: ${err.message}`));
+  };
+
+  const entries = Object.entries(agents).filter(([, agent]) => agent?.builtin !== false);
+  const selectedEntry = entries.find(([id]) => id === selectedAgentId) || entries[0];
+  if (!selectedEntry) return <section className="provider-setup"><div className="provider-heading"><div><strong>Agent Model Manager</strong><p>No agents loaded.</p></div></div></section>;
+  const [id, agent] = selectedEntry;
+  const eff = agent.effective_ai || {};
+  const d = drafts[id] || initialDraft(agent);
+  const connectionId = d.use_global_connection ? eff.connection_id : d.connection_id;
+  const selectedConnection = connections.find(c => c.connection_id === connectionId);
+  const models = modelOptions[id] || (selectedConnection?.available_models || []).filter(m => m?.capabilities?.text_input !== false);
+  const providerNeedle = providerSearch.trim().toLowerCase();
+  const modelNeedle = modelSearch.trim().toLowerCase();
+  const visibleConnections = textConnections.filter(c => !providerNeedle || `${c.display_name || ''} ${c.name || ''} ${c.provider || ''} ${c.connection_id || ''}`.toLowerCase().includes(providerNeedle));
+  const visibleModels = models.filter(m => !modelNeedle || `${m.id || ''} ${m.name || ''} ${m.description || ''}`.toLowerCase().includes(modelNeedle));
+  const shownModel = d.use_global_model ? eff.model || '' : d.model || '';
+  const modelUnavailable = shownModel && models.length > 0 && !models.map(m => m.id).includes(shownModel);
+  const disabled = !!saving[id];
+  const canAuth = selectedConnection && (selectedConnection.supports_provider_auth || selectedConnection.auth_method === 'delegated_cli_login' || ['opencode_oauth_bridge', 'opencode_provider'].includes(selectedConnection.connection_type));
+  const activePrompt = agent.custom_prompt || '';
+
+  return <section className="provider-setup agent-model-manager"><div className="provider-heading"><div><strong>Agent Model Manager</strong><p>Pick an agent, then choose provider and model. Agent descriptions and prompts stay untouched unless you edit the prompt block.</p></div><span className="connection-state">{entries.length} agents</span></div>{message && <p className="provider-message" role="status">{message}</p>}<div className="grid grid-cols-1 xl:grid-cols-[240px_1fr] gap-3 mt-3"><aside className="rounded-lg border p-2" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>Agents</div>{entries.map(([agentId, item]) => <button key={agentId} type="button" onClick={() => { setSelectedAgentId(agentId); setEditingPrompt(false); setModelSearch(''); }} className="w-full text-left rounded-md px-3 py-2 mb-1" style={{ backgroundColor: agentId === id ? 'var(--accent-bg)' : 'transparent', color: agentId === id ? 'var(--accent)' : 'var(--text-primary)' }}><div className="flex items-center justify-between gap-2"><strong>{item.name || agentId}</strong><span className="text-[10px] uppercase" style={{ color: 'var(--text-muted)' }}>{item.role}</span></div><div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{item.effective_ai?.model || 'Default model'}</div></button>)}</aside><div className="space-y-3"><div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="flex items-start justify-between gap-3"><div><strong>{agent.name || id}</strong><div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{agent.role_contract_summary || agent.role || id}</div></div><span className="text-[10px] uppercase" style={{ color: eff.capability_status === 'compatible' ? 'var(--success)' : 'var(--danger)' }}>{eff.capability_status || 'unknown'}</span></div><div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3 text-[11px]" style={{ color: 'var(--text-secondary)' }}><div>Current provider: <span className="font-mono">{eff.connection_display_name || eff.provider || 'none'}</span></div><div>Current model: <span className="font-mono">{eff.model || 'none'}</span></div></div><div className="flex flex-wrap gap-2 mt-3"><button type="button" disabled={disabled} onClick={() => setDraft(id, { use_global_connection: true, use_global_model: true })} className="px-3 py-1 rounded-md border" style={{ borderColor: d.use_global_connection && d.use_global_model ? 'var(--accent)' : 'var(--border)' }}>Use Default</button><button type="button" disabled={disabled || !selectedConnection} onClick={() => testConnection(selectedConnection)} className="px-3 py-1 rounded-md border" style={{ borderColor: 'var(--border)' }}>Test Connection</button>{canAuth && <button type="button" disabled={disabled} onClick={() => authenticateConnection(selectedConnection)} className="px-3 py-1 rounded-md border" style={{ borderColor: 'var(--border)' }}>Authenticate Provider</button>}<button type="button" disabled={disabled} onClick={() => saveAgent(id)} className="px-3 py-1 rounded-md" style={{ backgroundColor: 'var(--accent)', color: 'white' }}>{disabled ? 'Saving...' : 'Save AI Choice'}</button></div></div><div className="grid grid-cols-1 lg:grid-cols-2 gap-3"><div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="provider-heading"><div><strong>Provider</strong><p>Connected providers only. Add or authenticate providers in AI Connections.</p></div></div><input value={providerSearch} onChange={e => setProviderSearch(e.target.value)} placeholder="Search providers" className="w-full mb-2" /><div className="space-y-1 max-h-72 overflow-auto">{visibleConnections.map(c => { const active = !d.use_global_connection && d.connection_id === c.connection_id; return <button key={c.connection_id} type="button" onClick={() => chooseConnection(id, c.connection_id)} className="w-full text-left rounded-md px-3 py-2 border" style={{ borderColor: active ? 'var(--accent)' : 'transparent', backgroundColor: active ? 'var(--accent-bg)' : 'transparent' }}><div className="flex items-center justify-between gap-2"><strong>{c.display_name || c.name || c.provider || c.connection_id}</strong>{active && <span>selected</span>}</div><div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{c.provider || c.connection_type} {c.auth_method === 'delegated_cli_login' ? 'subscription/delegated' : ''}</div></button>; })}{!visibleConnections.length && <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>No provider connections match this search.</p>}</div></div><div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="provider-heading"><div><strong>Model</strong><p>Changing the model only changes routing. Agent identity and prompt are preserved.</p></div></div><input value={modelSearch} onChange={e => setModelSearch(e.target.value)} placeholder="Search models" className="w-full mb-2" /><div className="space-y-1 max-h-72 overflow-auto">{visibleModels.map(m => { const active = !d.use_global_model && d.model === m.id; const caps = m.capabilities || {}; return <button key={m.id} type="button" onClick={() => setDraft(id, { use_global_model: false, model: m.id })} className="w-full text-left rounded-md px-3 py-2 border" style={{ borderColor: active ? 'var(--accent)' : 'transparent', backgroundColor: active ? 'var(--accent-bg)' : 'transparent' }}><div className="flex items-center justify-between gap-2"><strong>{m.name || m.id}</strong>{active && <span>selected</span>}</div><div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Input {caps.image_input ? 'text, image' : 'text'} / streaming {caps.streaming === false ? 'no' : 'yes'} / tools {caps.tool_use === false ? 'no' : 'yes'}</div></button>; })}{!visibleModels.length && <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{selectedConnection ? 'No models match this search. Refresh models in AI Connections if needed.' : 'Select a provider first.'}</p>}</div>{modelUnavailable && <p className="text-[11px] mt-2" style={{ color: 'var(--warning)' }}>Selected model is not listed for this connection; save may be rejected.</p>}</div></div><div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><button type="button" onClick={() => setShowAdvanced(value => !value)} className="font-semibold">{showAdvanced ? 'Hide' : 'Show'} Advanced Parameters</button>{showAdvanced && <div className="provider-form mt-3"><label><span><input type="checkbox" checked={!!d.use_global_generation_parameters} disabled={disabled} onChange={e => setDraft(id, { use_global_generation_parameters: e.target.checked })} /> Use global parameters</span><input disabled value={`temp ${eff.temperature ?? '-'} / top_p ${eff.top_p ?? '-'}`} readOnly /></label><label>Temperature<input disabled={disabled || d.use_global_generation_parameters} value={d.temperature} onChange={e => setDraft(id, { temperature: e.target.value })} /></label><label>Top_p<input disabled={disabled || d.use_global_generation_parameters} value={d.top_p} onChange={e => setDraft(id, { top_p: e.target.value })} /></label><label>Top_k<input disabled={disabled || d.use_global_generation_parameters} value={d.top_k} onChange={e => setDraft(id, { top_k: e.target.value })} /></label><label>Max tokens<input disabled={disabled || d.use_global_generation_parameters} value={d.max_tokens} onChange={e => setDraft(id, { max_tokens: e.target.value })} /></label></div>}</div><div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-primary)' }}><div className="flex items-center justify-between gap-2"><div><strong>Agent Prompt</strong><p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Prompt is independent from model/provider selection.</p></div><button type="button" onClick={() => { setPromptDrafts(prev => ({ ...prev, [id]: activePrompt })); setEditingPrompt(value => !value); }}>{editingPrompt ? 'Close' : 'Edit Prompt'}</button></div>{editingPrompt ? <div className="mt-2"><textarea rows={5} value={promptDrafts[id] || ''} onChange={e => setPromptDrafts(prev => ({ ...prev, [id]: e.target.value }))} placeholder="Leave empty to use the built-in default prompt." className="w-full font-mono" /><div className="provider-actions"><button type="button" disabled={disabled} onClick={() => savePrompt(id)}>Save Prompt</button><button type="button" disabled={disabled} onClick={() => resetPrompt(id)}>Reset to Default Prompt</button></div></div> : <div className="mt-2 rounded-md border px-3 py-2 text-[11px] font-mono" style={{ borderColor: 'var(--border)', color: activePrompt ? 'var(--text-secondary)' : 'var(--text-muted)' }}>{activePrompt || 'Using built-in default prompt. Model/provider changes will not rewrite it.'}</div>}</div></div></div></section>;
 }
 
 function AgentRoleContractsSettings({ activePort }) {

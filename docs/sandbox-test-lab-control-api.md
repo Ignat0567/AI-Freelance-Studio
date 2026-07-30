@@ -33,7 +33,7 @@ Launch requires one canonical UUID in the `Idempotency-Key` header. Exact retrie
 
 Capability reasons are stable and limited to `test_lab_disabled`, `sandbox_capability_unavailable`, and `job_service_unavailable`. Capability detection reuses the existing Windows Sandbox checks and does not launch Sandbox.
 
-The application-owned Job Service is default-off and has no production runner bridge in this phase. Tests inject deterministic offline services. Existing explicit external-execution opt-ins remain unchanged; the control API does not enable them, mutate environment variables, or run Windows Sandbox, Store CLI, installers, packaging, or signing by itself.
+The application-owned Job Service now has a production runner bridge (`sandbox_test_lab/production_bridge.py`, wired unconditionally at backend startup in `main.py`). The Job Service and Sandbox capability remain disabled unless the existing explicit external-execution opt-ins are set; the control API does not enable them, mutate environment variables, or run Windows Sandbox, Store CLI, installers, packaging, or signing by itself. Tests may still inject deterministic offline services in place of the production bridge.
 
 Known limits are deliberate: there is one active run, no history API, no evidence download, and no arbitrary executor. Shutdown waits are bounded and cancellation remains cooperative; an already blocked serialized runner call can delay backend cancellation delivery until that call returns.
 

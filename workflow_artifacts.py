@@ -12,6 +12,7 @@ from typing import Any
 
 
 SECRET_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization|cookie)\s*[:=]\s*[^\s,;]+|sk-[A-Za-z0-9_-]{16,}")
+NON_SECRET_TOKEN_COUNT_KEYS = {"input_tokens", "output_tokens", "cached_input_tokens", "total_tokens", "prompt_tokens", "completion_tokens"}
 
 
 def utc_now() -> str:
@@ -24,7 +25,7 @@ def mask_secrets(value: Any) -> Any:
     if isinstance(value, list):
         return [mask_secrets(item) for item in value]
     if isinstance(value, dict):
-        return {str(key): "<redacted>" if re.search(r"(?i)(api[_-]?key|token|secret|password|authorization|cookie)", str(key)) else mask_secrets(item) for key, item in value.items()}
+        return {str(key): "<redacted>" if str(key).lower() not in NON_SECRET_TOKEN_COUNT_KEYS and re.search(r"(?i)(api[_-]?key|token|secret|password|authorization|cookie)", str(key)) else mask_secrets(item) for key, item in value.items()}
     return value
 
 

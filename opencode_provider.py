@@ -138,12 +138,31 @@ def _error_category(stderr: str, stdout: str) -> str:
 
 def _find_binary() -> str:
     from opencode_bridge import _discover_opencode
-    return _discover_opencode() or ""
+    binary = _discover_opencode() or ""
+    if os.name == "nt" and binary.lower().endswith(".cmd"):
+        ps1 = os.path.splitext(binary)[0] + ".ps1"
+        if os.path.isfile(ps1):
+            return ps1
+    return binary
+
+
+def _unicode_safe_binary(binary: str) -> str:
+    if os.name == "nt" and binary.lower().endswith(".cmd"):
+        ps1 = os.path.splitext(binary)[0] + ".ps1"
+        if os.path.isfile(ps1):
+            return ps1
+    return binary
+
+
+def _opencode_command(command: list[str]) -> list[str]:
+    if command and os.name == "nt" and command[0].lower().endswith(".ps1"):
+        return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", *command]
+    return command
 
 
 def _run_capture(command: list[str], timeout: int, cwd: str | None = None) -> tuple[int | None, str, str]:
     try:
-        completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        completed = subprocess.run(_opencode_command(command), cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return completed.returncode, completed.stdout or "", completed.stderr or ""
     except subprocess.TimeoutExpired:
         return None, "", "timeout"
@@ -191,7 +210,7 @@ class OpenCodeBridgeConnection:
         }
 
     def available_models(self) -> list[str]:
-        binary = self.executable_path or _find_binary()
+        binary = _unicode_safe_binary(self.executable_path or _find_binary())
         if not binary:
             return []
         code, stdout, _stderr = _run_capture([binary, "models"], 30)
@@ -202,7 +221,7 @@ class OpenCodeBridgeConnection:
     def capability_report(self) -> dict[str, dict[str, str]]:
         report = {name: capability("unknown", "Not probed") for name in CAPABILITY_NAMES}
         report.update({name: value for name, value in self.capabilities.items() if name in report and isinstance(value, dict)})
-        binary = self.executable_path or _find_binary()
+        binary = _unicode_safe_binary(self.executable_path or _find_binary())
         if binary:
             report["file_input"] = capability("supported", "Installed OpenCode CLI documents run --file attachment.")
             report["model_listing"] = capability("supported", "Installed OpenCode CLI exposes the models command.")
@@ -229,7 +248,7 @@ class OpenCodeBridgeConnection:
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
         """Execute a fresh, local, read-only-by-default CLI request without credentials."""
-        binary = self.executable_path or _find_binary()
+        binary = _unicode_safe_binary(self.executable_path or _find_binary())
         model = _native_opencode_model(str(request.get("requested_model") or self.configured_model), self.connection_id)
         if not binary:
             return {"status": "unavailable", "failure_stage": "before_invocation", "error_category": "bridge_unavailable", "errors": ["OpenCode executable was not found"], "text": ""}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -217,16 +218,35 @@ def derive_target_requirements(project_or_spec: dict[str, Any], quality_profile:
         set_target("manager_web")
     if "telegram_bot" in profiles or "telegram" in text:
         set_target("telegram_bot")
-    if "android" in text or "android" in requested:
-        set_target("android")
-    if "ios" in text or "ios" in requested or "iphone" in text:
-        set_target("ios")
-    if "windows" in text:
-        set_target("desktop_windows")
-    if "macos" in text or "mac" in text:
-        set_target("desktop_macos")
-    if "linux" in text:
-        set_target("desktop_linux")
+    # An explicit requested_target_platforms scope is authoritative for OS/device targets.
+    # Free-text scanning over the full spec must not override a narrower platform scope the
+    # user explicitly asked for -- specs routinely mention other OSes in generic cross-platform
+    # boilerplate (e.g. electron-builder's mac/linux installer targets, or the word "scenarios"
+    # containing the substring "ios") even for single-platform projects.
+    os_platform_targets = {
+        "android": "android",
+        "ios": "ios",
+        "iphone": "ios",
+        "windows": "desktop_windows",
+        "macos": "desktop_macos",
+        "mac": "desktop_macos",
+        "linux": "desktop_linux",
+    }
+    explicit_os_targets = {os_platform_targets[token] for token in requested if token in os_platform_targets}
+    if explicit_os_targets:
+        for target_name in explicit_os_targets:
+            set_target(target_name)
+    else:
+        if "android" in text:
+            set_target("android")
+        if re.search(r"\bios\b", text) or "iphone" in text:
+            set_target("ios")
+        if "windows" in text:
+            set_target("desktop_windows")
+        if "macos" in text or re.search(r"\bmac\b", text):
+            set_target("desktop_macos")
+        if "linux" in text:
+            set_target("desktop_linux")
     if any(token in text for token in ("installer", "package", "packaged artifact")):
         set_target("packaged_installer", "required" if quality_profile in {"production_candidate", "production"} else "optional")
 
