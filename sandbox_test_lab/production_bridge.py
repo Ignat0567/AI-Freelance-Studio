@@ -64,15 +64,16 @@ class ProductionSandboxTestLabRunner:
         self_test_request_factory: Callable[[], ProductionSelfTestRequest] = ProductionSelfTestRequest,
         screenshot_request_factory: Callable[[], ProductionSelfTestRequest] = ScreenshotSelfTestRequest,
         thread_factory: Callable[..., Thread] = Thread,
+        diagnostics_root: Path | None = None,
     ) -> None:
         self._opt_in_enabled = opt_in_enabled or (
             lambda: os.environ.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1"
         )
         self._runner_factories = {
             SandboxProfile.PRODUCTION_SELF_TEST: self_test_runner_factory
-            or (lambda: ProductionSelfTestRunner(launch_guard=self._guard_external_launch)),
+            or (lambda: ProductionSelfTestRunner(launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root)),
             SandboxProfile.PRODUCTION_SCREENSHOT: screenshot_runner_factory
-            or (lambda: ScreenshotSelfTestRunner(launch_guard=self._guard_external_launch)),
+            or (lambda: ScreenshotSelfTestRunner(launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root)),
         }
         self._request_factories = {
             SandboxProfile.PRODUCTION_SELF_TEST: self_test_request_factory,
@@ -220,6 +221,8 @@ class ProductionSandboxTestLabRunner:
             diagnostics.append(SandboxDiagnosticCode.SANDBOX_UNAVAILABLE)
         if cleanup_failed and evidence_validated:
             diagnostics.append(SandboxDiagnosticCode.SANDBOX_GUEST_SUCCEEDED_OWNERSHIP_FAILED)
+        elif cleanup_failed:
+            diagnostics.append(SandboxDiagnosticCode.SANDBOX_OWNERSHIP_FAILED)
         return SandboxTestLabResult(
             result.run_id,
             profile,
@@ -313,10 +316,15 @@ def create_production_sandbox_runtime(
             lambda: unavailable,
         )
 
+    diagnostics_root = Path(runtime_dir) / "sandbox-test-lab-diagnostics"
+
     def adapter_factory() -> SandboxTestLabAdapter:
         return SandboxTestLabAdapter(
             enabled=True,
-            runner=ProductionSandboxTestLabRunner(opt_in_enabled=opt_in_enabled),
+            runner=ProductionSandboxTestLabRunner(
+                opt_in_enabled=opt_in_enabled,
+                diagnostics_root=diagnostics_root,
+            ),
         )
 
     availability_adapter = adapter_factory()

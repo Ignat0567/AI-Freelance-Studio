@@ -42,7 +42,7 @@ def build_wsb_xml(
     bootstrap_command: str = BOOTSTRAP_COMMAND,
 ) -> str:
     if network_enabled:
-        raise WsbConfigError("Phase 1 does not allow Windows Sandbox networking")
+        raise WsbConfigError("Windows Sandbox networking is not supported")
     if not 2048 <= memory_mb <= 32768:
         raise WsbConfigError("memory_mb must be between 2048 and 32768")
 

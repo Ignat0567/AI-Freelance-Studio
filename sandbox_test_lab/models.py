@@ -121,7 +121,7 @@ class SandboxRunRequest:
         if not 1 <= self.timeout_seconds <= 86400:
             raise ValueError("timeout_seconds must be between 1 and 86400")
         if self.network_enabled:
-            raise ValueError("Phase 1 does not allow Windows Sandbox networking")
+            raise ValueError("Windows Sandbox networking is not supported")
         validate_safe_metadata(self.metadata)
 
 

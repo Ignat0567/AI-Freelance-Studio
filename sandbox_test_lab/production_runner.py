@@ -23,7 +23,7 @@ from .production_self_test import (
     ensure_no_active_windows_sandbox_session,
     validate_production_deadline_configuration,
 )
-from .runner import ProcessHandle, _stop_owned_process, complete_owned_sandbox_session, launch_sandbox, utc_now
+from .runner import ProcessHandle, _stop_owned_process, archive_run_diagnostics, complete_owned_sandbox_session, launch_sandbox, utc_now
 from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
 from .workspace import WorkspaceError, atomic_write_json
 from .wsb_config import WsbConfigError, write_wsb_config
@@ -46,6 +46,7 @@ class ProductionSelfTestRunner:
         session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
         session_factory: Callable[[int, datetime], OwnedSandboxSession] = capture_owned_sandbox_session,
         launch_guard: Callable[[], None] = lambda: None,
+        diagnostics_root: Path | None = None,
     ):
         self.workspace_manager = workspace_manager or ProductionSelfTestWorkspaceManager()
         self.capability_detector = capability_detector
@@ -57,6 +58,7 @@ class ProductionSelfTestRunner:
         self.session_guard = session_guard
         self.session_factory = session_factory
         self.launch_guard = launch_guard
+        self.diagnostics_root = diagnostics_root
 
     def run(self, request: ProductionSelfTestRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         validate_production_deadline_configuration()
@@ -263,4 +265,5 @@ class ProductionSelfTestRunner:
             (paths.logs_directory / "host.log").write_text(
                 f"run_id={run_id}\nstatus={status.value}\nexit_reason={reason}\n", encoding="utf-8",
             )
+            archive_run_diagnostics(self.diagnostics_root, run_id, paths)
         return result

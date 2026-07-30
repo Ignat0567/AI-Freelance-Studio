@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 import ntpath
 from pathlib import Path
+import shutil
 import subprocess
 import threading
 import time
@@ -23,10 +24,57 @@ GUEST_SANDBOX_SHUTDOWN_GRACE_SECONDS = 15.0
 SOFT_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS = 5.0
 FORCED_SANDBOX_SESSION_EXIT_TIMEOUT_SECONDS = 15.0
 SANDBOX_SESSION_INACTIVE_STABLE_SECONDS = 1.0
+DIAGNOSTICS_RETENTION_RUNS = 20
+_DIAGNOSTIC_LOG_FILENAMES = (
+    "host.log",
+    "validated-production-evidence.json",
+    "validated-screenshot-evidence.json",
+)
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def archive_run_diagnostics(
+    diagnostics_root: Path | None,
+    run_id: str,
+    paths: Any,
+    *,
+    retain: int = DIAGNOSTICS_RETENTION_RUNS,
+) -> None:
+    """Best-effort copy of a completed run's safe diagnostic files into a durable,
+    bounded directory, since the source workspace under ``paths.run_root`` is ephemeral
+    and nothing else retains it. Never raises: diagnostics are a debugging aid, not part
+    of run correctness."""
+    if diagnostics_root is None or paths is None:
+        return
+    try:
+        destination = Path(diagnostics_root) / run_id
+        destination.mkdir(parents=True, exist_ok=True)
+        candidates = [paths.run_root / "host-result.json"]
+        candidates.extend(paths.logs_directory / name for name in _DIAGNOSTIC_LOG_FILENAMES)
+        for source in candidates:
+            if source.is_file():
+                shutil.copy2(source, destination / source.name)
+        _prune_diagnostics_root(Path(diagnostics_root), retain)
+    except OSError:
+        pass
+
+
+def _prune_diagnostics_root(diagnostics_root: Path, retain: int) -> None:
+    try:
+        entries = [entry for entry in diagnostics_root.iterdir() if entry.is_dir()]
+    except OSError:
+        return
+    if len(entries) <= retain:
+        return
+    try:
+        entries.sort(key=lambda entry: entry.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for stale in entries[retain:]:
+        shutil.rmtree(stale, ignore_errors=True)
 
 
 class ProcessHandle(Protocol):

@@ -7,6 +7,7 @@ import time
 import pytest
 
 from sandbox_test_lab.adapter import (
+    SandboxDiagnosticCode,
     SandboxProfile,
     SandboxReadiness,
     SandboxStatus,
@@ -248,6 +249,32 @@ def test_bridge_marks_only_exact_session_cleanup_failures_for_manual_close():
         ),
     )
     assert translated.manual_close_required is True
+
+
+def test_bridge_surfaces_ownership_failed_when_test_failed_and_cleanup_failed():
+    translated = ProductionSandboxTestLabRunner._translate(
+        SandboxProfile.PRODUCTION_SELF_TEST,
+        _result(
+            RunStatus.FAILED,
+            evidence=False,
+            errors=("owned_sandbox_session_cleanup_failed_WorkspaceError",),
+        ),
+    )
+    assert translated.manual_close_required is True
+    assert translated.errors == (SandboxDiagnosticCode.SANDBOX_OWNERSHIP_FAILED,)
+
+
+def test_bridge_surfaces_guest_succeeded_ownership_failed_when_evidence_validated():
+    translated = ProductionSandboxTestLabRunner._translate(
+        SandboxProfile.PRODUCTION_SELF_TEST,
+        _result(
+            RunStatus.PASSED,
+            evidence=True,
+            errors=("owned_sandbox_session_cleanup_failed_WorkspaceError",),
+        ),
+    )
+    assert translated.manual_close_required is True
+    assert translated.errors == (SandboxDiagnosticCode.SANDBOX_GUEST_SUCCEEDED_OWNERSHIP_FAILED,)
 
 
 def test_runtime_is_default_off_without_validating_or_launching(tmp_path, monkeypatch):

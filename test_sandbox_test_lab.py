@@ -749,3 +749,57 @@ def test_sandbox_argv_guard_allows_evidence_name_and_windows_sandbox(monkeypatch
     monkeypatch.setattr(runner_module.subprocess, "Popen", lambda argv, **_kwargs: process if argv == expected else None)
     assert validate_sandbox_argv(expected) == expected
     assert launch_sandbox(expected) is process
+
+
+def _write_run_diagnostics(paths, *, evidence_filename: str = "validated-production-evidence.json") -> None:
+    paths.run_root.mkdir(parents=True, exist_ok=True)
+    paths.logs_directory.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(paths.run_root / "host-result.json", {"status": "failed"})
+    (paths.logs_directory / "host.log").write_text("run_id=x\nstatus=failed\n", encoding="utf-8")
+    atomic_write_json(paths.logs_directory / evidence_filename, {"outcome": "failed"})
+
+
+def test_archive_run_diagnostics_is_a_noop_without_a_root_or_paths():
+    manager = SandboxWorkspaceManager(runtime_root=Path("unused"))
+    paths = manager.paths_for("11111111-1111-1111-1111-111111111111")
+    runner_module.archive_run_diagnostics(None, "11111111-1111-1111-1111-111111111111", paths)
+    runner_module.archive_run_diagnostics(Path("unused"), "11111111-1111-1111-1111-111111111111", None)
+
+
+def test_archive_run_diagnostics_copies_safe_files_into_durable_storage(tmp_path):
+    manager = SandboxWorkspaceManager(runtime_root=tmp_path / "runtime")
+    diagnostics_root = tmp_path / "diagnostics"
+    run_id = "22222222-2222-2222-2222-222222222222"
+    paths = manager.paths_for(run_id)
+    _write_run_diagnostics(paths)
+
+    runner_module.archive_run_diagnostics(diagnostics_root, run_id, paths)
+
+    archived = diagnostics_root / run_id
+    assert (archived / "host-result.json").is_file()
+    assert (archived / "host.log").is_file()
+    assert (archived / "validated-production-evidence.json").is_file()
+    assert not (archived / "validated-screenshot-evidence.json").exists()
+
+
+def test_archive_run_diagnostics_prunes_beyond_retention(tmp_path):
+    manager = SandboxWorkspaceManager(runtime_root=tmp_path / "runtime")
+    diagnostics_root = tmp_path / "diagnostics"
+    old_run_id = "33333333-3333-3333-3333-333333333301"
+    new_run_id = "33333333-3333-3333-3333-333333333302"
+
+    old_paths = manager.paths_for(old_run_id)
+    _write_run_diagnostics(old_paths)
+    runner_module.archive_run_diagnostics(diagnostics_root, old_run_id, old_paths, retain=1)
+    # Only one archived run exists yet, so retain=1 does not prune it here. Backdate it
+    # so the next archive call (which does trigger a prune) has a deterministic winner
+    # regardless of filesystem mtime resolution.
+    stale_mtime = (diagnostics_root / old_run_id).stat().st_mtime - 1000
+    os.utime(diagnostics_root / old_run_id, (stale_mtime, stale_mtime))
+
+    new_paths = manager.paths_for(new_run_id)
+    _write_run_diagnostics(new_paths)
+    runner_module.archive_run_diagnostics(diagnostics_root, new_run_id, new_paths, retain=1)
+
+    remaining = {entry.name for entry in diagnostics_root.iterdir()}
+    assert remaining == {new_run_id}
