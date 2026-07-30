@@ -269,56 +269,51 @@ def _backend_health_available() -> tuple[bool, str]:
         return False, str(e)
 
 
-AI_PROVIDER_MODELS = {
-    "openai": ["gpt-4o", "gpt-4.1", "gpt-5", "gpt-5.5"],
-    "nvidia": ["meta/llama-3.3-70b-instruct"],
-    "anthropic": ["claude-sonnet-4-20250514"],
-    "google": ["gemini-2.0-flash-001"],
-    "groq": ["llama-3.1-70b-versatile"],
-    "mistral": ["mistral-large-latest"],
-    "deepseek": ["deepseek-chat"],
-    "together": ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"],
-    "ollama": ["codellama", "llama3.1", "mistral"],
-}
-
-MODEL_CAPABILITY_OVERRIDES = {
-    "openai": {
-        "gpt-4o": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
-        "gpt-4.1": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
-        "gpt-5": {"text_input": True, "image_input": None, "structured_output": True, "streaming": True, "tool_use": True},
-        "gpt-5.5": {"text_input": True, "image_input": None, "structured_output": True, "streaming": True, "tool_use": True},
-    },
-    "anthropic": {
-        "claude-sonnet-4-20250514": {"text_input": True, "image_input": True, "structured_output": False, "streaming": True, "tool_use": True},
-    },
-}
-
-PRODUCT_JUDGE_STATUS_REASONS = {
-    "not_configured": "no provider connection selected",
-    "provider_not_tested": "selected provider connection has not passed a test",
-    "no_vision_model": "selected model does not support images",
-    "credential_missing": "credential is missing",
-    "connection_failed": "selected provider connection test failed",
-    "configured": "configured but not enabled",
-    "available": "ready",
-    "temporarily_unavailable": "provider is temporarily unavailable",
-}
-
-
-def _mask_secret(value: str) -> str:
-    return secret_store.mask_secret(value)
-
-
-def _provider_key_name(provider: str) -> str:
-    return f"{provider}_key"
-
-
-def _provider_api_key(provider: str, data: dict | None = None) -> str:
-    return secret_store.get_secret(_provider_key_name(provider), data if data is not None else load_studio_keys())
-
-
-def _legacy_secret_warnings(data: dict | None = None) -> list[dict]:
-    return secret_store.collect_legacy_secret_warnings(data if data is not None else load_studio_keys())
+from provider_config import (
+    AI_PROVIDER_MODELS,
+    MODEL_CAPABILITY_OVERRIDES,
+    PRODUCT_JUDGE_STATUS_REASONS,
+    _PROVIDER_CONNECTION_CREDENTIAL_FIELDS,
+    _canonical_connection_type,
+    _cleanup_connection_assignments,
+    _connection_cost_mode,
+    _connection_for_id,
+    _connection_used_by_agents,
+    _connection_uses_opencode_transport,
+    _default_global_ai_config,
+    _ensure_provider_connection_records,
+    _filter_supported_generation,
+    _frontend_provider_connections,
+    _general_provider_connection,
+    _is_provider_connection_credential_field,
+    _legacy_secret_warnings,
+    _load_global_ai_config,
+    _load_provider_connections,
+    _mask_secret,
+    _migrate_legacy_opencode_model_references,
+    _model_capabilities,
+    _models_with_capabilities,
+    _normalize_model_for_connection,
+    _opencode_connection_ids,
+    _opencode_model_registry,
+    _parameter_support,
+    _provider_api_key,
+    _provider_connection_id,
+    _provider_connection_state,
+    _provider_credential_exists,
+    _provider_key_name,
+    _remove_credential_fields,
+    _sanitize_provider_connection,
+    _sanitize_provider_connection_for_storage,
+    _save_global_ai_config,
+    _save_universal_provider_connections,
+    _store_provider_connections,
+    _test_provider_key,
+    _universal_connection_index,
+    _universal_provider_connections,
+    _upsert_provider_connection,
+    _vision_models_for_connection,
+)
 
 
 CONFIG_FILE = config_storage.CONFIG_FILE  # Compatibility alias; production storage reads config_storage.CONFIG_FILE.
@@ -469,7 +464,6 @@ def _discover_durable_projects() -> None:
 
 
 _discover_durable_projects()
-
 
 
 @app.get("/api/config/keys")
@@ -669,546 +663,38 @@ def apply_global_inheritance_to_agents():
     return {"status": "success", "updated": updated, "skipped": skipped, "effective": {agent_id: resolve_effective_agent_ai_config(agent_id) for agent_id in _all_agent_ids()}}
 
 
-def _load_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
-    source = data if data is not None else load_studio_keys()
-    connections = source.get("_provider_connections", [])
-    return [item for item in connections if isinstance(item, dict)] if isinstance(connections, list) else []
+from provider_agent_config import (
+    AGENT_MODELS,
+    DEFAULT_AGENTS,
+    OPENCODE_MODEL_ALIASES,
+    _CODING_CAPABLE_CONNECTION_TYPES,
+    _agent_config_error,
+    _agent_required_capabilities,
+    _compatible_opencode_models_for_agent,
+    _identity_for_product_judge,
+    _parse_optional_float,
+    _parse_optional_positive_int,
+    _reset_agent_ai_config,
+    _run_provider_adapter_coding_task,
+    _select_opencode_fallback_model,
+    _validate_agent_capabilities,
+    _validated_agent_ai_patch,
+    build_agent_ai_resolution,
+    load_agent_configs,
+    save_agent_configs,
+)
 
 
-_PROVIDER_CONNECTION_CREDENTIAL_FIELDS = {
-    "apikey",
-    "token",
-    "accesstoken",
-    "refreshtoken",
-    "secret",
-    "clientsecret",
-    "password",
-    "passwd",
-    "cookie",
-    "cookies",
-    "authorization",
-    "credential",
-    "credentials",
-    "devicecode",
-    "privatekey",
-}
 
 
-def _is_provider_connection_credential_field(key: Any) -> bool:
-    normalized = "".join(char for char in str(key).lower() if char not in {"_", "-", " "})
-    return normalized in _PROVIDER_CONNECTION_CREDENTIAL_FIELDS
 
 
-def _sanitize_provider_connection_for_storage(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _sanitize_provider_connection_for_storage(item)
-            for key, item in value.items()
-            if not _is_provider_connection_credential_field(key)
-        }
-    if isinstance(value, list):
-        return [_sanitize_provider_connection_for_storage(item) for item in value]
-    return value
 
 
-def _remove_credential_fields(value: Any) -> tuple[Any, int]:
-    if isinstance(value, dict):
-        cleaned = {}
-        removed = 0
-        for key, item in value.items():
-            if _is_provider_connection_credential_field(key):
-                removed += 1
-                continue
-            cleaned[key], nested_removed = _remove_credential_fields(item)
-            removed += nested_removed
-        return cleaned, removed
-    if isinstance(value, list):
-        cleaned = []
-        removed = 0
-        for item in value:
-            nested, nested_removed = _remove_credential_fields(item)
-            cleaned.append(nested)
-            removed += nested_removed
-        return cleaned, removed
-    return value, 0
 
 
-def _store_provider_connections(data: dict, connections: list[dict[str, Any]]) -> None:
-    data["_provider_connections"] = _sanitize_provider_connection_for_storage(connections)
 
 
-def _model_capabilities(provider: str, model: str) -> dict[str, Any]:
-    caps = MODEL_CAPABILITY_OVERRIDES.get((provider or "").lower(), {}).get(model)
-    if caps is None:
-        provider_caps = ai_utils.provider_capabilities(provider or "")
-        image_input = True if provider_caps.get("image_input") and model in MODEL_CAPABILITY_OVERRIDES.get((provider or "").lower(), {}) else None
-        caps = {"text_input": True, "image_input": image_input, "structured_output": None, "streaming": None, "tool_use": None}
-    return dict(caps)
-
-
-def _models_with_capabilities(provider: str, models: list[str] | None = None) -> list[dict[str, Any]]:
-    return [{"id": model, "capabilities": _model_capabilities(provider, model)} for model in (models or AI_PROVIDER_MODELS.get(provider, []))]
-
-
-def _parameter_support(provider: str, model: str = "") -> dict[str, bool]:
-    provider_caps = ai_utils.provider_capabilities(provider or "")
-    return {
-        "temperature": True,
-        "top_p": bool(provider_caps.get("top_p")),
-        "top_k": bool(provider_caps.get("top_k")),
-        "max_tokens": True,
-    }
-
-
-def _filter_supported_generation(provider: str, model: str, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
-    support = _parameter_support(provider, model)
-    sendable = {}
-    unsupported = {}
-    for key, value in params.items():
-        if value is None:
-            continue
-        if support.get(key, False):
-            sendable[key] = value
-        else:
-            unsupported[key] = "Not supported by this model/provider"
-    return sendable, unsupported
-
-
-def _provider_credential_exists(data: dict, provider: str) -> bool:
-    return provider == "ollama" or bool(_provider_api_key(provider, data))
-
-
-def _provider_connection_id(provider: str) -> str:
-    return execution_provider_connection_id(provider)
-
-
-def _canonical_connection_type(value: str, provider: str = "") -> str:
-    raw = str(value or "").strip().lower()
-    provider = str(provider or "").strip().lower()
-    if raw in {"opencode", "opencode_bridge", "opencode_oauth_bridge"}:
-        return "opencode_oauth_bridge"
-    if raw in {"openai_api", "api_provider"} and provider == "openai":
-        return "openai_api"
-    if raw in {"api_provider", "other_provider_api"}:
-        return "other_provider_api"
-    if raw == "local_model" or provider == "ollama":
-        return "local_model"
-    return raw or ("openai_api" if provider == "openai" else "other_provider_api")
-
-
-OPENCODE_MODEL_ALIASES = {
-    "nvidia/llama-3.3-70b-instruct": "nvidia/meta/llama-3.3-70b-instruct",
-}
-
-
-def _connection_uses_opencode_transport(connection: dict[str, Any], effective: dict[str, Any] | None = None) -> bool:
-    """Detect OpenCode transport from structured metadata, not a literal connection ID."""
-    values = {
-        str(connection.get("connection_type") or "").lower(),
-        str(connection.get("transport") or "").lower(),
-        str(connection.get("backend") or "").lower(),
-        str(connection.get("execution_backend") or "").lower(),
-        str(connection.get("transport_type") or "").lower(),
-        str((effective or {}).get("connection_type") or "").lower(),
-        str((effective or {}).get("transport") or "").lower(),
-        str((effective or {}).get("backend") or "").lower(),
-        str((effective or {}).get("transport_type") or "").lower(),
-    }
-    return any(is_opencode_connection_type(item) for item in values)
-
-
-def _opencode_model_registry(readiness: dict[str, Any], provider_id: str = "") -> list[dict[str, Any]]:
-    models = []
-    for item in readiness.get("available_models", []) or []:
-        raw = str(item.get("id") if isinstance(item, dict) else item).strip()
-        if not raw:
-            continue
-        model_provider = raw.split("/", 1)[0] if "/" in raw else provider_id
-        if provider_id and model_provider != provider_id:
-            continue
-        models.append({
-            "id": raw,
-            "native_model_id": raw,
-            "provider_id": model_provider,
-            "display_name": raw,
-            "available": True,
-            "source": "opencode_models",
-            "capabilities": item.get("capabilities", {}) if isinstance(item, dict) and isinstance(item.get("capabilities"), dict) else {},
-        })
-    return models
-
-
-def _compatible_opencode_models_for_agent(agent_id: str, connection: dict[str, Any], registry: list[dict[str, Any]]) -> list[str]:
-    compatible = []
-    for item in registry:
-        model = str(item.get("native_model_id") or "")
-        if not model:
-            continue
-        validation_connection = {**connection, "available_models": [{"id": model, "capabilities": item.get("capabilities", {})}], "capability_metadata": {model: item.get("capabilities", {})}}
-        if _validate_agent_capabilities(agent_id, validation_connection, model).get("valid"):
-            compatible.append(model)
-    return compatible
-
-
-def _select_opencode_fallback_model(agent_id: str, connection: dict[str, Any], configured_model: str, registry: list[dict[str, Any]]) -> dict[str, Any]:
-    available = {str(item.get("native_model_id")) for item in registry if item.get("available") and item.get("native_model_id")}
-    provider_id = configured_model.split("/", 1)[0] if "/" in configured_model else ""
-
-    alias = OPENCODE_MODEL_ALIASES.get(configured_model)
-    if alias and alias in available and (not provider_id or alias.startswith(f"{provider_id}/")):
-        return {"possible": True, "selected_model": alias, "reason": "exact_legacy_alias"}
-
-    last_successful = str(connection.get("last_successful_model") or "")
-    if last_successful and last_successful in available and (not provider_id or last_successful.startswith(f"{provider_id}/")):
-        return {"possible": True, "selected_model": last_successful, "reason": "last_successful_model"}
-
-    for candidate in connection.get("model_fallback_chain", []) if isinstance(connection.get("model_fallback_chain"), list) else []:
-        model = str(candidate or "")
-        if model in available and (not provider_id or model.startswith(f"{provider_id}/")):
-            return {"possible": True, "selected_model": model, "reason": "configured_fallback_chain"}
-
-    compatible = _compatible_opencode_models_for_agent(agent_id, connection, registry)
-    if len(compatible) == 1:
-        return {"possible": True, "selected_model": compatible[0], "reason": "single_compatible_model"}
-
-    return {"possible": False, "reason": "no_unambiguous_fallback"}
-
-
-def _save_repaired_opencode_model(agent_id: str, selected_model: str, effective: dict[str, Any]) -> None:
-    data = load_studio_keys()
-    if effective.get("use_global_model") is not False:
-        _save_global_ai_config({
-            "connection_id": effective.get("connection_id", ""),
-            "connection_type": effective.get("connection_type", ""),
-            "provider": effective.get("provider", "opencode_bridge"),
-            "model": selected_model,
-            "temperature": effective.get("temperature"),
-            "top_p": effective.get("top_p"),
-            "top_k": effective.get("top_k"),
-            "max_tokens": effective.get("max_tokens"),
-            "enabled": True,
-        })
-        return
-    configs = data.get("_agent_configs", {}) if isinstance(data.get("_agent_configs"), dict) else {}
-    current = configs.get(agent_id, {}) if isinstance(configs.get(agent_id), dict) else {}
-    current["model"] = selected_model
-    current["use_global_model"] = False
-    configs[agent_id] = current
-    data["_agent_configs"] = configs
-    save_studio_keys(data)
-    global agent_configs
-    agent_configs = configs
-
-
-def _general_provider_connection(data: dict, provider: str, model: str = "", tested: bool | None = None, test_result: dict | None = None) -> dict[str, Any]:
-    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    available_models = _models_with_capabilities(provider)
-    has_credential = _provider_credential_exists(data, provider)
-    status = "configured" if has_credential else "credential_missing"
-    if tested is True:
-        status = "tested" if has_credential else "credential_missing"
-    elif tested is False:
-        status = "test_failed" if has_credential else "credential_missing"
-    connection_type = _canonical_connection_type("api_provider", provider)
-    return {
-        "connection_id": _provider_connection_id(provider),
-        "display_name": f"{provider.upper()} API key",
-        "name": f"{provider.upper()} API key",
-        "provider": provider,
-        "connection_type": connection_type,
-        "credential_reference": _provider_key_name(provider),
-        "configured_status": status,
-        "tested_status": "passed" if tested is True else "failed" if tested is False else "not_tested",
-        "last_test_result": test_result or {},
-        "available_models": available_models,
-        "capability_metadata": {item["id"]: item["capabilities"] for item in available_models},
-        "configured_model": model or (AI_PROVIDER_MODELS.get(provider, [""])[0] if AI_PROVIDER_MODELS.get(provider) else ""),
-        "updated_at": now,
-        "stores_authentication": False,
-        "configured": has_credential,
-        "authenticated": has_credential,
-        "tested": tested is True,
-        "last_test_status": "passed" if tested is True else "failed" if tested is False else "not_tested",
-    }
-
-
-def _upsert_provider_connection(data: dict, connection: dict[str, Any]) -> None:
-    connections = _load_provider_connections(data)
-    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection.get("connection_id")), None)
-    if existing is None:
-        connections.append(connection)
-    else:
-        merged = {**connections[existing], **connection}
-        connections[existing] = merged
-    _store_provider_connections(data, connections)
-
-
-def _ensure_provider_connection_records(data: dict) -> bool:
-    changed = False
-    connections = _load_provider_connections(data)
-    for item in connections:
-        if not isinstance(item, dict):
-            continue
-        canonical = _canonical_connection_type(str(item.get("connection_type") or ""), str(item.get("provider") or ""))
-        if item.get("connection_type") != canonical:
-            item["connection_type"] = canonical
-            changed = True
-    existing_ids = {item.get("connection_id") for item in connections}
-    system = _get_saved_system_settings(data)
-    candidate_providers = {str(system.get("global_provider") or "").lower()}
-    for provider in AI_PROVIDER_MODELS:
-        if provider == "ollama" and system.get("global_provider") != "ollama":
-            continue
-        if provider != "ollama" and _provider_credential_exists(data, provider):
-            candidate_providers.add(provider)
-    for provider in sorted(item for item in candidate_providers if item in AI_PROVIDER_MODELS):
-        connection_id = _provider_connection_id(provider)
-        if connection_id in existing_ids:
-            continue
-        model = system.get("global_model", "") if system.get("global_provider") == provider else ""
-        connections.append(_general_provider_connection(data, provider, model))
-        existing_ids.add(connection_id)
-        changed = True
-    if changed:
-        _store_provider_connections(data, connections)
-    return changed
-
-
-def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
-    safe = _sanitize_provider_connection_for_storage(connection)
-    safe["connection_type"] = _canonical_connection_type(str(safe.get("connection_type") or ""), str(safe.get("provider") or ""))
-    if _connection_uses_opencode_transport(safe):
-        safe["connection_type"] = "opencode_oauth_bridge"
-        configured = safe.get("configured_model") or ""
-        raw_models = safe.get("available_models") if isinstance(safe.get("available_models"), list) else []
-        bridge_capabilities = safe.get("capabilities", {}) if isinstance(safe.get("capabilities"), dict) else {}
-        readiness_passed = safe.get("readiness_status") == "ready"
-        model_capabilities = {
-            "text_input": readiness_passed or bridge_capabilities.get("text_input", {}).get("status") == "supported",
-            "image_input": bridge_capabilities.get("image_input", {}).get("status") == "supported",
-            "structured_output": None,
-            "streaming": False,
-            "tool_use": None,
-        }
-        models = []
-        for item in raw_models:
-            if isinstance(item, dict):
-                item_id = str(item.get("id") or "")
-                capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else model_capabilities
-                if item_id:
-                    models.append({**item, "id": item_id, "capabilities": {**model_capabilities, **capabilities}})
-            elif item:
-                item_id = str(item)
-                models.append({"id": item_id, "capabilities": model_capabilities, "provider": item_id.split("/", 1)[0] if "/" in item_id else "opencode", "source_connection": safe.get("connection_id", "")})
-        if not models and configured:
-            models = [{"id": configured, "capabilities": model_capabilities, "provider": configured.split("/", 1)[0] if "/" in configured else "opencode", "source_connection": safe.get("connection_id", "")}]
-        safe["provider"] = "opencode_bridge"
-        safe["display_name"] = safe.get("display_name") or safe.get("name") or "OpenCode"
-        safe["tested_status"] = "passed" if model_capabilities["text_input"] else "not_tested"
-        safe["configured_status"] = "tested" if safe["tested_status"] == "passed" else "configured"
-        safe["available_models"] = models
-        safe["capability_metadata"] = {item["id"]: item["capabilities"] for item in safe["available_models"]}
-        safe["last_test_result"] = {"status": "ok" if safe["tested_status"] == "passed" else "not_tested", "message": safe.get("last_checked_at", "")}
-        safe["updated_at"] = safe.get("last_checked_at", "")
-        safe["stores_authentication"] = False
-        safe["authentication_owner"] = "OpenCode"
-        safe["configured"] = True
-        safe["authenticated"] = safe["tested_status"] == "passed"
-        safe["tested"] = safe["tested_status"] == "passed"
-        safe["last_test_status"] = safe["tested_status"]
-        if readiness_passed:
-            safe["capabilities"] = {"text_input": {"status": "supported", "evidence": "Backend readiness gate verified executable, server, provider authentication, and selected model."}}
-    return safe
-
-
-def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
-    source = data if data is not None else load_studio_keys()
-    _ensure_provider_connection_records(source)
-    legacy = [_sanitize_provider_connection(item) for item in _load_provider_connections(source)]
-    existing_ids = {item.get("connection_id") for item in legacy}
-    universal = []
-    for item in _universal_provider_connections(source):
-        cid = item.get("connection_id")
-        if not cid or cid in existing_ids:
-            continue
-        model_id = str(item.get("model_id") or "")
-        provider = str(item.get("provider_id") or item.get("provider") or "")
-        ctype = str(item.get("connection_type") or "")
-        display = str(item.get("display_name") or cid)
-        universal.append(_sanitize_provider_connection({
-            **item,
-            "name": display,
-            "display_name": display,
-            "provider": provider,
-            "configured_model": model_id,
-            "configured_provider": provider,
-            "configured_status": "configured" if item.get("enabled", True) else "disabled",
-            "tested_status": "not_tested",
-            "available_models": [{"id": model_id, "capabilities": {"text_input": True, "image_input": None, "structured_output": None, "streaming": None, "tool_use": None}}] if model_id else [],
-            "capability_metadata": {model_id: {"text_input": True, "image_input": None, "structured_output": None, "streaming": None, "tool_use": None}} if model_id else {},
-            "authentication_owner": "official_cli" if item.get("auth_method") == "delegated_cli_login" else item.get("auth_method", ""),
-            "supports_provider_auth": item.get("auth_method") == "delegated_cli_login" or ctype == "opencode_provider",
-        }))
-    return legacy + universal
-
-
-def _default_global_ai_config(data: dict | None = None) -> dict[str, Any]:
-    source = data if data is not None else load_studio_keys()
-    system = _get_saved_system_settings(source)
-    provider = str(system.get("global_provider") or "nvidia").lower()
-    model = str(system.get("global_model") or (AI_PROVIDER_MODELS.get(provider, [""])[0] if AI_PROVIDER_MODELS.get(provider) else ""))
-    return {
-        "connection_id": _provider_connection_id(provider),
-        "connection_type": _canonical_connection_type("api_provider", provider),
-        "provider": provider,
-        "model": model,
-        "temperature": 0.2,
-        "top_p": None,
-        "top_k": None,
-        "max_tokens": None,
-        "enabled": True,
-        "updated_at": "",
-    }
-
-
-def _load_global_ai_config(data: dict | None = None) -> dict[str, Any]:
-    source = data if data is not None else load_studio_keys()
-    if data is None and _migrate_legacy_opencode_model_references(source):
-        save_studio_keys(source)
-    saved = source.get("_global_ai", {}) if isinstance(source.get("_global_ai"), dict) else {}
-    return {**_default_global_ai_config(source), **saved}
-
-
-def _save_global_ai_config(config: dict[str, Any]) -> dict[str, Any]:
-    data = load_studio_keys()
-    _migrate_legacy_opencode_model_references(data)
-    current = _load_global_ai_config(data)
-    normalized = _normalize_model_for_connection(str(config.get("model") or ""), str(config.get("connection_id") or current.get("connection_id") or ""), data)
-    if normalized.get("model_id"):
-        config = {**config, "model": normalized["model_id"]}
-        if normalized.get("migrated") and not config.get("connection_id"):
-            config["connection_id"] = normalized.get("connection_id")
-    current.update({key: value for key, value in config.items() if key in {"connection_id", "connection_type", "provider", "model", "temperature", "top_p", "top_k", "max_tokens", "enabled"}})
-    current["updated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    data["_global_ai"] = current
-    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
-    system["global_provider"] = current["provider"]
-    system["global_model"] = current["model"]
-    data["_system"] = system
-    SYSTEM_SETTINGS["global_provider"] = current["provider"]
-    SYSTEM_SETTINGS["global_model"] = current["model"]
-    if current.get("connection_type") != "opencode_oauth_bridge":
-        _upsert_provider_connection(data, _general_provider_connection(data, current["provider"], current["model"]))
-    save_studio_keys(data)
-    return current
-
-
-def _vision_models_for_connection(connection: dict[str, Any]) -> list[dict[str, Any]]:
-    return [item for item in connection.get("available_models", []) if isinstance(item, dict) and item.get("capabilities", {}).get("image_input") is True]
-
-
-def _connection_for_id(connection_id: str, data: dict | None = None) -> dict[str, Any]:
-    return next((item for item in _frontend_provider_connections(data) if item.get("connection_id") == connection_id), {})
-
-
-def _opencode_connection_ids(data: dict | None = None) -> set[str]:
-    return {str(item.get("connection_id")) for item in _load_provider_connections(data) if isinstance(item, dict) and _connection_uses_opencode_transport(item) and item.get("connection_id")}
-
-
-def _normalize_model_for_connection(model: str, connection_id: str = "", data: dict | None = None) -> dict[str, Any]:
-    known_ids = _opencode_connection_ids(data)
-    if connection_id:
-        known_ids.add(str(connection_id))
-    if _HAS_OPENCODE:
-        return normalize_opencode_model_id(model, connection_id, known_ids)
-    return normalize_execution_model_id(model, connection_id, known_ids)
-
-
-def _migrate_legacy_opencode_model_references(data: dict) -> bool:
-    changed = migrate_legacy_execution_config(data)
-    global_cfg = data.get("_global_ai", {}) if isinstance(data.get("_global_ai"), dict) else {}
-    if changed and global_cfg.get("connection_type") == "opencode_oauth_bridge" and global_cfg.get("model"):
-        system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
-        system["global_provider"] = "opencode_bridge"
-        system["global_model"] = global_cfg["model"]
-        data["_system"] = system
-    global_connection_id = str(global_cfg.get("connection_id") or "")
-    normalized = _normalize_model_for_connection(str(global_cfg.get("model") or ""), global_connection_id, data)
-    if normalized.get("migrated"):
-        global_cfg["connection_id"] = normalized.get("connection_id") or global_connection_id
-        global_cfg["model"] = normalized["model_id"]
-        global_cfg["provider"] = "opencode_bridge"
-        global_cfg["connection_type"] = "opencode_oauth_bridge"
-        data["_global_ai"] = global_cfg
-        system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
-        system["global_provider"] = "opencode_bridge"
-        system["global_model"] = normalized["model_id"]
-        data["_system"] = system
-        changed = True
-    configs = data.get("_agent_configs", {}) if isinstance(data.get("_agent_configs"), dict) else {}
-    for agent_id, cfg in list(configs.items()):
-        if not isinstance(cfg, dict) or agent_id.startswith("_"):
-            continue
-        connection_id = str(cfg.get("connection_id") or global_cfg.get("connection_id") or "")
-        normalized = _normalize_model_for_connection(str(cfg.get("model") or ""), connection_id, data)
-        if normalized.get("migrated"):
-            cfg["connection_id"] = cfg.get("connection_id") or normalized.get("connection_id")
-            cfg["model"] = normalized["model_id"]
-            configs[agent_id] = cfg
-            changed = True
-    if changed:
-        data["_agent_configs"] = configs
-    return changed
-
-
-def _identity_for_product_judge(connection: dict[str, Any], model: str, use_global: bool = False) -> tuple[str, str]:
-    if use_global:
-        return SYSTEM_SETTINGS["global_provider"], SYSTEM_SETTINGS["global_model"]
-    provider = str(connection.get("provider") or "")
-    if provider == "opencode_bridge" and "/" in model:
-        return model.split("/", 1)[0], model
-    return provider, model
-
-
-def _product_judge_independence(provider: str, model: str) -> str:
-    implementation_provider, implementation_model = get_agent_provider_model("elena")
-    if not provider or not model:
-        return "unavailable"
-    if provider != implementation_provider:
-        return "different_provider"
-    if model != implementation_model:
-        return "same_provider_different_model"
-    return "same_model_separate_role"
-
-
-def _product_judge_status(config: dict[str, Any] | None = None, data: dict | None = None) -> dict[str, Any]:
-    source = data if data is not None else load_studio_keys()
-    cfg = config if config is not None else {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
-    if not cfg.get("enabled", True):
-        return {"status": "configured", "available": False, "reason": "Product Judge is disabled", "independence_level": "unavailable"}
-    connection = {}
-    model = str(cfg.get("model") or "")
-    if cfg.get("use_global"):
-        global_cfg = _load_global_ai_config(source)
-        provider = str(global_cfg.get("provider") or SYSTEM_SETTINGS["global_provider"])
-        connection = _connection_for_id(str(global_cfg.get("connection_id") or _provider_connection_id(provider)), source)
-        model = model or str(global_cfg.get("model") or SYSTEM_SETTINGS["global_model"])
-    else:
-        connection = _connection_for_id(str(cfg.get("connection_id") or ""), source)
-    if not connection:
-        return {"status": "not_configured", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["not_configured"], "independence_level": "unavailable"}
-    provider, identity_model = _identity_for_product_judge(connection, model, bool(cfg.get("use_global")))
-    independence = _product_judge_independence(provider, identity_model)
-    if connection.get("configured_status") == "credential_missing":
-        return {"status": "credential_missing", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["credential_missing"], "connection": connection, "independence_level": independence}
-    if connection.get("tested_status") == "failed":
-        return {"status": "connection_failed", "available": False, "reason": connection.get("last_test_result", {}).get("message") or PRODUCT_JUDGE_STATUS_REASONS["connection_failed"], "connection": connection, "independence_level": independence}
-    if connection.get("tested_status") != "passed":
-        return {"status": "provider_not_tested", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["provider_not_tested"], "connection": connection, "independence_level": independence}
-    capability = connection.get("capability_metadata", {}).get(model, {})
-    if capability.get("image_input") is not True:
-        return {"status": "no_vision_model", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["no_vision_model"], "connection": connection, "independence_level": independence}
-    return {"status": "available", "available": True, "reason": f"Available - {provider} / {model}", "connection": connection, "model": model, "provider": provider, "independence_level": independence}
 
 
 @app.get("/api/provider-connections")
@@ -1216,90 +702,6 @@ def list_provider_connections():
     """Connection settings intentionally exclude raw credentials and browser state."""
     data = load_studio_keys()
     return {"providers": PROVIDER_REGISTRY, "connections": _frontend_provider_connections(data), "universal_connections": _universal_provider_connections(data), "credential_backend": ProviderCredentialStore(default_backend()).diagnostics()}
-
-
-def _universal_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
-    source = data if data is not None else load_studio_keys()
-    if migrate_provider_connections(source):
-        save_studio_keys(source)
-    connections = source.get("_universal_provider_connections", []) if isinstance(source.get("_universal_provider_connections"), list) else []
-    safe = []
-    for item in connections:
-        if not isinstance(item, dict):
-            continue
-        clean = _sanitize_provider_connection_for_storage(item)
-        clean.pop("api_key", None)
-        clean.pop("token", None)
-        clean.pop("secret", None)
-        safe.append(clean)
-    return safe
-
-
-def _save_universal_provider_connections(data: dict, connections: list[dict[str, Any]]) -> None:
-    data["_universal_provider_connections"] = [_sanitize_provider_connection_for_storage(item) for item in connections]
-
-
-def _universal_connection_index(connections: list[dict[str, Any]], connection_id: str) -> int | None:
-    for index, item in enumerate(connections):
-        if item.get("connection_id") == connection_id:
-            return index
-    return None
-
-
-def _connection_cost_mode(connection: ProviderConnection) -> str:
-    if connection.auth_method == AuthMethod.LOCAL.value or "local" in connection.connection_type or connection.connection_type == ConnectionType.OLLAMA_LOCAL.value:
-        return "local_compute"
-    if "api_key" in connection.connection_type:
-        return "separately_billed_api"
-    return "subscription_limits"
-
-
-async def _provider_connection_state(connection: ProviderConnection) -> dict[str, Any]:
-    adapter = provider_registry.create(connection)
-    capabilities = await adapter.get_capabilities()
-    result = await adapter.test_connection()
-    credential_state = "none"
-    if connection.credential_reference:
-        credential_state = "reference_configured"
-        if "api_key" in connection.connection_type and result.error_code == "auth_required":
-            credential_state = "credential_missing"
-    return {
-        "connection": connection.to_dict(),
-        "result": result.to_dict(),
-        "capabilities": capabilities.to_dict(),
-        "cost_mode": _connection_cost_mode(connection),
-        "privacy_locality": "local" if _connection_cost_mode(connection) == "local_compute" else "cloud",
-        "credential_state": credential_state,
-        "diagnostics": result.diagnostics,
-        "last_validation": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-    }
-
-
-def _connection_used_by_agents(data: dict, connection_id: str) -> list[str]:
-    configs = data.get("_agent_configs", {}) if isinstance(data.get("_agent_configs"), dict) else {}
-    used = []
-    for agent_id, cfg in configs.items():
-        if not isinstance(cfg, dict):
-            continue
-        refs = {str(cfg.get("connection_id") or ""), str(cfg.get("primary_connection") or "")}
-        refs.update(str(item) for item in cfg.get("fallbacks", []) if isinstance(cfg.get("fallbacks"), list))
-        if connection_id in refs:
-            used.append(str(agent_id))
-    return used
-
-
-def _cleanup_connection_assignments(data: dict, connection_id: str) -> None:
-    configs = data.get("_agent_configs", {}) if isinstance(data.get("_agent_configs"), dict) else {}
-    for cfg in configs.values():
-        if not isinstance(cfg, dict):
-            continue
-        if cfg.get("connection_id") == connection_id:
-            cfg["connection_id"] = None
-            cfg["use_global_connection"] = True
-        if cfg.get("primary_connection") == connection_id:
-            cfg["primary_connection"] = None
-        if isinstance(cfg.get("fallbacks"), list):
-            cfg["fallbacks"] = [item for item in cfg["fallbacks"] if item != connection_id]
 
 
 @app.get("/api/provider-layer")
@@ -1722,38 +1124,6 @@ def delete_ai_provider_key(provider: str):
     return {"status": "deleted", "provider": provider, "existed": existed, **_ai_settings_response(data)}
 
 
-def _test_provider_key(provider: str, key: str) -> tuple[bool, str]:
-    if provider == "ollama":
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as resp:
-                return resp.status == 200, "Ollama is reachable" if resp.status == 200 else f"HTTP {resp.status}"
-        except Exception as e:
-            return False, f"Ollama is not reachable: {e}"
-    if not key:
-        return False, f"No API key saved for {provider}"
-    endpoints = {
-        "openai": ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {key}"}),
-        "nvidia": ("https://integrate.api.nvidia.com/v1/models", {"Authorization": f"Bearer {key}"}),
-        "groq": ("https://api.groq.com/openai/v1/models", {"Authorization": f"Bearer {key}"}),
-        "mistral": ("https://api.mistral.ai/v1/models", {"Authorization": f"Bearer {key}"}),
-        "deepseek": ("https://api.deepseek.com/models", {"Authorization": f"Bearer {key}"}),
-        "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}),
-        "google": (f"https://generativelanguage.googleapis.com/v1beta/models?key={key}", {}),
-        "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}),
-    }
-    url, headers = endpoints.get(provider, ("", {}))
-    if not url:
-        return False, "Unsupported provider test"
-    try:
-        req = urllib.request.Request(url, headers={**headers, "User-Agent": "FreelancerStudio"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return 200 <= resp.status < 300, "Provider key accepted" if 200 <= resp.status < 300 else f"HTTP {resp.status}"
-    except urllib.error.HTTPError as e:
-        return False, f"Provider rejected key or request: HTTP {e.code}"
-    except Exception as e:
-        return False, f"Connection test failed: {e}"
-
-
 @app.post("/api/config/ai/test")
 def test_ai_provider(payload: ProviderTestPayload):
     data = load_studio_keys()
@@ -1809,12 +1179,6 @@ def verify_ai_settings():
     }
 
 
-AGENT_MODELS = {
-    "nvidia": "meta/llama-3.3-70b-instruct",
-    "openai": "gpt-4",
-    "ollama": "dolphin-mistral:7b",
-    "anthropic": "claude-sonnet-4-20250514",
-}
 
 # ── Resume / Phase tracking ──────────────────────────────────────────────────
 _PHASE_ORDER = ["planning", "designing", "testing", "coding", "review", "qa", "product_judge"]
@@ -2207,17 +1571,6 @@ def _save_phase(project: dict, phase_name: str):
     _save_projects_state()
 
 
-DEFAULT_AGENTS = {
-    "alex": {"name": "Alex", "role": "project_manager", "emoji": "👔", "color": "#6366f1", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("alex")},
-    "maya": {"name": "Maya", "role": "analyst", "emoji": "🎯", "color": "#a855f7", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("maya")},
-    "elena": {"name": "Elena", "role": "designer", "emoji": "🎨", "color": "#ec4899", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("elena")},
-    "codex": {"name": "Codex", "role": "developer", "emoji": "💻", "color": "#0ea5e9", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("codex")},
-    "bugcatcher": {"name": "BugCatcher", "role": "tester", "emoji": "🐛", "color": "#10b981", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("bugcatcher")},
-    "sentinel": {"name": "Sentinel", "role": "security", "emoji": "🛡️", "color": "#ef4444", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("sentinel")},
-    "lupa": {"name": "Lupa", "role": "code_reviewer", "emoji": "🔍", "color": "#8b5cf6", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("lupa")},
-    "goldie": {"name": "Goldie", "role": "sales", "emoji": "💰", "color": "#f59e0b", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("goldie")},
-    "product_judge": {"name": "Product Judge", "role": "product_judge", "emoji": "⚖", "color": "#f97316", "enabled": True, "builtin": True, "status": "idle", "provider": "", "model": "", "use_global": False, **recommended_defaults_for("product_judge"), "top_k": None, "auto_select_independent": True},
-}
 
 _AI_SPEED_HINT = (
     "IMPORTANT: You are an AI assistant, not a human. Projects are completed in minutes, not days or weeks. "
@@ -2380,353 +1733,69 @@ def get_fast_agent_prompt(agent_id: str) -> str:
         "You are a professional AI assistant. Answer concisely and helpfully."
     )
 
-def get_agent_provider_model(agent_id: str) -> tuple:
-    effective = resolve_effective_agent_ai_config(agent_id)
-    return effective["provider"], effective["model"]
-
-def _agent_default_config(agent_id: str) -> dict[str, Any]:
-    if agent_id in DEFAULT_AGENTS:
-        return DEFAULT_AGENTS[agent_id]
-    return agent_configs.get("_custom_agents", {}).get(agent_id, {})
 
 
-def _agent_required_capabilities(agent_id: str) -> dict[str, bool]:
-    if agent_id == "product_judge":
-        return {"text_input": True, "image_input": True}
-    return {"text_input": True}
 
 
-def _validate_agent_capabilities(agent_id: str, connection: dict[str, Any], model: str) -> dict[str, Any]:
-    metadata = connection.get("capability_metadata", {}) if isinstance(connection, dict) else {}
-    available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
-    model_in_connection = not available_model_ids or model in available_model_ids
-    capabilities = metadata.get(model) if isinstance(metadata.get(model), dict) else _model_capabilities(str(connection.get("provider") or ""), model)
-    missing = []
-    unknown = []
-    for name, required in _agent_required_capabilities(agent_id).items():
-        if not required:
-            continue
-        value = capabilities.get(name)
-        if value is False:
-            missing.append(name)
-        elif value is not True:
-            unknown.append(name)
-    valid = model_in_connection and not missing and not unknown
-    reason = "compatible" if valid else f"Missing capability: {', '.join(missing)}" if missing else f"Unknown capability: {', '.join(unknown)}"
-    if not model_in_connection:
-        reason = "Model is not available on the selected connection."
-    if agent_id == "product_judge":
-        opencode_bridge_tested = connection.get("connection_type") == "opencode_oauth_bridge" and connection.get("capabilities", {}).get("text_input", {}).get("status") == "supported"
-        if connection.get("tested_status") != "passed" and not opencode_bridge_tested:
-            valid = False
-            reason = "Selected model is not eligible for Product Judge."
-        elif not valid:
-            reason = "Selected model is not eligible for Product Judge."
-    return {"valid": valid, "required": _agent_required_capabilities(agent_id), "capabilities": capabilities, "missing": missing, "unknown": unknown, "model_in_connection": model_in_connection, "reason": reason}
 
 
-def _agent_config_error(code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
-def _parse_optional_float(value: Any, field: str, minimum: float, maximum: float) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        number = float(str(value).strip().replace(",", "."))
-    except (TypeError, ValueError):
-        raise _agent_config_error("agent_parameters_invalid", f"{field} must be a number.")
-    if number < minimum or number > maximum:
-        raise _agent_config_error("agent_parameters_invalid", f"{field} must be between {minimum:g} and {maximum:g}.")
-    return number
 
 
-def _parse_optional_positive_int(value: Any, field: str) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        text = str(value).strip().replace(",", ".")
-        number = float(text)
-    except (TypeError, ValueError):
-        raise _agent_config_error("agent_parameters_invalid", f"{field} must be a positive integer.")
-    if number <= 0 or not number.is_integer():
-        raise _agent_config_error("agent_parameters_invalid", f"{field} must be a positive integer.")
-    return int(number)
 
 
-def _reset_agent_ai_config(current: dict[str, Any]) -> dict[str, Any]:
-    preserved = {key: current[key] for key in ("enabled", "custom_prompt", "save_path") if key in current}
-    preserved.update({
-        "use_global": True,
-        "use_global_connection": True,
-        "use_global_model": True,
-        "use_global_generation_parameters": True,
-        "connection_id": None,
-        "connection_type": None,
-        "provider": None,
-        "model": None,
-        "temperature": None,
-        "top_p": None,
-        "top_k": None,
-        "max_tokens": None,
-        "primary_connection": None,
-        "preferred_model": None,
-        "fallbacks": [],
-        "fallback_mode": None,
-        "allow_paid_api": False,
-        "required_capabilities": [],
-        "locality_policy": None,
-    })
-    return preserved
 
 
-def _validated_agent_ai_patch(agent_id: str, current: dict[str, Any], raw_patch: dict[str, Any]) -> dict[str, Any]:
-    if raw_patch.get("reset_to_defaults"):
-        return _reset_agent_ai_config(current)
-
-    patch = {key: value for key, value in raw_patch.items() if key != "reset_to_defaults"}
-    next_cfg = {**current, **patch}
-    if next_cfg.get("use_global_connection") is None and "use_global_connection" not in next_cfg:
-        next_cfg["use_global_connection"] = True
-    if next_cfg.get("use_global_model") is None and "use_global_model" not in next_cfg:
-        next_cfg["use_global_model"] = True
-    if next_cfg.get("use_global_generation_parameters") is None and "use_global_generation_parameters" not in next_cfg:
-        next_cfg["use_global_generation_parameters"] = True
-
-    if next_cfg.get("use_global_connection") is False:
-        connection_id = str(next_cfg.get("connection_id") or "").strip()
-        if not connection_id:
-            raise _agent_config_error("agent_connection_required", "Select a connection for this agent.")
-        connection = _connection_for_id(connection_id)
-        if not connection:
-            raise _agent_config_error("agent_connection_not_found", "Selected agent connection was not found.")
-        next_cfg["connection_id"] = connection_id
-        next_cfg["provider"] = connection.get("provider") or next_cfg.get("provider")
-        next_cfg["connection_type"] = connection.get("connection_type") or next_cfg.get("connection_type")
-    else:
-        next_cfg["connection_id"] = None
-        next_cfg["connection_type"] = None
-        next_cfg["provider"] = None
-
-    if next_cfg.get("use_global_model") is False:
-        model = str(next_cfg.get("model") or "").strip()
-        normalized_model = _normalize_model_for_connection(model, str(next_cfg.get("connection_id") or _load_global_ai_config().get("connection_id") or ""))
-        model = str(normalized_model.get("model_id") or model)
-        if normalized_model.get("migrated") and not next_cfg.get("connection_id"):
-            next_cfg["connection_id"] = normalized_model.get("connection_id")
-        if not model:
-            raise _agent_config_error("agent_model_required", "Select a model for this agent.")
-        effective_connection_id = str(next_cfg.get("connection_id") or _load_global_ai_config().get("connection_id") or "")
-        connection = _connection_for_id(effective_connection_id)
-        available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
-        if available_model_ids and model not in available_model_ids:
-            raise _agent_config_error("agent_model_unavailable", "Selected model is not available for this agent connection.")
-        validation = _validate_agent_capabilities(agent_id, connection, model)
-        if not validation.get("valid"):
-            raise _agent_config_error("agent_configuration_incompatible", str(validation.get("reason") or "Agent configuration is incompatible."))
-        next_cfg["model"] = model
-    elif "model" in patch and not str(patch.get("model") or "").strip():
-        next_cfg["model"] = None
-
-    if next_cfg.get("use_global_generation_parameters") is False:
-        if "temperature" in patch:
-            next_cfg["temperature"] = _parse_optional_float(patch.get("temperature"), "Temperature", 0, 2)
-        if "top_p" in patch:
-            next_cfg["top_p"] = _parse_optional_float(patch.get("top_p"), "Top_p", 0, 1)
-        if "top_k" in patch:
-            next_cfg["top_k"] = _parse_optional_positive_int(patch.get("top_k"), "Top_k")
-        if "max_tokens" in patch:
-            next_cfg["max_tokens"] = _parse_optional_positive_int(patch.get("max_tokens"), "Max tokens")
-    else:
-        for key in ("temperature", "top_p", "top_k", "max_tokens"):
-            if key in patch and patch[key] in (None, ""):
-                next_cfg[key] = None
-
-    return {key: value for key, value in next_cfg.items() if key in {
-        "use_global", "use_global_connection", "use_global_model", "use_global_generation_parameters",
-        "connection_id", "connection_type", "provider", "model", "temperature", "top_p", "top_k", "max_tokens",
-        "enabled", "custom_prompt", "save_path", "primary_connection", "preferred_model", "fallbacks", "fallback_mode",
-        "allow_paid_api", "required_capabilities", "locality_policy",
-    }}
 
 
-def resolve_effective_agent_ai_config(agent_id: str) -> dict[str, Any]:
-    data = load_studio_keys()
-    _ensure_provider_connection_records(data)
-    migrated = _migrate_legacy_opencode_model_references(data)
-    if migrated:
-        save_studio_keys(data)
-        SYSTEM_SETTINGS.update(_get_saved_system_settings(data))
-        global agent_configs
-        agent_configs = load_agent_configs()
-    global_cfg = _load_global_ai_config(data)
-    agent = agent_configs.get(agent_id, {})
-    default = _agent_default_config(agent_id)
-    legacy_use_global = agent.get("use_global", default.get("use_global", True)) is not False
-    use_global_connection = bool(agent.get("use_global_connection", legacy_use_global))
-    use_global_model = bool(agent.get("use_global_model", legacy_use_global))
-    use_global_generation = bool(agent.get("use_global_generation_parameters", legacy_use_global))
-    connection_id = global_cfg.get("connection_id", "") if use_global_connection else str(agent.get("connection_id") or "")
-    provider = str(global_cfg.get("provider") or SYSTEM_SETTINGS["global_provider"]) if use_global_connection else str(agent.get("provider") or default.get("provider") or SYSTEM_SETTINGS["global_provider"])
-    if not connection_id:
-        connection_id = _provider_connection_id(provider)
-    connection = _connection_for_id(connection_id, data)
-    if not connection and provider:
-        connection = _general_provider_connection(data, provider, agent.get("model") or default.get("model") or global_cfg.get("model", ""))
-    model = str(global_cfg.get("model") or SYSTEM_SETTINGS["global_model"]) if use_global_model else str(agent.get("model") or default.get("model") or global_cfg.get("model") or SYSTEM_SETTINGS["global_model"])
-    model = str(_normalize_model_for_connection(model, connection_id, data).get("model_id") or model)
-    available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
-    stale_model = bool(available_model_ids and model not in available_model_ids)
-    if use_global_generation:
-        generation = {key: global_cfg.get(key) for key in ("temperature", "top_p", "top_k", "max_tokens")}
-        generation_source = "global"
-    else:
-        generation = {
-            "temperature": agent.get("temperature", default.get("temperature", global_cfg.get("temperature", 0.2))),
-            "top_p": agent.get("top_p", default.get("top_p", global_cfg.get("top_p"))),
-            "top_k": agent.get("top_k", default.get("top_k", global_cfg.get("top_k"))),
-            "max_tokens": agent.get("max_tokens", default.get("max_tokens", global_cfg.get("max_tokens"))),
-        }
-        generation_source = "agent"
-    sendable, unsupported = _filter_supported_generation(provider, model, generation)
-    validation = _validate_agent_capabilities(agent_id, connection, model)
-    return {
-        "agent_id": agent_id,
-        "connection_id": connection_id,
-        "connection_type": connection.get("connection_type", _canonical_connection_type("api_provider", provider)),
-        "provider": provider,
-        "model": model,
-        "stale_model": stale_model,
-        "connection_display_name": connection.get("display_name") or connection.get("name") or provider,
-        "temperature": generation.get("temperature"),
-        "top_p": generation.get("top_p"),
-        "top_k": generation.get("top_k"),
-        "max_tokens": generation.get("max_tokens"),
-        "generation_parameters": generation,
-        "sendable_generation_parameters": sendable,
-        "unsupported_generation_parameters": unsupported,
-        "use_global_connection": use_global_connection,
-        "use_global_model": use_global_model,
-        "use_global_generation_parameters": use_global_generation,
-        "inherited_fields": {
-            "connection": use_global_connection,
-            "model": use_global_model,
-            "generation_parameters": use_global_generation,
-        },
-        "overridden_fields": {
-            "connection": not use_global_connection,
-            "model": not use_global_model,
-            "generation_parameters": not use_global_generation,
-        },
-        "configuration_source": {
-            "connection": "global" if use_global_connection else "agent",
-            "model": "global" if use_global_model else "agent",
-            "generation_parameters": generation_source,
-        },
-        "capability_validation": validation,
-        "capability_status": "compatible" if validation.get("valid") else "incompatible",
-        "recommended_defaults": recommended_defaults_for(agent_id),
-    }
+
 
 
 def agent_generation_kwargs(agent_id: str) -> dict[str, Any]:
     return resolve_effective_agent_ai_config(agent_id)["sendable_generation_parameters"]
 
 
-def agent_opencode_model_override(agent_id: str) -> str:
-    effective = resolve_effective_agent_ai_config(agent_id)
-    model = str(effective.get("model") or "")
-    provider = str(effective.get("provider") or "")
-    if not model:
-        return ""
-    if "/" in model:
-        return model
-    return f"{provider}/{model}" if provider else model
 
 
-_CODING_CAPABLE_CONNECTION_TYPES = {
-    ConnectionType.CODEX_CHATGPT_SUBSCRIPTION.value,
-    ConnectionType.CLAUDE_SUBSCRIPTION.value,
-    ConnectionType.OPENCODE_PROVIDER.value,
-}
 
 
-def resolve_agent_provider_connection(agent_id: str) -> ProviderConnection | None:
-    """Return a real coding-capable ProviderConnection explicitly configured for this
-    agent via the new provider layer, or None to keep the existing mandatory-OpenCode path.
-
-    Only an agent with a primary_connection pointing at a CLI-subscription connection
-    (file editing + command execution capability, not a plain chat/API connection) is
-    routed through the provider layer -- everyone else's behavior is unchanged.
-    """
-    agent_cfg = agent_configs.get(agent_id, {})
-    if not agent_cfg.get("enabled", True):
-        return None
-    connection_id = str(agent_cfg.get("primary_connection") or "").strip()
-    if not connection_id:
-        return None
-    record = next((item for item in _universal_provider_connections() if item.get("connection_id") == connection_id), None)
-    if not record or not record.get("enabled", True):
-        return None
-    if record.get("connection_type") not in _CODING_CAPABLE_CONNECTION_TYPES:
-        return None
-    try:
-        return ProviderConnection(**{key: value for key, value in record.items() if key in ProviderConnection.__dataclass_fields__})
-    except Exception:
-        return None
 
 
-def _run_provider_adapter_coding_task(connection: ProviderConnection, brief: ExecutionBrief, log_callback, cancel_check) -> dict[str, Any]:
-    """Drive a ProviderAdapter.execute() coding run to completion, synchronously.
-
-    Mirrors opencode_bridge.execute_coding_task's result shape ({success,
-    cancelled, session_id, summary, error}) so the rest of the pipeline does
-    not need to know which backend actually generated the code.
-    """
-    async def _drive() -> dict[str, Any]:
-        adapter = provider_registry.create(connection)
-        execution_id = ""
-        summary_parts: list[str] = []
-        cancelled = False
-        success = False
-        error_message = ""
-        async for event in adapter.execute(brief):
-            execution_id = event.execution_id or execution_id
-            if event.type == AgentEventType.COMPLETED.value:
-                success = True
-            elif event.type == AgentEventType.CANCELLED.value:
-                cancelled = True
-            elif event.type == AgentEventType.ERROR.value:
-                error_message = event.message or "Unknown provider error"
-            elif event.message:
-                summary_parts.append(event.message)
-            if event.message:
-                log_callback(f"[{connection.connection_type}]: {event.message}")
-            if cancel_check and cancel_check() and not cancelled:
-                await adapter.cancel(execution_id)
-        return {
-            "success": success,
-            "cancelled": cancelled,
-            "session_id": execution_id,
-            "summary": " ".join(summary_parts)[-2000:] if summary_parts else error_message,
-            "error": error_message,
-        }
-
-    return asyncio.run(_drive())
 
 
-def load_agent_configs() -> Dict[str, Dict[str, Any]]:
-    data = load_studio_keys()
-    return data.get("_agent_configs", {})
 
 
-def save_agent_configs(configs: Dict[str, Dict[str, Any]]):
-    data = load_studio_keys()
-    data["_agent_configs"] = configs
-    save_studio_keys(data)
 
 
 agent_configs = load_agent_configs()
+
+
+def _set_agent_configs(value):
+    global agent_configs
+    agent_configs = value
+
+
+_agent_ai_resolution = build_agent_ai_resolution(
+    lambda: agent_configs,
+    _set_agent_configs,
+    _HAS_OPENCODE,
+    (lambda: test_opencode_readiness) if _HAS_OPENCODE else None,
+)
+_agent_default_config = _agent_ai_resolution._agent_default_config
+_all_agent_ids = _agent_ai_resolution._all_agent_ids
+_agent_meta = _agent_ai_resolution._agent_meta
+resolve_effective_agent_ai_config = _agent_ai_resolution.resolve_effective_agent_ai_config
+get_agent_provider_model = _agent_ai_resolution.get_agent_provider_model
+agent_opencode_model_override = _agent_ai_resolution.agent_opencode_model_override
+resolve_agent_provider_connection = _agent_ai_resolution.resolve_agent_provider_connection
+_product_judge_independence = _agent_ai_resolution._product_judge_independence
+_product_judge_status = _agent_ai_resolution._product_judge_status
+_configured_product_judge_runtime = _agent_ai_resolution._configured_product_judge_runtime
+_save_repaired_opencode_model = _agent_ai_resolution._save_repaired_opencode_model
+_opencode_preflight_for_agent = _agent_ai_resolution._opencode_preflight_for_agent
+
+
 app.include_router(build_proposals_router(
     lambda agent_id: agent_configs.get(agent_id, {}),
     get_agent_provider_model,
@@ -2736,59 +1805,6 @@ app.include_router(build_proposals_router(
 app.include_router(build_goldie_router(active_projects, get_agent_provider_model, goldie_agent))
 
 
-def _configured_product_judge_runtime() -> dict[str, Any]:
-    """Resolve a read-only judge identity, preferring an independently configured vision model."""
-    cfg = {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
-    effective = resolve_effective_agent_ai_config("product_judge")
-    implementation_provider, implementation_model = get_agent_provider_model("elena")
-    provider = ""
-    model = ""
-    connection = {}
-    status = _product_judge_status(cfg)
-    configured_connection = _connection_for_id(str(cfg.get("connection_id") or ""))
-    if configured_connection and configured_connection.get("connection_type") == "api_provider":
-        provider = str(configured_connection.get("provider") or "")
-        model = str(cfg.get("model") or configured_connection.get("configured_model") or "")
-    elif str(cfg.get("provider") or "") == "opencode_bridge":
-        connection_id = str(cfg.get("connection_id") or "")
-        connection = next((item for item in _load_provider_connections() if item.get("connection_id") == connection_id and item.get("connection_type") == "opencode_bridge"), {})
-        provider = "opencode_bridge" if connection else ""
-        model = str(cfg.get("model") or connection.get("configured_model") or "")
-    elif cfg.get("use_global") or cfg.get("use_global_model") or cfg.get("use_global_connection"):
-        provider = effective["provider"]
-        model = effective["model"]
-    elif cfg.get("provider") and cfg.get("model"):
-        provider = str(cfg["provider"])
-        model = str(cfg["model"])
-    elif cfg.get("auto_select_independent", True):
-        keys = load_studio_keys()
-        candidates = [
-            name for name in AI_PROVIDER_MODELS
-            if (name == "ollama" or bool(keys.get(_provider_key_name(name)) or keys.get(f"{name}_api_key")))
-            and ai_utils.provider_capabilities(name).get("image_input")
-        ]
-        provider = next((name for name in candidates if name != implementation_provider), "")
-        if not provider and implementation_provider in candidates:
-            provider = implementation_provider
-        if provider:
-            models = AI_PROVIDER_MODELS.get(provider, [])
-            model = next((item for item in models if provider != implementation_provider or item != implementation_model), models[0] if models else "")
-    return {
-        "enabled": bool(cfg.get("enabled", True)),
-        "provider": provider,
-        "model": model,
-        "temperature": effective.get("temperature", cfg.get("temperature", 0.3)),
-        "top_p": effective.get("top_p", cfg.get("top_p", 0.9)),
-        "top_k": effective.get("top_k", cfg.get("top_k")),
-        "connection": connection,
-        "connection_id": connection.get("connection_id", ""),
-        "effective_image_input": bridge_effective_capabilities(OpenCodeBridgeConnection.from_dict(connection)).get("image_input", False) if connection else False,
-        "use_global": bool(cfg.get("use_global")),
-        "implementation_identity": {"agent_id": "elena", "provider": implementation_provider, "model": implementation_model},
-        "readiness_status": status.get("status"),
-        "readiness_reason": status.get("reason"),
-        "independence_level": status.get("independence_level", "unavailable"),
-    }
 
 
 delivery_audit_module.configure_product_judge(lambda _project: _configured_product_judge_runtime())
@@ -2894,15 +1910,8 @@ def get_agents():
     return result
 
 
-def _all_agent_ids() -> set:
-    return set(DEFAULT_AGENTS.keys()) | set(agent_configs.get("_custom_agents", {}).keys())
 
 
-def _agent_meta(agent_id: str) -> dict:
-    if agent_id in DEFAULT_AGENTS:
-        return DEFAULT_AGENTS[agent_id]
-    custom = agent_configs.get("_custom_agents", {}).get(agent_id, {})
-    return custom
 
 
 @app.post("/api/agents/{agent_id}/config")
@@ -5089,75 +4098,6 @@ def _opencode_recovery_instruction(error_code: str) -> str:
     return f"{reasons.get(error_code, reasons['connection_test_failed'])} {_OPENCODE_RECOVERY_FLOW}"
 
 
-def _opencode_preflight_for_agent(agent_id: str, project_dir: str | None = None, *, repair_attempted: bool = False) -> dict[str, Any]:
-    if not _HAS_OPENCODE:
-        return {"ready": False, "blocking_reason": "opencode_executable_not_found", "message": "OpenCode bridge is not available.", "server_required": False, "checks": {}}
-    execution_config = build_effective_execution_config(load_studio_keys(), project_dir or "")
-    if not execution_config.live_execution_enabled:
-        return {"ready": False, "blocking_reason": "live_execution_opt_in_required", "message": "Live coding backend execution is disabled in the effective execution configuration.", "server_required": False, "checks": {"live_execution": {"status": "failed", "error_code": "live_execution_opt_in_required"}}, "effective_execution_config": execution_config.to_dict()}
-    effective = resolve_effective_agent_ai_config(agent_id)
-    connection_id = str(effective.get("connection_id") or execution_config.connection_id or "")
-    model_id = agent_opencode_model_override(agent_id) or execution_config.model_id
-    normalized = _normalize_model_for_connection(model_id, connection_id)
-    model_id = str(normalized.get("model_id") or model_id)
-    valid_model, invalid_reason = validate_native_model_id(model_id, "opencode")
-    if not model_id or _normalize_model_for_connection(model_id, connection_id).get("migrated") or not valid_model:
-        return {"ready": False, "blocking_reason": "opencode_model_reference_invalid", "message": "The selected OpenCode model is invalid.", "connection_id": connection_id, "model_id": model_id, "server_required": False, "checks": {}}
-    if project_dir:
-        path = Path(project_dir)
-        if not path.is_absolute():
-            return {"ready": False, "blocking_reason": "opencode_workspace_invalid", "message": "Project workspace must be an absolute path.", "connection_id": connection_id, "model_id": model_id, "server_required": False, "checks": {"workspace": {"status": "failed"}}}
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-            probe = path / ".freelancerstudio-write-test"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
-        except OSError:
-            return {"ready": False, "blocking_reason": "opencode_workspace_invalid", "message": "Project workspace is not writable.", "connection_id": connection_id, "model_id": model_id, "server_required": False, "checks": {"workspace": {"status": "failed"}}}
-    connection = _connection_for_id(connection_id)
-    executable = str(connection.get("executable_path") or "")
-    readiness = test_opencode_readiness(executable, model_id, "")
-    if readiness.get("ready"):
-        return {"ready": True, "connection_id": connection_id, "transport": "opencode", "provider_id": model_id.split("/", 1)[0] if "/" in model_id else "", "model_id": model_id, "server_required": False, "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}, "live_execution": {"status": "passed"}}, "readiness": readiness, "effective_execution_config": execution_config.to_dict()}
-    code = str(readiness.get("error_code") or "opencode_connection_not_ready")
-    provider_id = model_id.split("/", 1)[0] if "/" in model_id else str(effective.get("provider") or "")
-    if code == "selected_model_unavailable":
-        registry = _opencode_model_registry(readiness, provider_id)
-        automatic_repair = _select_opencode_fallback_model(agent_id, connection, model_id, registry)
-        if automatic_repair.get("possible") and not repair_attempted:
-            selected = str(automatic_repair.get("selected_model") or "")
-            _save_repaired_opencode_model(agent_id, selected, effective)
-            repaired = _opencode_preflight_for_agent(agent_id, project_dir, repair_attempted=True)
-            return {**repaired, "automatic_repair": {**automatic_repair, "applied": bool(repaired.get("ready"))}, "previous_model_id": model_id}
-        model_ids = {item.get("native_model_id") for item in registry}
-        connection["available_models"] = [{"id": item["native_model_id"], "capabilities": item.get("capabilities", {})} for item in registry]
-        return {
-            "ready": False,
-            "connection_id": connection_id,
-            "transport": "opencode" if _connection_uses_opencode_transport(connection, effective) else "unknown",
-            "provider_id": provider_id,
-            "configured_model": model_id,
-            "model_id": model_id,
-            "model_count": len(registry),
-            "available_models": registry,
-            "server_required": False,
-            "blocking_reason": "selected_model_unavailable",
-            "message": readiness.get("message", "The selected OpenCode model is not available."),
-            "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}},
-            "readiness": readiness,
-            "automatic_repair": automatic_repair,
-            "actions": ["refresh_models", "choose_model"],
-            "recoverable": True,
-            "selector_required": True,
-            "saved_model_still_visible": model_id not in model_ids,
-        }
-    mapped = {
-        "opencode_not_installed": "opencode_executable_not_found",
-        "selected_model_unavailable": "opencode_model_not_found",
-        "selected_provider_not_authenticated": "opencode_authentication_failure",
-        "provider_not_authenticated": "opencode_authentication_failure",
-    }.get(code, code)
-    return {"ready": False, "connection_id": connection_id, "transport": "opencode", "provider_id": provider_id, "model_id": model_id, "server_required": False, "blocking_reason": mapped, "message": readiness.get("message", "OpenCode readiness failed."), "checks": {**readiness.get("checks", {}), "workspace": {"status": "passed" if project_dir else "not_checked"}, "live_execution": {"status": "passed"}}, "readiness": readiness, "effective_execution_config": execution_config.to_dict(), "recoverable": mapped in {"opencode_model_not_found", "opencode_executable_not_found", "opencode_authentication_failure"}}
 
 
 @app.get("/api/opencode/preflight/{agent_id}")
