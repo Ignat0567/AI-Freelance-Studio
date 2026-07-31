@@ -2,7 +2,7 @@
 
 ## Status
 
-This is a **design/roadmap document for proposed, not-yet-built work**. Unlike the other documents in this directory (Phases 1 through 4E), which describe completed, shipped functionality, nothing described below exists in code yet. It exists to break a large product-roadmap goal into implementable, independently reviewable slices before any of them is scheduled.
+This is a **design/roadmap document for proposed work**, most of it not yet built. Unlike the other documents in this directory (Phases 1 through 4E), which describe completed, shipped functionality from the start, this one exists to break a large product-roadmap goal into implementable, independently reviewable slices before each is scheduled. **Phase 5a is now implemented** (see its section below) — the rest (5b-5e) remain proposals only.
 
 ## Why
 
@@ -17,7 +17,7 @@ What exists today (Phases 1 through 4E) is a closed, one-shot, batch self-test h
 - **Nothing else exists yet**: no window embedding/reparenting, no input injection (`SendInput` or equivalent) anywhere in the guest scripts, no video capture, and no channel for the host to send new commands to an already-running guest session.
 - **The guest execution model is deliberately one-shot, zero-argument, and hash-pinned.** The entry script accepts no command, path, or arguments; it runs one fixed, SHA-256-verified payload once and calls `shutdown.exe` immediately after. `docs/interactive-sandbox-test-lab-phase-3b.md` documents this as an explicit security boundary ("no dynamic source"), not an oversight. Any interactive/agent-driven mode has to work *with* this invariant, not against it.
 
-## Phase 5a — Manual Takeover (validate the cheapest win first)
+## Phase 5a — Manual Takeover (validate the cheapest win first) — IMPLEMENTED
 
 **Goal:** confirm whether a user can already click directly into the visible Sandbox window and control the guest, with zero new capture or streaming engineering.
 
@@ -27,9 +27,19 @@ What exists today (Phases 1 through 4E) is a closed, one-shot, batch self-test h
 
 **Out of scope:** any capture, streaming, or embedding — this phase is purely "get out of the user's way."
 
-**Risk:** this is genuinely unverified by anything in this repo — it's a property of Windows Sandbox itself, not something the codebase proves. Must be tested empirically before the rest of the plan leans on it.
+**Confirmed 2026-07-31** — direct manual interaction works with zero extra engineering. Tested by hand against a minimal standalone `.wsb` (`VGpu=Disable`, `Networking=Disable`, no `ProtectedClient` override, so default): clicking into the live Sandbox window gives normal mouse and keyboard control, exactly as hypothesized. So the plan for 5a's code side is confirmed as scoped above — add an "interactive session" mode that just keeps the window open instead of auto-closing it, no capture/streaming needed for this phase.
 
-**Open question:** does `ProtectedClient=Enable` or any other current `.wsb` flag (`wsb_config.py`) interfere with direct interaction? Needs a real test, not a guess.
+Side note from the same test: the minimal `.wsb`'s `LogonCommand notepad.exe` did not visibly launch Notepad in this run (likely a Windows 11 packaged-app launch quirk under the LogonCommand context, not something that blocks the interactivity finding — the user still had a live, controllable guest desktop to click into). Worth a small follow-up when 5a's real launch command is built (e.g. launch via `explorer.exe` shell association, or just accept an empty interactive desktop as the starting point rather than a specific app).
+
+**Not yet re-tested:** whether `ProtectedClient=Enable` (used by the production self-test profile, unlike this ad hoc test) changes this. The implementation below deliberately does not set `ProtectedClient` (or any of the other production-profile hardening flags) for exactly this reason — it only uses what was actually tested.
+
+**Implementation (2026-07-31):** a new `SandboxProfile.INTERACTIVE_SESSION` ("interactive_session") profile, following the same `prepare/launch/status/cancel` shape as the other two profiles:
+
+- `sandbox_test_lab/interactive_session.py` — `InteractiveSessionRequest` (fixed `MAX_SESSION_SECONDS = 3600` hard cap, no per-request override) and `write_interactive_session_wsb()`, a minimal `.wsb` builder with no `LogonCommand` and no mapped folders at all — deliberately separate from `wsb_config.py`'s shared builder used by the two hardened, hash-pinned profiles, so this addition carries zero regression risk to them.
+- `sandbox_test_lab/interactive_session_runner.py` — `InteractiveSessionRunner`, mirroring `ProductionSelfTestRunner`'s shape: launches Sandbox, then loops watching for (a) the host requesting cancellation ("End Session"), (b) the max-duration safety cap being hit, or (c) the user closing the guest window themselves — all three resolve to `SandboxRunResult`/`RunStatus.CANCELLED` or `TIMED_OUT`, reusing the existing status vocabulary with no new states needed.
+- Wired through `production_bridge.py` (`ProductionSandboxTestLabRunner`'s runner/request factory dicts), `api/sandbox_test_lab.py` (`TestLabOperation.INTERACTIVE_SESSION`), and the frontend (`SANDBOX_OPERATIONS.interactive_session`, `sandbox-test-lab-transport.js`'s allow-list) — the UI's operation picker and generic launch/status/cancel flow already worked for two profiles, so the third needed no bespoke UI code, only a new list entry.
+- **Real finding during implementation, fixed before landing:** an initial version closed a session by checking only the tracked client/remote-session process. A real end-to-end test against live Windows Sandbox showed `WindowsSandboxServer.exe` (the remote-session model's server process) can keep running after its client has already exited and been verified gone — so declaring the session over at that point left an orphaned process. Fixed by making `OwnedSandboxSession.is_running()` (`sandbox_session.py`) check the server process too for the remote_session model, and by escalating `_close_session()` to `terminate_server()` as a last resort alongside the existing graceful-close-then-kill ladder. Re-verified end to end afterward: sandbox process count is 0 both before launch and after the runner reports the session closed.
+- Tests: `test_sandbox_test_lab_interactive_session.py` (request/WSB validation, full runner state machine including the server-survives-client-close regression case), plus additions to `test_sandbox_test_lab_process_model.py` (`is_running()` liveness checks) and `test_sandbox_test_lab_production_bridge.py`/`test_sandbox_test_lab_api.py` (routing/wiring).
 
 ## Phase 5b — Live View In The Studio UI
 

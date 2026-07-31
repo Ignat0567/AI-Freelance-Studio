@@ -77,6 +77,7 @@ class StrictResponseModel(BaseModel):
 class TestLabOperation(str, Enum):
     PRODUCTION_SELF_TEST = "production_self_test"
     PRODUCTION_SCREENSHOT = "production_screenshot"
+    INTERACTIVE_SESSION = "interactive_session"
 
 
 class TestLabPublicStatus(str, Enum):
@@ -365,6 +366,7 @@ def _operation_profile(operation: TestLabOperation) -> SandboxProfile:
     return {
         TestLabOperation.PRODUCTION_SELF_TEST: SandboxProfile.PRODUCTION_SELF_TEST,
         TestLabOperation.PRODUCTION_SCREENSHOT: SandboxProfile.PRODUCTION_SCREENSHOT,
+        TestLabOperation.INTERACTIVE_SESSION: SandboxProfile.INTERACTIVE_SESSION,
     }[operation]
 
 

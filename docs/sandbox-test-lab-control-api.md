@@ -19,7 +19,7 @@ Run listing is omitted because the Job Service has no bounded retention/listing 
 
 ## Operations And States
 
-The only accepted operations are `production_self_test` and `production_screenshot`, each with a required empty `parameters` object. Commands, PowerShell, executable paths, arguments, environment variables, and arbitrary installer settings are rejected as extra or unknown fields.
+The only accepted operations are `production_self_test`, `production_screenshot`, and `interactive_session`, each with a required empty `parameters` object. Commands, PowerShell, executable paths, arguments, environment variables, and arbitrary installer settings are rejected as extra or unknown fields.
 
 Public lifecycle statuses are `queued`, `preparing`, `launching`, `running`, `cancelling`, `succeeded`, `failed`, `cancelled`, and `infrastructure_error`. Internal states are explicitly mapped; raw enum names, backend run IDs, process details, paths, and exception text are not returned.
 

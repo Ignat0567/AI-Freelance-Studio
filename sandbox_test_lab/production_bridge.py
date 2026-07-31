@@ -18,6 +18,8 @@ from .adapter import (
     SandboxTestLabResult,
     ValidatedSandboxCheck,
 )
+from .interactive_session import InteractiveSessionRequest
+from .interactive_session_runner import InteractiveSessionRunner
 from .job_service import JsonSandboxJobStateStore, SandboxTestLabJobService
 from .models import RunStatus, SandboxRunResult
 from .production_runner import ProductionSelfTestRunner
@@ -61,8 +63,10 @@ class ProductionSandboxTestLabRunner:
         opt_in_enabled: Callable[[], bool] | None = None,
         self_test_runner_factory: Callable[[], _BlockingRunner] | None = None,
         screenshot_runner_factory: Callable[[], _BlockingRunner] | None = None,
+        interactive_session_runner_factory: Callable[[], _BlockingRunner] | None = None,
         self_test_request_factory: Callable[[], ProductionSelfTestRequest] = ProductionSelfTestRequest,
         screenshot_request_factory: Callable[[], ProductionSelfTestRequest] = ScreenshotSelfTestRequest,
+        interactive_session_request_factory: Callable[[], InteractiveSessionRequest] = InteractiveSessionRequest,
         thread_factory: Callable[..., Thread] = Thread,
         diagnostics_root: Path | None = None,
     ) -> None:
@@ -74,10 +78,13 @@ class ProductionSandboxTestLabRunner:
             or (lambda: ProductionSelfTestRunner(launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root)),
             SandboxProfile.PRODUCTION_SCREENSHOT: screenshot_runner_factory
             or (lambda: ScreenshotSelfTestRunner(launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root)),
+            SandboxProfile.INTERACTIVE_SESSION: interactive_session_runner_factory
+            or (lambda: InteractiveSessionRunner(launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root)),
         }
         self._request_factories = {
             SandboxProfile.PRODUCTION_SELF_TEST: self_test_request_factory,
             SandboxProfile.PRODUCTION_SCREENSHOT: screenshot_request_factory,
+            SandboxProfile.INTERACTIVE_SESSION: interactive_session_request_factory,
         }
         self._thread_factory = thread_factory
         self._run: _PreparedRun | None = None

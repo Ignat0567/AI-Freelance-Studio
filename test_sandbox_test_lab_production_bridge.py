@@ -219,6 +219,23 @@ def test_bridge_routes_screenshot_profile_to_screenshot_runner():
     assert cancelled.status is SandboxStatus.CANCELLED
 
 
+def test_bridge_routes_interactive_session_profile_to_its_own_runner():
+    interactive = _BlockingRunner(RunStatus.CANCELLED)
+    bridge = ProductionSandboxTestLabRunner(
+        opt_in_enabled=lambda: True,
+        self_test_runner_factory=lambda: pytest.fail("self-test runner was selected"),
+        screenshot_runner_factory=lambda: pytest.fail("screenshot runner was selected"),
+        interactive_session_runner_factory=lambda: interactive,
+        interactive_session_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+    )
+
+    prepared = bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+    cancelled = bridge.cancel(prepared.run_id)
+
+    assert prepared.profile is SandboxProfile.INTERACTIVE_SESSION
+    assert cancelled.status is SandboxStatus.CANCELLED
+
+
 def test_bridge_rechecks_exact_opt_in_before_launch():
     environment = {PRODUCTION_UI_EXTERNAL_OPT_IN: "1"}
     bridge = _runner(_BlockingRunner(RunStatus.PASSED), lambda: environment.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1")

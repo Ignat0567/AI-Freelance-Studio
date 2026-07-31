@@ -1,6 +1,6 @@
 const http = require('http');
 
-const ALLOWED_OPERATIONS = new Set(['production_self_test', 'production_screenshot']);
+const ALLOWED_OPERATIONS = new Set(['production_self_test', 'production_screenshot', 'interactive_session']);
 const ALLOWED_STATUSES = new Set([
     'queued',
     'preparing',

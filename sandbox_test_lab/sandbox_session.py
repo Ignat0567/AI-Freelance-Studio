@@ -154,6 +154,45 @@ class OwnedSandboxSession:
         elif self.model == "remote_session":
             self._control_remote_session("close")
 
+    def is_running(self) -> bool:
+        """Read-only, identity-verified liveness check. Never closes or kills anything.
+
+        For remote_session, the server process is checked too: it does not always exit
+        promptly when its client closes, so treating only the client/remote-session
+        process as authoritative can declare a session over while its server is still
+        alive (confirmed empirically 2026-07-31)."""
+        if self.model == "legacy_client":
+            return self._process_alive(self.client_pid, self.client_start_ticks, self.client_path)
+        if self.model == "remote_session":
+            if self._process_alive(self.remote_session_pid, self.remote_session_start_ticks, self.remote_session_path):
+                return True
+            if self.server_pid is not None:
+                return self._process_alive(self.server_pid, self.server_start_ticks, self.server_path)
+            return False
+        return False
+
+    @staticmethod
+    def _process_alive(pid: int | None, start_ticks: int | None, expected_path: str | None) -> bool:
+        if pid is None or start_ticks is None or expected_path is None:
+            return False
+        expected_path_escaped = expected_path.replace("'", "''")
+        command = (
+            f"$process = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+            f"if (-not $process) {{ exit 1 }}; "
+            f"if ($process.StartTime.ToUniversalTime().Ticks -ne {start_ticks}) {{ exit 1 }}; "
+            f"if ([IO.Path]::GetFullPath($process.Path) -ine '{expected_path_escaped}') {{ exit 1 }}; "
+            f"exit 0"
+        )
+        try:
+            result = subprocess.run(
+                [str(_powershell_path()), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+                shell=False, check=False, capture_output=True, text=True, timeout=10,
+                env=_controlled_environment(),
+            )
+        except subprocess.TimeoutExpired:
+            return False
+        return result.returncode == 0
+
     def terminate(self) -> None:
         if self.model == "legacy_client":
             self._control_client("terminate")

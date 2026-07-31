@@ -11,6 +11,12 @@ export const SANDBOX_OPERATIONS = Object.freeze({
     name: 'Production Screenshot',
     description: 'Runs the supported screenshot-oriented validation workflow in Windows Sandbox.',
   }),
+  interactive_session: Object.freeze({
+    id: 'interactive_session',
+    short: 'LIVE',
+    name: 'Interactive Session',
+    description: 'Opens a Windows Sandbox window you can click into and control directly. End it when you are done.',
+  }),
 });
 
 export const TERMINAL_STATUSES = new Set([

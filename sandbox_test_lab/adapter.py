@@ -24,6 +24,7 @@ class SandboxTestLabUnavailableError(SandboxTestLabError):
 class SandboxProfile(str, Enum):
     PRODUCTION_SELF_TEST = "production_self_test"
     PRODUCTION_SCREENSHOT = "production_screenshot"
+    INTERACTIVE_SESSION = "interactive_session"
 
 
 class SandboxStatus(str, Enum):

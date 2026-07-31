@@ -654,6 +654,99 @@ class TestRemoteSessionControl:
         session.terminate_server()
 
 
+class TestOwnedSandboxSessionIsRunning:
+    """Read-only liveness check -- never issues CloseMainWindow/Kill."""
+
+    def _session(self):
+        return OwnedSandboxSession(
+            model="legacy_client", launcher_pid=4242,
+            client_pid=4343, client_start_ticks=638800000000000000,
+            client_started_at="2026-07-24T10:00:00.0000000Z",
+            client_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+        )
+
+    def test_is_running_true_when_identity_matches(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        def run(argv, **kwargs):
+            calls.append(argv[-1])
+            return type("Result", (), {"returncode": 0})()
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+
+        assert self._session().is_running() is True
+        assert len(calls) == 1
+        assert "Get-Process -Id 4343" in calls[0]
+        assert "CloseMainWindow" not in calls[0]
+        assert "Kill()" not in calls[0]
+        assert "taskkill" not in calls[0].casefold()
+
+    def test_is_running_false_when_process_gone(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        monkeypatch.setattr(session_module.subprocess, "run", lambda *a, **k: type("Result", (), {"returncode": 1})())
+
+        assert self._session().is_running() is False
+
+    def test_is_running_false_on_timeout(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        def run(argv, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=10)
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+
+        assert self._session().is_running() is False
+
+    def test_is_running_remote_session_model(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        def run(argv, **kwargs):
+            calls.append(argv[-1])
+            return type("Result", (), {"returncode": 0})()
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+
+        session = OwnedSandboxSession(
+            model="remote_session", launcher_pid=47324,
+            remote_session_pid=47884, remote_session_start_ticks=638800000000000001,
+            remote_session_path=r"C:\Windows\System32\WindowsSandboxRemoteSession.exe",
+        )
+        assert session.is_running() is True
+        assert "Get-Process -Id 47884" in calls[0]
+
+    def test_is_running_true_when_client_gone_but_server_survives(self, monkeypatch):
+        """Regression test for a real 2026-07-31 finding: the remote-session client can
+        exit while its server process keeps running -- is_running() must not miss that."""
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        def run(argv, **kwargs):
+            return type("Result", (), {"returncode": 1 if "47884" in argv[-1] else 0})()
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+
+        session = OwnedSandboxSession(
+            model="remote_session", launcher_pid=47324,
+            remote_session_pid=47884, remote_session_start_ticks=638800000000000001,
+            remote_session_path=r"C:\Windows\System32\WindowsSandboxRemoteSession.exe",
+            server_pid=44352, server_start_ticks=638800000000000002,
+            server_path=r"C:\Windows\System32\WindowsSandboxServer.exe",
+        )
+        assert session.is_running() is True
+
+    def test_is_running_false_when_both_client_and_server_gone(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        monkeypatch.setattr(session_module.subprocess, "run", lambda *a, **k: type("Result", (), {"returncode": 1})())
+
+        session = OwnedSandboxSession(
+            model="remote_session", launcher_pid=47324,
+            remote_session_pid=47884, remote_session_start_ticks=638800000000000001,
+            remote_session_path=r"C:\Windows\System32\WindowsSandboxRemoteSession.exe",
+            server_pid=44352, server_start_ticks=638800000000000002,
+            server_path=r"C:\Windows\System32\WindowsSandboxServer.exe",
+        )
+        assert session.is_running() is False
+
+
 class TestCaptureOwnedSandboxSession:
     """Tests for capture_owned_sandbox_session with mocked PowerShell."""
 

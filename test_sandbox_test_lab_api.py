@@ -321,6 +321,18 @@ def test_valid_launch_returns_202_safe_public_id_and_calls_service_once():
     assert set(response.json()) == {"run_id", "status"}
 
 
+def test_interactive_session_operation_is_accepted_and_routed_to_its_profile():
+    app, service = _app()
+    response = _launch(
+        _client(app),
+        payload={"operation": "interactive_session", "parameters": {}},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    assert service.start_calls == [SandboxProfile.INTERACTIVE_SESSION]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
