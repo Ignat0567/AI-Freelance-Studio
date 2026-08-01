@@ -110,6 +110,7 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.environ.get("FREELANCERSTUDIO_HOME") or BASE_DIR
 RUNTIME_DIR = os.environ.get("FREELANCERSTUDIO_RUNTIME_DIR") or DATA_DIR
+FFMPEG_PATH = os.environ.get("FREELANCERSTUDIO_FFMPEG_PATH")
 
 # ─── Shared critical rules injected into ALL agent prompts ─────────────────
 # Все тонкости, нюансы и грабли, выявленные в процессе разработки.
@@ -228,7 +229,10 @@ app.add_middleware(
     allow_headers=["Content-Type", "Idempotency-Key", "X-FreelancerStudio-Token"],
 )
 app.add_middleware(LocalSecurityMiddleware)
-_sandbox_runtime = create_production_sandbox_runtime(Path(RUNTIME_DIR))
+_sandbox_runtime = create_production_sandbox_runtime(
+    Path(RUNTIME_DIR),
+    ffmpeg_path=Path(FFMPEG_PATH) if FFMPEG_PATH else None,
+)
 install_sandbox_test_lab_api(
     app,
     service=_sandbox_runtime.service,

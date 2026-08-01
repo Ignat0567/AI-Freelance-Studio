@@ -564,6 +564,7 @@ def test_capture_frame_delegates_to_the_live_session_while_running(tmp_path):
         monotonic=clock.monotonic, sleeper=sleeper, poll_interval=1,
         session_factory=lambda pid, started_at: session,
         runtime_root=tmp_path,
+        frame_capture_interval=float("inf"),  # isolate on-demand capture from the periodic recorder (tested separately)
     )
     result = runner.run(request, cancellation)
 
@@ -638,3 +639,148 @@ def test_send_input_reports_when_the_session_declines_the_action(tmp_path):
     runner.run(request, cancellation)
 
     assert sent["during_run"] is False
+
+
+class TestVideoEvidenceRecording:
+    """Phase 5d: periodic frame capture + video encoding wiring inside run()'s own loop --
+    no new thread, driven by the same monotonic/sleeper injection as every other timing
+    test in this file."""
+
+    def _runner(self, tmp_path, session, *, cancellation, cancel_at, **overrides):
+        clock = _Clock()
+
+        def sleeper(seconds: float) -> None:
+            clock.sleeper(seconds)
+            if clock.value >= cancel_at:
+                cancellation.set()
+
+        defaults = dict(
+            capability_detector=_capability, launcher=lambda argv: _FakeProcess(),
+            monotonic=clock.monotonic, sleeper=sleeper, poll_interval=1,
+            session_factory=lambda pid, started_at: session,
+            runtime_root=tmp_path, frame_capture_interval=1.0,
+        )
+        defaults.update(overrides)
+        return InteractiveSessionRunner(**defaults)
+
+    def test_captures_frames_at_the_configured_interval_and_hands_them_to_the_encoder(self, tmp_path):
+        session = _FakeSession()
+        cancellation = Event()
+        encoded_calls = []
+
+        def fake_encoder(frame_paths, destination, *, run_root, ffmpeg_path):
+            encoded_calls.append(list(frame_paths))
+            return False
+
+        runner = self._runner(tmp_path, session, cancellation=cancellation, cancel_at=5, video_encoder=fake_encoder)
+        request = InteractiveSessionRequest()
+
+        result = runner.run(request, cancellation)
+
+        assert result.status == RunStatus.CANCELLED
+        assert session.capture_calls == [{}] * 4
+        assert len(encoded_calls) == 1
+        assert len(encoded_calls[0]) == 4
+        assert [path.name for path in encoded_calls[0]] == [
+            "frame-000000.png", "frame-000001.png", "frame-000002.png", "frame-000003.png",
+        ]
+
+    def test_ring_buffers_frames_beyond_max_retained_and_deletes_the_oldest_from_disk(self, tmp_path):
+        session = _FakeSession()
+        cancellation = Event()
+        disk_state: dict = {}
+
+        def fake_encoder(frame_paths, destination, *, run_root, ffmpeg_path):
+            disk_state["remaining_on_disk"] = sorted(p.name for p in (run_root / "frames").glob("*.png"))
+            disk_state["frame_paths"] = list(frame_paths)
+            return False
+
+        runner = self._runner(
+            tmp_path, session, cancellation=cancellation, cancel_at=6,
+            max_retained_frames=2, video_encoder=fake_encoder,
+        )
+        runner.run(InteractiveSessionRequest(), cancellation)
+
+        assert [path.name for path in disk_state["frame_paths"]] == ["frame-000003.png", "frame-000004.png"]
+        assert sorted(disk_state["remaining_on_disk"]) == ["frame-000003.png", "frame-000004.png"]
+
+    def test_skips_periodic_capture_when_the_session_returns_no_frame(self, tmp_path):
+        session = _FakeSession()
+        session.capture_result = None
+        cancellation = Event()
+        encoded_calls = []
+
+        def fake_encoder(frame_paths, destination, *, run_root, ffmpeg_path):
+            encoded_calls.append(list(frame_paths))
+            return False
+
+        runner = self._runner(tmp_path, session, cancellation=cancellation, cancel_at=2, video_encoder=fake_encoder)
+        result = runner.run(InteractiveSessionRequest(), cancellation)
+
+        assert result.status == RunStatus.CANCELLED
+        assert encoded_calls == []  # never invoked -- nothing was ever successfully captured
+
+    def test_run_status_is_unaffected_when_encoding_raises(self, tmp_path):
+        session = _FakeSession()
+        cancellation = Event()
+
+        def raising_encoder(frame_paths, destination, *, run_root, ffmpeg_path):
+            raise RuntimeError("boom")
+
+        runner = self._runner(tmp_path, session, cancellation=cancellation, cancel_at=2, video_encoder=raising_encoder)
+        result = runner.run(InteractiveSessionRequest(), cancellation)
+
+        assert result.status == RunStatus.CANCELLED
+        assert result.exit_reason == "cancelled_by_host"
+
+    def test_run_status_is_unaffected_when_archiving_raises(self, tmp_path):
+        session = _FakeSession()
+        cancellation = Event()
+
+        def raising_archiver(diagnostics_root, run_id, video_path):
+            raise RuntimeError("boom")
+
+        runner = self._runner(
+            tmp_path, session, cancellation=cancellation, cancel_at=2,
+            video_encoder=lambda *args, **kwargs: True, video_archiver=raising_archiver,
+        )
+        result = runner.run(InteractiveSessionRequest(), cancellation)
+
+        assert result.status == RunStatus.CANCELLED
+        assert result.exit_reason == "cancelled_by_host"
+
+    def test_archives_the_encoded_video_when_encoding_succeeds(self, tmp_path):
+        session = _FakeSession()
+        cancellation = Event()
+        archive_calls = []
+        diagnostics_root = tmp_path / "diagnostics"
+
+        runner = self._runner(
+            tmp_path, session, cancellation=cancellation, cancel_at=2,
+            diagnostics_root=diagnostics_root,
+            video_encoder=lambda *args, **kwargs: True,
+            video_archiver=lambda *args: archive_calls.append(args),
+        )
+        request = InteractiveSessionRequest()
+
+        runner.run(request, cancellation)
+
+        assert len(archive_calls) == 1
+        archived_diagnostics_root, archived_run_id, archived_video_path = archive_calls[0]
+        assert archived_diagnostics_root == diagnostics_root
+        assert archived_run_id == request.run_id
+        assert archived_video_path.name == "session.webm"
+
+    def test_frames_directory_is_removed_after_the_run_finishes(self, tmp_path):
+        """Uses the real default encoder (no pinned ffmpeg binary in this test environment,
+        so it fails and returns False) -- cleanup must happen regardless of encode success."""
+        session = _FakeSession()
+        cancellation = Event()
+
+        runner = self._runner(tmp_path, session, cancellation=cancellation, cancel_at=2)
+        request = InteractiveSessionRequest()
+
+        result = runner.run(request, cancellation)
+
+        run_root = interactive_session_run_root(result.run_id, tmp_path)
+        assert not (run_root / "frames").exists()

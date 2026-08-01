@@ -76,6 +76,13 @@
                     "**/*",
                     "!**/*.map"
                 ]
+            },
+            {
+                "from": "../third_party/ffmpeg",
+                "to": "ffmpeg",
+                "filter": [
+                    "ffmpeg.exe"
+                ]
             }
         ],
         "win": {

@@ -69,6 +69,7 @@ class ProductionSandboxTestLabRunner:
         interactive_session_request_factory: Callable[[], InteractiveSessionRequest] = InteractiveSessionRequest,
         thread_factory: Callable[..., Thread] = Thread,
         diagnostics_root: Path | None = None,
+        ffmpeg_path: Path | None = None,
     ) -> None:
         self._opt_in_enabled = opt_in_enabled or (
             lambda: os.environ.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1"
@@ -79,7 +80,9 @@ class ProductionSandboxTestLabRunner:
             SandboxProfile.PRODUCTION_SCREENSHOT: screenshot_runner_factory
             or (lambda: ScreenshotSelfTestRunner(launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root)),
             SandboxProfile.INTERACTIVE_SESSION: interactive_session_runner_factory
-            or (lambda: InteractiveSessionRunner(launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root)),
+            or (lambda: InteractiveSessionRunner(
+                launch_guard=self._guard_external_launch, diagnostics_root=diagnostics_root, ffmpeg_path=ffmpeg_path,
+            )),
         }
         self._request_factories = {
             SandboxProfile.PRODUCTION_SELF_TEST: self_test_request_factory,
@@ -325,6 +328,7 @@ def create_production_sandbox_runtime(
     runtime_dir: Path,
     *,
     environ: Mapping[str, str] | None = None,
+    ffmpeg_path: Path | None = None,
 ) -> ProductionSandboxRuntime:
     source = environ if environ is not None else os.environ
     opt_in_enabled = lambda: source.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1"
@@ -355,6 +359,7 @@ def create_production_sandbox_runtime(
             runner=ProductionSandboxTestLabRunner(
                 opt_in_enabled=opt_in_enabled,
                 diagnostics_root=diagnostics_root,
+                ffmpeg_path=ffmpeg_path,
             ),
         )
 

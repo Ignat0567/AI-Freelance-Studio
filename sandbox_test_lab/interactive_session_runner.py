@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+import shutil
 import threading
 import time
 from types import SimpleNamespace
@@ -25,6 +27,12 @@ from .runner import (
     utc_now,
 )
 from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
+from .video_evidence import (
+    FRAME_CAPTURE_INTERVAL_SECONDS,
+    MAX_RETAINED_FRAMES,
+    archive_session_video,
+    encode_session_video,
+)
 from .workspace import WorkspaceError, atomic_write_json
 
 
@@ -61,6 +69,11 @@ class InteractiveSessionRunner:
         launch_guard: Callable[[], None] = lambda: None,
         runtime_root: Path | None = None,
         diagnostics_root: Path | None = None,
+        ffmpeg_path: Path | None = None,
+        frame_capture_interval: float = FRAME_CAPTURE_INTERVAL_SECONDS,
+        max_retained_frames: int = MAX_RETAINED_FRAMES,
+        video_encoder: Callable[..., bool] = encode_session_video,
+        video_archiver: Callable[[Path | None, str, Path], None] = archive_session_video,
     ):
         self.capability_detector = capability_detector
         self.launcher = launcher
@@ -73,6 +86,11 @@ class InteractiveSessionRunner:
         self.launch_guard = launch_guard
         self.runtime_root = runtime_root
         self.diagnostics_root = diagnostics_root
+        self.ffmpeg_path = ffmpeg_path
+        self.frame_capture_interval = frame_capture_interval
+        self.max_retained_frames = max_retained_frames
+        self.video_encoder = video_encoder
+        self.video_archiver = video_archiver
         self._live_lock = threading.Lock()
         self._live_run_id: str | None = None
         self._live_session: OwnedSandboxSession | None = None
@@ -88,6 +106,8 @@ class InteractiveSessionRunner:
         process: ProcessHandle | None = None
         owned_session: OwnedSandboxSession | None = None
         run_root: Path | None = None
+        frame_paths: deque[Path] = deque()
+        frame_index = 0
 
         def transition(target: RunStatus) -> None:
             nonlocal status
@@ -109,6 +129,21 @@ class InteractiveSessionRunner:
                 (run_root / "host.log").write_text(
                     f"run_id={request.run_id}\nstatus={status.value}\nexit_reason={reason}\n", encoding="utf-8",
                 )
+                if frame_paths:
+                    video_path = run_root / "session.webm"
+                    try:
+                        encoded = self.video_encoder(
+                            list(frame_paths), video_path,
+                            run_root=run_root, ffmpeg_path=self.ffmpeg_path,
+                        )
+                    except Exception:  # noqa: BLE001 -- video evidence is never fatal to the run
+                        encoded = False
+                    if encoded:
+                        try:
+                            self.video_archiver(self.diagnostics_root, request.run_id, video_path)
+                        except Exception:  # noqa: BLE001 -- same as above
+                            pass
+                    shutil.rmtree(run_root / "frames", ignore_errors=True)
                 archive_run_diagnostics(
                     self.diagnostics_root, request.run_id,
                     SimpleNamespace(run_root=run_root, logs_directory=run_root),
@@ -166,6 +201,7 @@ class InteractiveSessionRunner:
                 self._live_session = owned_session
             transition(RunStatus.RUNNING)
 
+            next_frame_due = self.monotonic() + self.frame_capture_interval
             while True:
                 if cancellation is not None and cancellation.is_set():
                     self._close_session(owned_session, errors)
@@ -178,6 +214,9 @@ class InteractiveSessionRunner:
                 if not owned_session.is_running():
                     transition(RunStatus.CANCELLED)
                     return finish("guest_closed_session")
+                if self.monotonic() >= next_frame_due:
+                    frame_index = self._record_frame(owned_session, run_root, frame_paths, frame_index)
+                    next_frame_due = self.monotonic() + self.frame_capture_interval
                 self.sleeper(self.poll_interval)
         except (WorkspaceError, OSError, RuntimeError, ValueError) as exc:
             errors.append(str(exc))
@@ -199,6 +238,34 @@ class InteractiveSessionRunner:
                 return False
             session = self._live_session
         return session.send_input(action)
+
+    def _record_frame(
+        self, session: OwnedSandboxSession, run_root: Path | None, frame_paths: deque[Path], frame_index: int,
+    ) -> int:
+        """Best-effort periodic capture for video evidence, called from inside run()'s own
+        loop (no new thread -- no precedent for one in this codebase, and the loop's
+        existing monotonic/sleeper injection is already the established way to drive
+        periodic behavior deterministically). Never raises. A ring buffer: once
+        max_retained_frames is exceeded, the oldest frame file is deleted, since the loop's
+        own session deadline already bounds total captures to at most that count on a
+        normal run."""
+        if run_root is None:
+            return frame_index
+        try:
+            frame_bytes = session.capture_window_png()
+            if not frame_bytes:
+                return frame_index
+            frames_dir = run_root / "frames"
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            path = frames_dir / f"frame-{frame_index:06d}.png"
+            path.write_bytes(frame_bytes)
+            frame_paths.append(path)
+            if len(frame_paths) > self.max_retained_frames:
+                stale = frame_paths.popleft()
+                stale.unlink(missing_ok=True)
+        except OSError:
+            return frame_index
+        return frame_index + 1
 
     def capture_frame(self, run_id: str) -> bytes | None:
         """Best-effort live thumbnail of the running session's Sandbox window, or None if

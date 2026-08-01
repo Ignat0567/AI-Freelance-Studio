@@ -90,6 +90,10 @@ generated_projects/*.zip
 # Packaged backend distribution (build output)
 /backend_dist/
 
+# Bundled ffmpeg binary (must be downloaded manually, see third_party/ffmpeg/PROVENANCE.md)
+/third_party/ffmpeg/ffmpeg.exe
+/third_party/ffmpeg/*.dll
+
 # Generated QA and packaged-runtime evidence
 /artifacts/
 

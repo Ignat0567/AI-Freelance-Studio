@@ -282,6 +282,9 @@ function startBackend() {
     const spec = backendLaunchSpec();
     const runtimeDir = runtimeDirectory();
     const frontendDir = app.isPackaged ? path.join(process.resourcesPath, 'frontend-dist') : path.join(portableRootDirectory(), 'frontend', 'dist');
+    const ffmpegPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe')
+        : path.join(portableRootDirectory(), 'third_party', 'ffmpeg', 'ffmpeg.exe');
     backendToken = crypto.randomBytes(32).toString('base64url');
     backendLaunchId = crypto.randomUUID();
     backendDescriptor = null;
@@ -315,6 +318,7 @@ function startBackend() {
                 FREELANCERSTUDIO_USER_DATA: runtimeDir,
                 FREELANCERSTUDIO_HOME: runtimeDir,
                 FREELANCERSTUDIO_FRONTEND_DIR: frontendDir,
+                FREELANCERSTUDIO_FFMPEG_PATH: ffmpegPath,
                 FREELANCERSTUDIO_AUTH_STDIN: '1',
                 FREELANCERSTUDIO_CONTROL_FD: '3',
                 ...(app.isPackaged ? {
