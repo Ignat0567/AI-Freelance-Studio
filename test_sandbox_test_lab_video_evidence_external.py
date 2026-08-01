@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import base64
 import os
 from pathlib import Path
+import struct
+import zlib
 
 import pytest
 
@@ -13,12 +14,24 @@ pytestmark = pytest.mark.external
 
 FFMPEG_EXTERNAL_OPT_IN = "FREELANCERSTUDIO_RUN_SANDBOX_TEST_LAB_FFMPEG_EXTERNAL"
 
-# A minimal valid 1x1 red PNG, used so a real ffmpeg has something genuinely decodable to
-# encode -- this test needs the actual vendored binary (see third_party/ffmpeg/PROVENANCE.md)
-# and is skipped by default everywhere else, matching test_sandbox_test_lab_phase3a_external.py.
-_ONE_PIXEL_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-)
+
+def _minimal_png(width: int = 2, height: int = 2, color: tuple[int, int, int] = (255, 0, 0)) -> bytes:
+    """Hand-built, dependency-free minimal valid PNG, so a real ffmpeg has something
+    genuinely decodable to encode -- this test needs the actual vendored binary (see
+    third_party/ffmpeg/PROVENANCE.md) and is skipped by default everywhere else, matching
+    test_sandbox_test_lab_phase3a_external.py."""
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    raw_scanlines = b"".join(b"\x00" + bytes(color) * width for _ in range(height))
+    idat = chunk(b"IDAT", zlib.compress(raw_scanlines))
+    iend = chunk(b"IEND", b"")
+    return signature + ihdr + idat + iend
+
+
+_ONE_PIXEL_PNG = _minimal_png()
 
 
 def external_opt_in_enabled(mark_expression: str) -> bool:

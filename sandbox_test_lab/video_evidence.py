@@ -9,12 +9,23 @@ from typing import Callable, Sequence
 from .workspace import WorkspaceError, sha256_file, validate_source_artifact
 
 
-# Filled in once a human has downloaded a real ffmpeg.exe (BtbN's LGPL-shared Windows
-# build, see third_party/ffmpeg/PROVENANCE.md) and placed it at third_party/ffmpeg/ffmpeg.exe
-# -- see docs/interactive-sandbox-test-lab-phase-5-design.md's Phase 5d section. Left as an
-# unmatchable placeholder until then, so trusted_ffmpeg_path() fails closed (never silently
-# trusts an unpinned binary) rather than failing to import.
-TRUSTED_FFMPEG_SHA256 = "0" * 64
+# Pinned against the vendored BtbN LGPL-shared build (see third_party/ffmpeg/PROVENANCE.md)
+# -- see docs/interactive-sandbox-test-lab-phase-5-design.md's Phase 5d section.
+TRUSTED_FFMPEG_SHA256 = "35499ae73bd5a4b321a990619d1537a7449f4b1cf8ece10a8e1e44a3f429e058"
+
+# A "shared" ffmpeg build dynamically loads these DLLs from the same directory as
+# ffmpeg.exe at runtime -- pinning the exe alone would let someone swap out just a DLL
+# without detection, so every DLL the vendored build ships is pinned here too, exactly the
+# same way fixture_builder.py pins its whole set of trusted fixture sources.
+TRUSTED_FFMPEG_DLL_SHA256 = {
+    "avcodec-63.dll": "5b8093bb484a5a3d00995cef53ad7116e62e5d0c28a2624a93f71d0712efc9c3",
+    "avdevice-63.dll": "be92a1861bfc95933dcf53d080647c9e0097cc0aea76b278dae62f9c3e63c1f8",
+    "avfilter-12.dll": "45c49d915aa800ebbb8e8e8c10d58cb07a65a74907d77eb2aac985728d814640",
+    "avformat-63.dll": "7d03a0bd1213aac79a4fc09e3069960044040f7fa4d42e3ea4934fd05e7e14aa",
+    "avutil-61.dll": "75d395f5aa94e4c1b7ffd832c72166c616530765c1cb21dedcb8a874b7819bb2",
+    "swresample-7.dll": "286d4b218d477d53c0c568380f03450216ba0c0fdfcb744682bbe497692606eb",
+    "swscale-10.dll": "dde8481122d70104ec358f59b23280d32fb5b4ccdc6a815a957ca2ec3cfea89e",
+}
 
 FRAME_CAPTURE_INTERVAL_SECONDS = 5.0
 # 720 * 5.0 == 3600.0 == interactive_session.MAX_SESSION_SECONDS exactly, so this ring-buffer
@@ -31,13 +42,31 @@ def default_ffmpeg_path() -> Path:
 
 def trusted_ffmpeg_path(*, ffmpeg_path: Path | None = None) -> Path:
     """Identity-verified, hash-pinned path to the bundled ffmpeg binary, mirroring
-    fixture_builder.py's trusted_makensis_path(). Re-validate through this function
-    immediately before every actual use -- never cache a validated Path across calls."""
+    fixture_builder.py's trusted_makensis_path(). Also validates every DLL the pinned
+    shared build depends on, in the same directory -- a shared build's real behavior is
+    defined by those DLLs just as much as by ffmpeg.exe itself. Re-validate through this
+    function immediately before every actual use -- never cache a validated Path across
+    calls."""
     candidate = ffmpeg_path or default_ffmpeg_path()
     binary = validate_source_artifact(candidate)
     if sha256_file(binary) != TRUSTED_FFMPEG_SHA256:
         raise ValueError("trusted ffmpeg SHA-256 does not match the pinned binary")
+    for dll_name, expected_hash in TRUSTED_FFMPEG_DLL_SHA256.items():
+        dll = validate_source_artifact(binary.parent / dll_name)
+        if sha256_file(dll) != expected_hash:
+            raise ValueError(f"trusted ffmpeg DLL SHA-256 does not match the pinned build: {dll_name}")
     return binary
+
+
+def _resolve_physical_path(path: Path) -> Path:
+    """Resolve to the real, physical filesystem location, working around a Windows
+    quirk on machines where Python itself is installed via the Microsoft Store: such a
+    process's writes under LOCALAPPDATA are transparently redirected to a per-package
+    backing store, and Path.resolve() follows that redirect -- but ffmpeg, launched as a
+    plain external subprocess with no package identity, can only ever see the real
+    physical path, never the logical alias. Works even when `path` doesn't exist yet
+    (only its parent needs to)."""
+    return path.parent.resolve() / path.name
 
 
 def _controlled_environment() -> dict[str, str]:
@@ -95,6 +124,8 @@ def encode_session_video(
         return False
     try:
         binary = trusted_ffmpeg_path(ffmpeg_path=ffmpeg_path)
+        run_root = run_root.resolve()
+        destination = _resolve_physical_path(destination)
         manifest = _write_concat_manifest(frame_paths, run_root, framerate=OUTPUT_FRAMERATE)
         if destination.exists():
             destination.unlink()

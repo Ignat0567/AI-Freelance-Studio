@@ -26,18 +26,23 @@ def test_default_ffmpeg_path_is_repo_relative_third_party_ffmpeg():
 
 
 class TestTrustedFfmpegPath:
-    def test_correct_hash_passes(self, tmp_path, monkeypatch):
+    def _pin_exe_only(self, tmp_path, monkeypatch) -> Path:
         binary = tmp_path / "ffmpeg.exe"
         binary.write_bytes(b"fake ffmpeg binary contents")
         monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_SHA256", sha256_file(binary))
+        monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_DLL_SHA256", {})
+        return binary
+
+    def test_correct_hash_passes(self, tmp_path, monkeypatch):
+        binary = self._pin_exe_only(tmp_path, monkeypatch)
 
         resolved = trusted_ffmpeg_path(ffmpeg_path=binary)
 
         assert resolved == binary.resolve()
 
     def test_wrong_hash_raises(self, tmp_path, monkeypatch):
+        self._pin_exe_only(tmp_path, monkeypatch)
         binary = tmp_path / "ffmpeg.exe"
-        binary.write_bytes(b"fake ffmpeg binary contents")
         monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_SHA256", "0" * 64)
 
         with pytest.raises(ValueError, match="SHA-256"):
@@ -47,12 +52,30 @@ class TestTrustedFfmpegPath:
         with pytest.raises(WorkspaceError):
             trusted_ffmpeg_path(ffmpeg_path=tmp_path / "does-not-exist.exe")
 
-    def test_placeholder_hash_never_matches_a_real_file(self, tmp_path):
-        # Before a human vendors a real binary, TRUSTED_FFMPEG_SHA256 is an unmatchable
-        # placeholder -- this must fail closed, never silently accept an unpinned binary.
-        binary = tmp_path / "ffmpeg.exe"
-        binary.write_bytes(b"anything")
-        with pytest.raises(ValueError, match="SHA-256"):
+    def test_correct_dlls_alongside_the_exe_pass(self, tmp_path, monkeypatch):
+        binary = self._pin_exe_only(tmp_path, monkeypatch)
+        dll = tmp_path / "avcodec-63.dll"
+        dll.write_bytes(b"fake codec dll contents")
+        monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_DLL_SHA256", {"avcodec-63.dll": sha256_file(dll)})
+
+        resolved = trusted_ffmpeg_path(ffmpeg_path=binary)
+
+        assert resolved == binary.resolve()
+
+    def test_missing_dll_raises(self, tmp_path, monkeypatch):
+        binary = self._pin_exe_only(tmp_path, monkeypatch)
+        monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_DLL_SHA256", {"avcodec-63.dll": "a" * 64})
+
+        with pytest.raises(WorkspaceError):
+            trusted_ffmpeg_path(ffmpeg_path=binary)
+
+    def test_wrong_dll_hash_raises(self, tmp_path, monkeypatch):
+        binary = self._pin_exe_only(tmp_path, monkeypatch)
+        dll = tmp_path / "avcodec-63.dll"
+        dll.write_bytes(b"fake codec dll contents")
+        monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_DLL_SHA256", {"avcodec-63.dll": "a" * 64})
+
+        with pytest.raises(ValueError, match="avcodec-63.dll"):
             trusted_ffmpeg_path(ffmpeg_path=binary)
 
 
@@ -123,6 +146,7 @@ class TestEncodeSessionVideo:
         binary = tmp_path / "ffmpeg.exe"
         binary.write_bytes(b"fake ffmpeg binary contents")
         monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_SHA256", sha256_file(binary))
+        monkeypatch.setattr(video_evidence, "TRUSTED_FFMPEG_DLL_SHA256", {})
         return binary
 
     def _frame(self, run_root: Path) -> Path:
@@ -191,6 +215,52 @@ class TestEncodeSessionVideo:
         )
 
         assert result is False
+
+    def test_resolves_logical_paths_to_their_physical_location_before_invoking_ffmpeg(self, tmp_path, monkeypatch):
+        """Regression test: on a machine where Python itself runs via a virtualized
+        install (observed in practice with Microsoft Store Python's LocalAppData
+        redirection, even inside a venv), Path.resolve() can return a real, physical
+        location that differs from the logical path used to build run_root/destination.
+        ffmpeg is an external, unpackaged process and can only ever see the physical
+        path -- passing it the logical one produces a silent 'file not found' failure.
+        Simulated here (without needing real symlinks, which this environment lacks
+        permission to create) by monkeypatching Path.resolve to map one directory tree
+        onto another, mirroring what the OS-level redirect does in practice."""
+        binary = self._pinned_ffmpeg(tmp_path, monkeypatch)
+        logical_root = tmp_path / "logical" / "run"
+        physical_root = tmp_path / "physical" / "run"
+        (physical_root / "frames").mkdir(parents=True)
+        (physical_root / "frames" / "frame-000000.png").write_bytes(b"png-bytes")
+        logical_frame = logical_root / "frames" / "frame-000000.png"
+        logical_destination = logical_root / "session.webm"
+
+        real_resolve = Path.resolve
+
+        def fake_resolve(path, *args, **kwargs):
+            try:
+                relative = path.relative_to(logical_root)
+            except ValueError:
+                return real_resolve(path, *args, **kwargs)
+            return real_resolve(physical_root / relative, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", fake_resolve)
+
+        captured = {}
+
+        def fake_runner(argv, **kwargs):
+            captured["argv"] = argv
+            captured["cwd"] = kwargs["cwd"]
+            Path(argv[-1]).write_bytes(b"webm-bytes")
+            return _FakeCompletedProcess(0)
+
+        result = encode_session_video(
+            [logical_frame], logical_destination, run_root=logical_root, ffmpeg_path=binary, runner=fake_runner,
+        )
+
+        assert result is True
+        assert str(logical_root) not in captured["argv"][-1]
+        assert str(physical_root) in captured["argv"][-1]
+        assert captured["cwd"] == physical_root
 
     def test_never_raises_on_subprocess_timeout(self, tmp_path, monkeypatch):
         binary = self._pinned_ffmpeg(tmp_path, monkeypatch)
