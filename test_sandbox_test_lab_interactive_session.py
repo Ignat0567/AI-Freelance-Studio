@@ -330,6 +330,132 @@ def test_runner_reports_infrastructure_error_on_workspace_failure(tmp_path, monk
     assert any("simulated_workspace_failure" in error for error in result.errors)
 
 
+def test_runner_retries_discovery_timeout_and_eventually_succeeds(tmp_path):
+    """Regression coverage for a real, repeatedly-observed 2026-07-31 finding: Windows
+    Sandbox on this dev machine intermittently fails session discovery. The runner should
+    retry that specific, known-transient failure rather than giving up on the first try."""
+    clock = _Clock()
+    session = _FakeSession()
+    processes: list[_FakeProcess] = []
+
+    def launcher(argv):
+        process = _FakeProcess(pid=1000 + len(processes))
+        processes.append(process)
+        return process
+
+    attempts = {"n": 0}
+
+    def session_factory(pid, started_at):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise WorkspaceError("owned_sandbox_client_discovery_failed")
+        return session
+
+    cancellation = Event()
+
+    def sleeper(seconds: float) -> None:
+        clock.sleeper(seconds)
+        if clock.value >= 5:
+            cancellation.set()
+
+    result = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=launcher,
+        monotonic=clock.monotonic, sleeper=sleeper, poll_interval=1,
+        session_factory=session_factory,
+        runtime_root=tmp_path,
+    ).run(InteractiveSessionRequest(), cancellation)
+
+    assert attempts["n"] == 3
+    assert len(processes) == 3
+    assert processes[0].returncode == -15
+    assert processes[1].returncode == -15
+    assert result.status == RunStatus.CANCELLED
+    assert any("launch_attempt_1_failed" in error for error in result.errors)
+    assert any("launch_attempt_2_failed" in error for error in result.errors)
+
+
+def test_runner_gives_up_after_max_launch_attempts(tmp_path):
+    clock = _Clock()
+    processes: list[_FakeProcess] = []
+
+    def launcher(argv):
+        process = _FakeProcess(pid=2000 + len(processes))
+        processes.append(process)
+        return process
+
+    def session_factory(pid, started_at):
+        raise WorkspaceError("owned_sandbox_client_discovery_failed")
+
+    result = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=launcher,
+        monotonic=clock.monotonic, sleeper=clock.sleeper, poll_interval=1,
+        session_factory=session_factory,
+        runtime_root=tmp_path,
+    ).run(InteractiveSessionRequest())
+
+    from sandbox_test_lab.interactive_session_runner import MAX_LAUNCH_ATTEMPTS
+    assert len(processes) == MAX_LAUNCH_ATTEMPTS
+    assert result.status == RunStatus.INFRASTRUCTURE_ERROR
+    assert any("owned_sandbox_client_discovery_failed" in error for error in result.errors)
+
+
+def test_runner_does_not_retry_non_discovery_workspace_errors(tmp_path):
+    clock = _Clock()
+    processes: list[_FakeProcess] = []
+
+    def launcher(argv):
+        process = _FakeProcess(pid=3000 + len(processes))
+        processes.append(process)
+        return process
+
+    def session_factory(pid, started_at):
+        raise WorkspaceError("owned_sandbox_client_identity_rejected")
+
+    result = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=launcher,
+        monotonic=clock.monotonic, sleeper=clock.sleeper, poll_interval=1,
+        session_factory=session_factory,
+        runtime_root=tmp_path,
+    ).run(InteractiveSessionRequest())
+
+    assert len(processes) == 1
+    assert result.status == RunStatus.INFRASTRUCTURE_ERROR
+    assert any("owned_sandbox_client_identity_rejected" in error for error in result.errors)
+
+
+def test_runner_stops_retrying_when_session_guard_detects_a_conflict(tmp_path):
+    """If a failed attempt leaves an orphaned Sandbox process behind, the next attempt's
+    session_guard() check must fail loud, not silently retry into a broken state."""
+    clock = _Clock()
+    processes: list[_FakeProcess] = []
+
+    def launcher(argv):
+        process = _FakeProcess(pid=4000 + len(processes))
+        processes.append(process)
+        return process
+
+    def session_factory(pid, started_at):
+        raise WorkspaceError("owned_sandbox_client_discovery_failed")
+
+    guard_calls = {"n": 0}
+
+    def session_guard():
+        guard_calls["n"] += 1
+        if guard_calls["n"] >= 2:
+            raise WorkspaceError("active_windows_sandbox_session")
+
+    result = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=launcher,
+        monotonic=clock.monotonic, sleeper=clock.sleeper, poll_interval=1,
+        session_factory=session_factory, session_guard=session_guard,
+        runtime_root=tmp_path,
+    ).run(InteractiveSessionRequest())
+
+    assert len(processes) == 1
+    assert result.status == RunStatus.INFRASTRUCTURE_ERROR
+    assert any("active_windows_sandbox_session" in error for error in result.errors)
+
+
 def test_capture_frame_returns_none_when_nothing_is_running(tmp_path):
     runner = InteractiveSessionRunner(capability_detector=_capability, runtime_root=tmp_path)
     assert runner.capture_frame("11111111-1111-1111-1111-111111111111") is None

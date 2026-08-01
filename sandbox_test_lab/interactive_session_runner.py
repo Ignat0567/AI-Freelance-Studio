@@ -27,6 +27,16 @@ from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
 from .workspace import WorkspaceError, atomic_write_json
 
 
+MAX_LAUNCH_ATTEMPTS = 3
+LAUNCH_RETRY_DELAY_SECONDS = 2.0
+# The only launch failure retried automatically: session discovery timed out without ever
+# finding a child process at all. Confirmed empirically 2026-07-31 as the dominant transient
+# failure mode of this dev machine's Windows Sandbox stack -- other WorkspaceErrors (identity
+# mismatches, an already-active conflicting session, etc.) indicate a real problem and must
+# fail loud, not be silently retried.
+_RETRYABLE_DISCOVERY_ERROR = "owned_sandbox_client_discovery_failed"
+
+
 class InteractiveSessionRunner:
     """Keeps a Windows Sandbox window open for direct human control instead of running any
     automated check. The guest desktop is already fully mouse/keyboard interactive with no
@@ -123,19 +133,33 @@ class InteractiveSessionRunner:
             run_root = interactive_session_run_root(request.run_id, self.runtime_root)
             config_file = write_interactive_session_wsb(run_root)
 
-            self.session_guard()
-            if cancellation is not None and cancellation.is_set():
-                transition(RunStatus.CANCELLED)
-                return finish("cancelled_before_launch")
-            if self.monotonic() >= deadline:
-                transition(RunStatus.TIMED_OUT)
-                return finish("timeout_before_launch")
-
             transition(RunStatus.LAUNCHING)
-            launcher_started_utc = self.utc_clock().astimezone(timezone.utc)
-            self.launch_guard()
-            process = self.launcher([capability.executable_path, str(config_file)])
-            owned_session = self.session_factory(process.pid, launcher_started_utc)
+            for attempt in range(1, MAX_LAUNCH_ATTEMPTS + 1):
+                # Re-checked on every attempt, not just the first: a prior failed attempt
+                # can leave an orphaned Sandbox process behind, and that must fail loud
+                # here rather than let a retry silently race against it.
+                self.session_guard()
+                if cancellation is not None and cancellation.is_set():
+                    transition(RunStatus.CANCELLED)
+                    return finish("cancelled_before_launch")
+                if self.monotonic() >= deadline:
+                    transition(RunStatus.TIMED_OUT)
+                    return finish("timeout_before_launch")
+
+                launcher_started_utc = self.utc_clock().astimezone(timezone.utc)
+                self.launch_guard()
+                process = self.launcher([capability.executable_path, str(config_file)])
+                try:
+                    owned_session = self.session_factory(process.pid, launcher_started_utc)
+                    break
+                except WorkspaceError as exc:
+                    _stop_owned_process(process)
+                    process = None
+                    if str(exc) != _RETRYABLE_DISCOVERY_ERROR or attempt == MAX_LAUNCH_ATTEMPTS:
+                        raise
+                    errors.append(f"launch_attempt_{attempt}_failed_{exc}")
+                    self.sleeper(LAUNCH_RETRY_DELAY_SECONDS)
+
             with self._live_lock:
                 self._live_run_id = request.run_id
                 self._live_session = owned_session
