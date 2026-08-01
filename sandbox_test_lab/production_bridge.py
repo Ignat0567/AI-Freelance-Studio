@@ -245,6 +245,18 @@ class ProductionSandboxTestLabRunner:
             evidence_validated=evidence_validated,
         )
 
+    def current_frame(self, run_id: str) -> bytes | None:
+        """Live thumbnail for an interactive_session run, or None for every other profile
+        or if there is no matching live run right now. Best-effort, never raises."""
+        with self._lock:
+            run = self._run
+            if run is None or run.profile is not SandboxProfile.INTERACTIVE_SESSION or run.request.run_id != run_id:
+                return None
+            capture = getattr(run.runner, "capture_frame", None)
+        if capture is None:
+            return None
+        return capture(run_id)
+
     def _owned_run(self, run_id: str) -> _PreparedRun:
         if self._run is None or self._run.request.run_id != run_id:
             raise RuntimeError("production_run_not_prepared")

@@ -62,6 +62,9 @@ class InteractiveSessionRunner:
         self.launch_guard = launch_guard
         self.runtime_root = runtime_root
         self.diagnostics_root = diagnostics_root
+        self._live_lock = threading.Lock()
+        self._live_run_id: str | None = None
+        self._live_session: OwnedSandboxSession | None = None
 
     def run(self, request: InteractiveSessionRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
         host_started_utc = self.utc_clock().astimezone(timezone.utc)
@@ -81,6 +84,10 @@ class InteractiveSessionRunner:
             status = target
 
         def finish(reason: str) -> SandboxRunResult:
+            with self._live_lock:
+                if self._live_run_id == request.run_id:
+                    self._live_run_id = None
+                    self._live_session = None
             result = SandboxRunResult(
                 run_id=request.run_id, status=status, started_at=started_at, finished_at=utc_now(),
                 duration_seconds=round(max(0.0, self.monotonic() - started_monotonic), 3), exit_reason=reason,
@@ -129,6 +136,9 @@ class InteractiveSessionRunner:
             self.launch_guard()
             process = self.launcher([capability.executable_path, str(config_file)])
             owned_session = self.session_factory(process.pid, launcher_started_utc)
+            with self._live_lock:
+                self._live_run_id = request.run_id
+                self._live_session = owned_session
             transition(RunStatus.RUNNING)
 
             while True:
@@ -154,6 +164,17 @@ class InteractiveSessionRunner:
         finally:
             if process is not None:
                 _stop_owned_process(process)
+
+    def capture_frame(self, run_id: str) -> bytes | None:
+        """Best-effort live thumbnail of the running session's Sandbox window, or None if
+        there is no live session for this run_id right now. Never raises. The actual
+        capture happens outside the lock -- it shells out to PowerShell and can be slow,
+        and must never block the run() loop's own polling."""
+        with self._live_lock:
+            if self._live_run_id != run_id or self._live_session is None:
+                return None
+            session = self._live_session
+        return session.capture_window_png()
 
     def _close_session(self, session: OwnedSandboxSession, errors: list[str]) -> bool:
         """Best-effort graceful close, escalating to a verified kill and, as a last resort

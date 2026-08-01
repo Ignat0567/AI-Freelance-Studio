@@ -13,9 +13,12 @@ The token and ownership internals are headers-only security material and are nev
 | `GET` | `/api/sandbox-test-lab/capabilities` | Report loopback Test Lab readiness and supported operations |
 | `POST` | `/api/sandbox-test-lab/runs` | Queue one allow-listed operation and return `202` |
 | `GET` | `/api/sandbox-test-lab/runs/{run_id}` | Return an immutable, sanitized run snapshot |
+| `GET` | `/api/sandbox-test-lab/runs/{run_id}/frame` | Return a live, best-effort thumbnail for an active `interactive_session` run |
 | `POST` | `/api/sandbox-test-lab/runs/{run_id}/cancel` | Request cooperative cancellation of an owned run |
 
 Run listing is omitted because the Job Service has no bounded retention/listing contract. Evidence retrieval is omitted because the Job Service intentionally does not retain a safe public evidence manifest. The API never accepts paths and does not serve evidence contents.
+
+The one deliberate, narrow exception is `/runs/{run_id}/frame` (Phase 5b): it returns a downscaled PNG (base64-encoded) of whatever `interactive_session`'s already-visible Sandbox window currently shows, captured host-side on each request via `PrintWindow`/`CopyFromScreen` -- no guest script is involved. It always returns `200` with `frame_base64: null` when nothing is available (wrong profile, no active run, or capture failed) rather than an error, since a frame is a live convenience, not a correctness artifact. Nothing is persisted or retained across requests; this is not the "safe public evidence manifest" the paragraph above rules out.
 
 ## Operations And States
 

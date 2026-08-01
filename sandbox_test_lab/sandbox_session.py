@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
@@ -28,6 +29,93 @@ SERVER_DISCOVERY_TIMEOUT_SECONDS = 5.0
 CLIENT_PROCESS_NAME = LEGACY_CLIENT_NAME
 REMOTE_SESSION_PROCESS_NAME = REMOTE_SESSION_NAME
 SERVER_PROCESS_NAME = SERVER_NAME
+
+# Host-side screenshot of the owned Sandbox window: PrintWindow first, CopyFromScreen
+# fallback on a blank/degenerate result -- the same technique already proven guest-side in
+# Phase 3B, applied here to the window Windows Sandbox already renders on the host. $TargetPid/
+# $StartTicks/$ExpectedPath/$MaxWidth are prepended by capture_window_png() via direct string
+# interpolation, not CLI arguments -- `powershell.exe -Command <script-with-param()> -Arg value`
+# does not reliably bind trailing arguments into a param() block (confirmed empirically
+# 2026-07-31: an unbound [int] parameter silently defaults to 0 instead of erroring).
+_CAPTURE_WINDOW_PNG_SCRIPT = r"""
+$process = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue
+if (-not $process) { exit 1 }
+if ($process.StartTime.ToUniversalTime().Ticks -ne $StartTicks) { exit 1 }
+if ([IO.Path]::GetFullPath($process.Path) -ine $ExpectedPath) { exit 1 }
+$hwnd = $process.MainWindowHandle
+if ($hwnd -eq [IntPtr]::Zero) { exit 1 }
+
+Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace AifsCapture {
+    public struct Rect { public int Left; public int Top; public int Right; public int Bottom; }
+
+    public static class Win32 {
+        [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
+        [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+    }
+}
+'@
+
+$rect = New-Object AifsCapture.Rect
+[AifsCapture.Win32]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
+$width = $rect.Right - $rect.Left
+$height = $rect.Bottom - $rect.Top
+if ($width -le 0 -or $height -le 0) { exit 1 }
+
+$bitmap = New-Object System.Drawing.Bitmap($width, $height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$hdc = $graphics.GetHdc()
+$captured = [AifsCapture.Win32]::PrintWindow($hwnd, $hdc, 2)
+$graphics.ReleaseHdc($hdc)
+
+function Test-Blank($bmp) {
+    $w = $bmp.Width; $h = $bmp.Height
+    $samples = 0; $blackish = 0
+    $stepX = [Math]::Max(1, [int]($w / 20))
+    $stepY = [Math]::Max(1, [int]($h / 20))
+    for ($x = 0; $x -lt $w; $x += $stepX) {
+        for ($y = 0; $y -lt $h; $y += $stepY) {
+            $px = $bmp.GetPixel($x, $y)
+            $samples++
+            if ($px.R -lt 8 -and $px.G -lt 8 -and $px.B -lt 8) { $blackish++ }
+        }
+    }
+    return ($samples -gt 0 -and ($blackish / $samples) -gt 0.98)
+}
+
+if (-not $captured -or (Test-Blank $bitmap)) {
+    $graphics.Dispose(); $bitmap.Dispose()
+    $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing.Size($width, $height)))
+}
+
+if ($width -gt $MaxWidth) {
+    $scale = $MaxWidth / [double]$width
+    $newW = $MaxWidth
+    $newH = [int]($height * $scale)
+    $scaled = New-Object System.Drawing.Bitmap($newW, $newH)
+    $g2 = [System.Drawing.Graphics]::FromImage($scaled)
+    $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g2.DrawImage($bitmap, 0, 0, $newW, $newH)
+    $g2.Dispose()
+    $bitmap.Dispose()
+    $bitmap = $scaled
+}
+
+$ms = New-Object System.IO.MemoryStream
+$bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+$b64 = [Convert]::ToBase64String($ms.ToArray())
+Write-Output "FRAME_B64_START"
+Write-Output $b64
+Write-Output "FRAME_B64_END"
+
+$graphics.Dispose(); $bitmap.Dispose(); $ms.Dispose()
+"""
 
 
 def _powershell_path() -> Path:
@@ -170,6 +258,49 @@ class OwnedSandboxSession:
                 return self._process_alive(self.server_pid, self.server_start_ticks, self.server_path)
             return False
         return False
+
+    def capture_window_png(self, *, max_width: int = 640, timeout: float = 20.0) -> bytes | None:
+        """Best-effort, identity-verified host-side screenshot of the owned Sandbox window.
+
+        Never raises -- returns None on any failure. This captures whatever Windows Sandbox
+        is already rendering as a normal, visible host window; no guest script is involved.
+        """
+        if self.model == "legacy_client":
+            pid, start_ticks, expected_path = self.client_pid, self.client_start_ticks, self.client_path
+        elif self.model == "remote_session":
+            pid, start_ticks, expected_path = (
+                self.remote_session_pid, self.remote_session_start_ticks, self.remote_session_path,
+            )
+        else:
+            return None
+        if pid is None or start_ticks is None or expected_path is None:
+            return None
+        if isinstance(max_width, bool) or not isinstance(max_width, int) or not 100 <= max_width <= 3840:
+            raise ValueError("max_width is invalid")
+        expected_path_escaped = expected_path.replace("'", "''")
+        header = (
+            f"$TargetPid = {pid}\n"
+            f"$StartTicks = {start_ticks}\n"
+            f"$ExpectedPath = '{expected_path_escaped}'\n"
+            f"$MaxWidth = {max_width}\n"
+        )
+        try:
+            result = subprocess.run(
+                [str(_powershell_path()), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", header + _CAPTURE_WINDOW_PNG_SCRIPT],
+                shell=False, check=False, capture_output=True, text=True, timeout=timeout,
+                env=_controlled_environment(),
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        if result.returncode != 0 or "FRAME_B64_START" not in result.stdout:
+            return None
+        body = result.stdout.split("FRAME_B64_START", 1)[1].split("FRAME_B64_END", 1)[0].strip()
+        if not body:
+            return None
+        try:
+            return base64.b64decode(body, validate=True)
+        except (ValueError, TypeError):
+            return None
 
     @staticmethod
     def _process_alive(pid: int | None, start_ticks: int | None, expected_path: str | None) -> bool:

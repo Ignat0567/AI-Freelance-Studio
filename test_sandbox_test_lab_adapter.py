@@ -104,6 +104,43 @@ def _adapter(runner=None, detector=lambda: _capability()):
     )
 
 
+class _CaptureCapableRunner(MockSandboxRunner):
+    def __init__(self, frame=b"frame-bytes"):
+        super().__init__()
+        self.frame = frame
+        self.capture_calls = []
+
+    def current_frame(self, run_id):
+        self.capture_calls.append(run_id)
+        return self.frame
+
+
+def test_frame_delegates_when_runner_supports_it():
+    runner = _CaptureCapableRunner()
+    adapter = _adapter(runner)
+    prepared = adapter.prepare(SandboxProfile.INTERACTIVE_SESSION)
+
+    assert adapter.frame(prepared.run_id) == b"frame-bytes"
+    assert runner.capture_calls == [prepared.run_id]
+
+
+def test_frame_is_none_when_runner_lacks_capture_support():
+    runner = MockSandboxRunner()
+    adapter = _adapter(runner)
+    prepared = adapter.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+
+    assert adapter.frame(prepared.run_id) is None
+
+
+def test_frame_is_none_for_an_unowned_run_id():
+    runner = _CaptureCapableRunner()
+    adapter = _adapter(runner)
+    adapter.prepare(SandboxProfile.INTERACTIVE_SESSION)
+
+    assert adapter.frame(str(uuid4())) is None
+    assert runner.capture_calls == []
+
+
 def test_disabled_adapter_does_not_probe_or_prepare():
     probed = False
 

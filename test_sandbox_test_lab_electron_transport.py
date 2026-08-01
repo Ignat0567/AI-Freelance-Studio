@@ -101,6 +101,12 @@ http.request = (options, callback) => {
       secret: 'C:\\private\\token.txt',
     };
     else if (options.path.endsWith('/cancel')) payload = { run_id: runId, status: 'cancelling', accepted: true, secret: 'hidden' };
+    else if (options.path.endsWith('/frame')) payload = {
+      run_id: runId,
+      captured_at: '2026-07-31T12:00:00Z',
+      frame_base64: 'aGVsbG8=',
+      secret: 'C:\\private\\frame-path.png',
+    };
     else if (options.method === 'GET') payload = {
       run_id: runId,
       operation: 'production_self_test',
@@ -130,8 +136,9 @@ const keyTwo = '33333333-3333-4333-8333-333333333333';
   await transport.launchSandboxTestLabRun(context, 'production_self_test', keyTwo);
   const invalid = await transport.launchSandboxTestLabRun(context, 'powershell -Command whoami', keyOne);
   const status = await transport.getSandboxTestLabRun(context, runId);
+  const frame = await transport.getSandboxTestLabRunFrame(context, runId);
   const cancel = await transport.cancelSandboxTestLabRun(context, runId);
-  console.log(JSON.stringify({ requests, capabilities, launch, retry, invalid, status, cancel }));
+  console.log(JSON.stringify({ requests, capabilities, launch, retry, invalid, status, frame, cancel }));
 })();
 """
     )
@@ -143,6 +150,7 @@ const keyTwo = '33333333-3333-4333-8333-333333333333';
         ("POST", "/api/sandbox-test-lab/runs"),
         ("POST", "/api/sandbox-test-lab/runs"),
         ("GET", "/api/sandbox-test-lab/runs/11111111-1111-4111-8111-111111111111"),
+        ("GET", "/api/sandbox-test-lab/runs/11111111-1111-4111-8111-111111111111/frame"),
         ("POST", "/api/sandbox-test-lab/runs/11111111-1111-4111-8111-111111111111/cancel"),
     ]
     assert requests[1]["body"] == {"operation": "production_self_test", "parameters": {}}
@@ -154,6 +162,11 @@ const keyTwo = '33333333-3333-4333-8333-333333333333';
     assert output["invalid"]["error"]["code"] == "invalid_launch_request"
     assert output["status"]["data"]["progress"]["message"] == "Sandbox checks are in progress."
     assert output["status"]["data"]["errors"] == ["run_failed"]
+    assert output["frame"]["data"] == {
+        "run_id": "11111111-1111-4111-8111-111111111111",
+        "captured_at": "2026-07-31T12:00:00Z",
+        "frame_base64": "aGVsbG8=",
+    }
     serialized = json.dumps(output).lower()
     assert "private\\" not in serialized
     assert "raw detail" not in serialized
@@ -166,7 +179,7 @@ def test_preload_and_ipc_surface_are_narrow_and_token_free():
     main_source = Path("frontend/main.js").read_text(encoding="utf-8")
     package = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
 
-    for method in ("getCapabilities", "launchRun", "getRun", "cancelRun"):
+    for method in ("getCapabilities", "launchRun", "getRun", "getFrame", "cancelRun"):
         assert method in preload
     assert "authenticatedFetch" not in preload
     assert "fetch:" not in preload
@@ -179,6 +192,7 @@ def test_preload_and_ipc_surface_are_narrow_and_token_free():
     assert "sandbox-test-lab-capabilities" in main_source
     assert "sandbox-test-lab-launch" in main_source
     assert "sandbox-test-lab-status" in main_source
+    assert "sandbox-test-lab-frame" in main_source
     assert "sandbox-test-lab-cancel" in main_source
     assert "existingInstance !== instanceId" in main_source
     assert "backend_restarted" in main_source

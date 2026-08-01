@@ -14,6 +14,7 @@ import {
   shortRunId,
   statusDetails,
 } from './sandboxTestLabModels.js';
+import { useSandboxLiveFrame } from './useSandboxLiveFrame.js';
 import { useSandboxRunMonitor } from './useSandboxRunMonitor.js';
 
 function CapabilityState({ state, capability, onRefresh }) {
@@ -60,7 +61,7 @@ function OperationSelector({ selected, disabled, onSelect, onLaunch }) {
   );
 }
 
-function RunView({ run, reconnecting, cancellationPending, cancellationNote, onCancel, onReturn, onRunAgain }) {
+function RunView({ run, reconnecting, cancellationPending, cancellationNote, liveFrame, onCancel, onReturn, onRunAgain }) {
   const headingRef = useRef(null);
   useEffect(() => { headingRef.current?.focus(); }, []);
   const operation = operationDetails(run.operation);
@@ -74,6 +75,12 @@ function RunView({ run, reconnecting, cancellationPending, cancellationNote, onC
         <span className={`fs-status ${status.tone}`}>{status.label}</span>
       </div>
       {reconnecting && <div className="fs-test-lab-reconnecting" role="status" aria-live="polite">Reconnecting to the local backend. The operation will not be relaunched.</div>}
+      {liveFrame && (
+        <div className="fs-test-lab-live-frame">
+          <img src={liveFrame.dataUrl} alt="Live Sandbox session preview" />
+          <span className="fs-test-lab-live-frame-caption">Live preview -- updates every few seconds</span>
+        </div>
+      )}
       <div className="fs-test-lab-progress" role="status" aria-live="polite" aria-atomic="true">
         <span className="fs-test-lab-progress-mark" aria-hidden="true">{run.terminal ? 'DONE' : 'LIVE'}</span>
         <div><strong>{run.progress?.message || 'Waiting for a sanitized status update.'}</strong><span>Phase: {String(run.progress?.phase || 'not_started').replaceAll('_', ' ')}</span></div>
@@ -190,6 +197,14 @@ export default function SandboxTestLabPage({ active }) {
       launchIntent.current = null;
       loadCapabilities();
     },
+  });
+
+  const liveFrame = useSandboxLiveFrame({
+    runId: currentRun?.run_id,
+    enabled: Boolean(
+      active && currentRun && !trackingLost
+      && currentRun.operation === 'interactive_session' && currentRun.status === 'running',
+    ),
   });
 
   const selectOperation = operation => {
@@ -334,7 +349,7 @@ export default function SandboxTestLabPage({ active }) {
   return (
     <div className="fs-test-lab-page" data-testid="sandbox-test-lab-page">
       <section className="fs-test-lab-intro">
-        <div><span className="fs-eyebrow">Protected local validation</span><h1>Sandbox Test Lab</h1><p>Run the two supported production-style checks through Studio's loopback-only control boundary. No commands, paths, or environment values are accepted here.</p></div>
+        <div><span className="fs-eyebrow">Protected local validation</span><h1>Sandbox Test Lab</h1><p>Run a supported production-style check, or open a direct interactive session, through Studio's loopback-only control boundary. No commands, paths, or environment values are accepted here.</p></div>
         <div className="fs-test-lab-security-note"><strong>Local boundary</strong><span>Authorization remains inside Electron main and is never shown on this page.</span></div>
       </section>
 
@@ -353,6 +368,7 @@ export default function SandboxTestLabPage({ active }) {
           reconnecting={reconnecting}
           cancellationPending={cancelPending}
           cancellationNote={cancellationNote}
+          liveFrame={liveFrame}
           onCancel={cancelRun}
           onReturn={() => resetRun(true)}
           onRunAgain={runAgain}

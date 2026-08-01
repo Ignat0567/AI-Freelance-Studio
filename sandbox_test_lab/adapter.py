@@ -404,6 +404,21 @@ class SandboxTestLabAdapter:
     def cancel(self, run_id: str) -> SandboxTestLabResult:
         return self._run_operation("cancel", run_id)
 
+    def frame(self, run_id: str) -> bytes | None:
+        """Live thumbnail for a run this adapter actually owns, or None otherwise. Only
+        interactive_session runners implement capture_frame; every other profile always
+        returns None here. Best-effort, never raises."""
+        normalized_run_id = _validate_exact_run_id(run_id)
+        with self._registry_lock:
+            owned_run = self._runs.get(normalized_run_id)
+            if owned_run is None:
+                return None
+            runner = owned_run.runner
+        capture = getattr(runner, "current_frame", None)
+        if capture is None:
+            return None
+        return capture(normalized_run_id)
+
     def repair_handoff(self, run_id: str) -> SandboxRepairHandoff:
         normalized_run_id = _validate_exact_run_id(run_id)
         with self._registry_lock:

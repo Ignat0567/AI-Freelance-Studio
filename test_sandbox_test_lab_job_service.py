@@ -33,6 +33,7 @@ class ScriptedAdapter:
         evidence_statuses=(SandboxStatus.PASSED,),
         block_running=None,
         sensitive_values=False,
+        frame_result=None,
     ):
         self.backend_run_id = str(uuid4())
         self.profile = SandboxProfile.PRODUCTION_SELF_TEST
@@ -42,6 +43,8 @@ class ScriptedAdapter:
         self.evidence_statuses = list(evidence_statuses)
         self.block_running = block_running
         self.sensitive_values = sensitive_values
+        self.frame_result = frame_result
+        self.frame_calls = []
         self.calls = []
         if sensitive_values:
             self.absolute_path = r"C:\private\artifact.exe"
@@ -110,6 +113,10 @@ class ScriptedAdapter:
     def cancel(self, run_id):
         self.calls.append(("cancel", run_id))
         return self._result(SandboxStatus.CANCELLED, manual_close_required=True)
+
+    def frame(self, run_id):
+        self.frame_calls.append(run_id)
+        return self.frame_result
 
 
 def _service(adapter, **kwargs):
@@ -198,6 +205,30 @@ def test_duplicate_concurrent_launch_is_rejected_until_terminal():
 
     service.cancel(started.run_id)
     assert service.wait(started.run_id, 1).status is SandboxJobStatus.CANCELLED
+
+
+def test_job_service_frame_delegates_to_the_adapter_once_prepared():
+    running = Event()
+    adapter = ScriptedAdapter(
+        statuses=(SandboxStatus.RUNNING,) * 10,
+        evidence_statuses=(SandboxStatus.RUNNING,) * 10,
+        block_running=running,
+        frame_result=b"frame-bytes",
+    )
+    service = _service(adapter)
+    started = service.start(SandboxProfile.INTERACTIVE_SESSION)
+    assert running.wait(1)
+
+    assert service.frame(started.run_id) == b"frame-bytes"
+    assert adapter.frame_calls == [adapter.backend_run_id]
+
+    service.cancel(started.run_id)
+    assert service.wait(started.run_id, 1).status is SandboxJobStatus.CANCELLED
+
+
+def test_job_service_frame_is_none_for_an_unknown_run():
+    service = _service(ScriptedAdapter())
+    assert service.frame(str(uuid4())) is None
 
 
 def test_cooperative_cancellation_uses_exact_owned_backend_run():

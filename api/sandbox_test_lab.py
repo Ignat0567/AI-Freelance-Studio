@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
@@ -153,6 +155,12 @@ class TestLabCancelResponse(StrictResponseModel):
     run_id: str
     status: TestLabPublicStatus
     accepted: bool
+
+
+class TestLabFrameResponse(StrictResponseModel):
+    run_id: str
+    captured_at: str | None
+    frame_base64: str | None
 
 
 class TestLabErrorDetail(StrictResponseModel):
@@ -527,6 +535,36 @@ def get_test_lab_run(
     service: SandboxTestLabJobService = Depends(get_test_lab_job_service),
 ) -> TestLabRunResponse:
     return _run_response(_snapshot(service, run_id))
+
+
+@router.get(
+    "/api/sandbox-test-lab/runs/{run_id}/frame",
+    response_model=TestLabFrameResponse,
+)
+def get_test_lab_run_frame(
+    run_id: str,
+    _context=Depends(require_local_only_request),
+    service: SandboxTestLabJobService = Depends(get_test_lab_job_service),
+) -> TestLabFrameResponse:
+    """Best-effort live thumbnail for an active interactive_session run. Always 200: a
+    missing, non-interactive, or not-yet-available frame is not an error, it just means
+    frame_base64 is null. This is a deliberate, narrow exception to the Job Service's
+    general no-evidence-retrieval design (docs/sandbox-test-lab-control-api.md) -- scoped
+    to a live, ephemeral, best-effort thumbnail only, never persisted, never a correctness
+    artifact."""
+    try:
+        frame = service.frame(run_id)
+    except Exception as exc:
+        LOGGER.error("Test Lab frame capture failed: %s", type(exc).__name__)
+        frame = None
+    if not frame:
+        return TestLabFrameResponse(run_id=run_id, captured_at=None, frame_base64=None)
+    captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return TestLabFrameResponse(
+        run_id=run_id,
+        captured_at=captured_at,
+        frame_base64=base64.b64encode(frame).decode("ascii"),
+    )
 
 
 @router.post(

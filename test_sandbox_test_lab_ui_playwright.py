@@ -143,7 +143,7 @@ def test_test_lab_available_launch_poll_cancel_and_terminal_race(studio_server, 
         expect(page.get_by_text("Checking protected local availability...", exact=True)).to_be_visible()
         page.evaluate("window.__testLab.resolveCapabilities()")
         expect(page.get_by_text("Sandbox Test Lab is ready", exact=True)).to_be_visible()
-        expect(page.get_by_role("radio")).to_have_count(2)
+        expect(page.get_by_role("radio")).to_have_count(3)
         expect(page.get_by_role("radio", name=re.compile("Production Self-Test"))).to_be_enabled()
         expect(page.get_by_role("button", name="Review and launch", exact=True)).to_be_disabled()
 

@@ -61,6 +61,12 @@ class _FakeSession:
         self.request_close_calls = 0
         self.terminate_calls = 0
         self.terminate_server_calls = 0
+        self.capture_calls = []
+        self.capture_result = b"fake-frame-bytes"
+
+    def capture_window_png(self, **kwargs):
+        self.capture_calls.append(kwargs)
+        return self.capture_result
 
     def is_running(self) -> bool:
         return self._alive or self._server_alive
@@ -322,3 +328,39 @@ def test_runner_reports_infrastructure_error_on_workspace_failure(tmp_path, monk
     assert result.status == RunStatus.INFRASTRUCTURE_ERROR
     assert result.exit_reason == "infrastructure_error"
     assert any("simulated_workspace_failure" in error for error in result.errors)
+
+
+def test_capture_frame_returns_none_when_nothing_is_running(tmp_path):
+    runner = InteractiveSessionRunner(capability_detector=_capability, runtime_root=tmp_path)
+    assert runner.capture_frame("11111111-1111-1111-1111-111111111111") is None
+
+
+def test_capture_frame_delegates_to_the_live_session_while_running(tmp_path):
+    clock = _Clock()
+    session = _FakeSession()
+    request = InteractiveSessionRequest()
+    cancellation = Event()
+    captured: dict = {}
+
+    def sleeper(seconds: float) -> None:
+        clock.sleeper(seconds)
+        if "frame" not in captured:
+            captured["during_run"] = runner.capture_frame(request.run_id)
+            captured["wrong_run_id"] = runner.capture_frame("22222222-2222-2222-2222-222222222222")
+            captured["frame"] = True
+        cancellation.set()
+
+    runner = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=lambda argv: _FakeProcess(),
+        monotonic=clock.monotonic, sleeper=sleeper, poll_interval=1,
+        session_factory=lambda pid, started_at: session,
+        runtime_root=tmp_path,
+    )
+    result = runner.run(request, cancellation)
+
+    assert captured["during_run"] == session.capture_result
+    assert captured["wrong_run_id"] is None
+    assert session.capture_calls == [{}]
+    assert result.status == RunStatus.CANCELLED
+    # Once the run has finished, the runner no longer has a live session to capture from.
+    assert runner.capture_frame(request.run_id) is None

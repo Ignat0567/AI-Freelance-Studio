@@ -236,6 +236,63 @@ def test_bridge_routes_interactive_session_profile_to_its_own_runner():
     assert cancelled.status is SandboxStatus.CANCELLED
 
 
+class _CaptureCapableRunner(_BlockingRunner):
+    def __init__(self, *args, frame=b"frame-bytes", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.frame = frame
+        self.capture_calls = []
+
+    def capture_frame(self, run_id):
+        self.capture_calls.append(run_id)
+        return self.frame
+
+
+def test_current_frame_delegates_for_interactive_session_run():
+    release = threading.Event()
+    interactive = _CaptureCapableRunner(RunStatus.CANCELLED, release)
+    bridge = ProductionSandboxTestLabRunner(
+        opt_in_enabled=lambda: True,
+        interactive_session_runner_factory=lambda: interactive,
+        interactive_session_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+    )
+    bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+    bridge.launch(RUN_ID)
+    assert interactive.started.wait(1)
+
+    assert bridge.current_frame(RUN_ID) == b"frame-bytes"
+    assert interactive.capture_calls == [RUN_ID]
+    assert bridge.current_frame("99999999-9999-9999-9999-999999999999") is None
+    release.set()
+
+
+def test_current_frame_is_none_for_non_interactive_profile():
+    release = threading.Event()
+    blocking = _BlockingRunner(RunStatus.CANCELLED, release)
+    bridge = _runner(blocking)
+    bridge.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    bridge.launch(RUN_ID)
+    assert blocking.started.wait(1)
+
+    assert bridge.current_frame(RUN_ID) is None
+    release.set()
+
+
+def test_current_frame_is_none_when_runner_lacks_capture_support():
+    interactive = _BlockingRunner(RunStatus.CANCELLED)
+    bridge = ProductionSandboxTestLabRunner(
+        opt_in_enabled=lambda: True,
+        interactive_session_runner_factory=lambda: interactive,
+        interactive_session_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+    )
+    bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+    assert bridge.current_frame(RUN_ID) is None
+
+
+def test_current_frame_is_none_without_a_prepared_run():
+    bridge = ProductionSandboxTestLabRunner(opt_in_enabled=lambda: True)
+    assert bridge.current_frame(RUN_ID) is None
+
+
 def test_bridge_rechecks_exact_opt_in_before_launch():
     environment = {PRODUCTION_UI_EXTERNAL_OPT_IN: "1"}
     bridge = _runner(_BlockingRunner(RunStatus.PASSED), lambda: environment.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1")

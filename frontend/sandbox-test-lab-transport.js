@@ -40,6 +40,10 @@ const ALLOWED_ERROR_CODES = new Set([
 ]);
 const ALLOWED_RUN_ERRORS = new Set(['run_failed', 'run_timed_out', 'run_interrupted']);
 const MAX_RESPONSE_BYTES = 256 * 1024;
+// The frame endpoint returns a base64-encoded downscaled screenshot, which can comfortably
+// exceed the 256 KB cap used by every other (tiny JSON) response.
+const MAX_FRAME_RESPONSE_BYTES = 1024 * 1024;
+const FRAME_BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 const REQUEST_TIMEOUT_MS = 10_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -152,13 +156,21 @@ function sanitizeCancel(payload) {
     return { run_id: payload.run_id, status: payload.status, accepted: payload.accepted };
 }
 
+function sanitizeFrame(payload) {
+    if (!payload || !isCanonicalUuid(payload.run_id)) return null;
+    if (payload.captured_at !== null && typeof payload.captured_at !== 'string') return null;
+    if (payload.frame_base64 !== null && (typeof payload.frame_base64 !== 'string' || !FRAME_BASE64_PATTERN.test(payload.frame_base64))) return null;
+    if ((payload.captured_at === null) !== (payload.frame_base64 === null)) return null;
+    return { run_id: payload.run_id, captured_at: payload.captured_at, frame_base64: payload.frame_base64 };
+}
+
 function responseError(payload, status) {
     const candidate = payload?.error?.code || payload?.detail;
     const code = ALLOWED_ERROR_CODES.has(candidate) ? candidate : 'internal_error';
     return errorResult(code, status);
 }
 
-function requestJson(context, specification, sanitizer) {
+function requestJson(context, specification, sanitizer, maxResponseBytes = MAX_RESPONSE_BYTES) {
     const contextError = backendContextError(context);
     if (contextError) return Promise.resolve(contextError);
     const body = specification.body === null ? null : JSON.stringify(specification.body);
@@ -197,7 +209,7 @@ function requestJson(context, specification, sanitizer) {
             let size = 0;
             response.on('data', chunk => {
                 size += chunk.length;
-                if (size > MAX_RESPONSE_BYTES) {
+                if (size > maxResponseBytes) {
                     request.destroy();
                     finish(errorResult('backend_security_unavailable'));
                     return;
@@ -264,6 +276,16 @@ function getSandboxTestLabRun(context, runId) {
     );
 }
 
+function getSandboxTestLabRunFrame(context, runId) {
+    if (!isCanonicalUuid(runId)) return Promise.resolve(errorResult('run_not_found', 404));
+    return requestJson(
+        context,
+        { method: 'GET', path: `/api/sandbox-test-lab/runs/${runId}/frame`, body: null },
+        sanitizeFrame,
+        MAX_FRAME_RESPONSE_BYTES,
+    );
+}
+
 function cancelSandboxTestLabRun(context, runId) {
     if (!isCanonicalUuid(runId)) return Promise.resolve(errorResult('run_not_found', 404));
     return requestJson(
@@ -285,8 +307,10 @@ module.exports = {
     sanitizeLaunch,
     sanitizeRun,
     sanitizeCancel,
+    sanitizeFrame,
     getSandboxTestLabCapabilities,
     launchSandboxTestLabRun,
     getSandboxTestLabRun,
+    getSandboxTestLabRunFrame,
     cancelSandboxTestLabRun,
 };

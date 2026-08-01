@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import time
@@ -78,6 +79,8 @@ class FakeJobService:
         self.start_error = None
         self.snapshot_error = None
         self.cancel_error = None
+        self.frame_calls = []
+        self.frame_result = None
 
     def start(self, profile):
         self.start_calls.append(profile)
@@ -114,6 +117,10 @@ class FakeJobService:
         )
         self.records[run_id] = item
         return item
+
+    def frame(self, run_id):
+        self.frame_calls.append(run_id)
+        return self.frame_result
 
     def shutdown(self, timeout=2.0):
         self.shutdown_calls.append(timeout)
@@ -204,6 +211,7 @@ def test_all_routes_reject_missing_or_incorrect_token(token):
     for path in (
         f"{BASE_PATH}/capabilities",
         f"{BASE_PATH}/runs/{uuid4()}",
+        f"{BASE_PATH}/runs/{uuid4()}/frame",
     ):
         response = client.get(path)
         assert response.status_code == 401
@@ -331,6 +339,48 @@ def test_interactive_session_operation_is_accepted_and_routed_to_its_profile():
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
     assert service.start_calls == [SandboxProfile.INTERACTIVE_SESSION]
+
+
+def test_frame_route_returns_base64_when_available():
+    app, service = _app()
+    service.frame_result = b"frame-bytes"
+    run_id = "11111111-1111-4111-8111-111111111111"
+
+    response = _client(app).get(f"{BASE_PATH}/runs/{run_id}/frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_id"] == run_id
+    assert body["frame_base64"] == base64.b64encode(b"frame-bytes").decode("ascii")
+    assert body["captured_at"] is not None
+    assert service.frame_calls == [run_id]
+
+
+def test_frame_route_returns_null_when_unavailable():
+    app, service = _app()
+    service.frame_result = None
+    run_id = "11111111-1111-4111-8111-111111111111"
+
+    response = _client(app).get(f"{BASE_PATH}/runs/{run_id}/frame")
+
+    assert response.status_code == 200
+    assert response.json() == {"run_id": run_id, "captured_at": None, "frame_base64": None}
+
+
+def test_frame_route_never_errors_on_a_service_exception():
+    app, service = _app()
+
+    def boom(run_id):
+        raise RuntimeError("private failure detail")
+
+    service.frame = boom
+    run_id = "11111111-1111-4111-8111-111111111111"
+
+    response = _client(app).get(f"{BASE_PATH}/runs/{run_id}/frame")
+
+    assert response.status_code == 200
+    assert response.json()["frame_base64"] is None
+    assert "private failure detail" not in response.text
 
 
 @pytest.mark.parametrize(

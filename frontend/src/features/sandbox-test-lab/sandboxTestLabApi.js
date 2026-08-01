@@ -38,5 +38,6 @@ export const sandboxTestLabApi = Object.freeze({
   getCapabilities: () => invoke('getCapabilities'),
   launchRun: (operation, idempotencyKey) => invoke('launchRun', operation, idempotencyKey),
   getRun: runId => invoke('getRun', runId),
+  getFrame: runId => invoke('getFrame', runId),
   cancelRun: runId => invoke('cancelRun', runId),
 });

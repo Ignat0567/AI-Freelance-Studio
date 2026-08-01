@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -746,6 +747,80 @@ class TestOwnedSandboxSessionIsRunning:
         )
         assert session.is_running() is False
 
+
+class TestCaptureWindowPng:
+    """Tests for capture_window_png with mocked PowerShell. Real end-to-end capture was
+    validated by hand against a live Windows Sandbox on 2026-07-31 (see
+    docs/interactive-sandbox-test-lab-phase-5-design.md) -- these tests only cover the
+    Python-side plumbing around that PowerShell command."""
+
+    def _session(self):
+        return OwnedSandboxSession(
+            model="legacy_client", launcher_pid=4242,
+            client_pid=4343, client_start_ticks=638800000000000000,
+            client_started_at="2026-07-24T10:00:00.0000000Z",
+            client_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+        )
+
+    def test_capture_returns_decoded_bytes_on_success(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        expected = b"not a real png but good enough to round-trip"
+        encoded = base64.b64encode(expected).decode("ascii")
+        def run(argv, **kwargs):
+            calls.append(argv[-1])
+            stdout = f"FRAME_B64_START\n{encoded}\nFRAME_B64_END\n"
+            return type("Result", (), {"returncode": 0, "stdout": stdout})()
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+
+        result = self._session().capture_window_png(max_width=640)
+        assert result == expected
+        assert "$TargetPid = 4343" in calls[0]
+        assert "$MaxWidth = 640" in calls[0]
+
+    def test_capture_returns_none_on_nonzero_exit(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        monkeypatch.setattr(
+            session_module.subprocess, "run",
+            lambda *a, **k: type("Result", (), {"returncode": 1, "stdout": ""})(),
+        )
+        assert self._session().capture_window_png() is None
+
+    def test_capture_returns_none_without_markers(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        monkeypatch.setattr(
+            session_module.subprocess, "run",
+            lambda *a, **k: type("Result", (), {"returncode": 0, "stdout": "no markers here"})(),
+        )
+        assert self._session().capture_window_png() is None
+
+    def test_capture_returns_none_on_timeout(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        def run(argv, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=20)
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+        assert self._session().capture_window_png() is None
+
+    def test_capture_returns_none_on_malformed_base64(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        monkeypatch.setattr(
+            session_module.subprocess, "run",
+            lambda *a, **k: type("Result", (), {
+                "returncode": 0, "stdout": "FRAME_B64_START\nnot-valid-base64!!!\nFRAME_B64_END\n",
+            })(),
+        )
+        assert self._session().capture_window_png() is None
+
+    def test_capture_rejects_invalid_max_width(self):
+        with pytest.raises(ValueError, match="max_width"):
+            self._session().capture_window_png(max_width=50)
+        with pytest.raises(ValueError, match="max_width"):
+            self._session().capture_window_png(max_width=True)
 
 class TestCaptureOwnedSandboxSession:
     """Tests for capture_owned_sandbox_session with mocked PowerShell."""
