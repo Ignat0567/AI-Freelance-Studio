@@ -7,8 +7,10 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from sandbox_test_lab.interactive_session import (
+    MAX_INPUT_TEXT_LENGTH,
     MAX_SESSION_SECONDS,
     InteractiveSessionRequest,
+    SandboxInputAction,
     interactive_session_run_root,
     write_interactive_session_wsb,
 )
@@ -63,10 +65,16 @@ class _FakeSession:
         self.terminate_server_calls = 0
         self.capture_calls = []
         self.capture_result = b"fake-frame-bytes"
+        self.input_calls = []
+        self.input_result = True
 
     def capture_window_png(self, **kwargs):
         self.capture_calls.append(kwargs)
         return self.capture_result
+
+    def send_input(self, action):
+        self.input_calls.append(action)
+        return self.input_result
 
     def is_running(self) -> bool:
         return self._alive or self._server_alive
@@ -106,6 +114,81 @@ def test_request_rejects_non_default_timeout():
 def test_request_default_run_id_is_a_uuid():
     request = InteractiveSessionRequest()
     assert len(request.run_id) == 36
+
+
+class TestSandboxInputAction:
+    """This is the entire security-relevant validation surface for Phase 5c -- no action
+    reaches PowerShell without passing through here (and, redundantly by design, the
+    matching Pydantic model at the API layer) first."""
+
+    def test_click_accepts_boundary_coordinates(self):
+        for x, y in ((0.0, 0.0), (1.0, 1.0), (0.5, 0.5)):
+            SandboxInputAction(kind="click", x=x, y=y)
+
+    @pytest.mark.parametrize("x,y", [(-0.01, 0.5), (1.01, 0.5), (0.5, -0.01), (0.5, 1.01)])
+    def test_click_rejects_out_of_range_coordinates(self, x, y):
+        with pytest.raises(ValueError, match="0.0, 1.0"):
+            SandboxInputAction(kind="click", x=x, y=y)
+
+    def test_click_rejects_bool_as_coordinate(self):
+        with pytest.raises(ValueError, match="0.0, 1.0"):
+            SandboxInputAction(kind="click", x=True, y=0.5)
+
+    def test_click_requires_both_coordinates(self):
+        with pytest.raises(ValueError, match="requires x and y"):
+            SandboxInputAction(kind="click", x=0.5, y=None)
+
+    def test_click_rejects_unknown_button(self):
+        with pytest.raises(ValueError, match="button is invalid"):
+            SandboxInputAction(kind="click", x=0.5, y=0.5, button="middle")
+
+    def test_click_rejects_extra_fields_from_other_kinds(self):
+        with pytest.raises(ValueError, match="only x, y, and button"):
+            SandboxInputAction(kind="click", x=0.5, y=0.5, text="sneaky")
+
+    def test_click_defaults_to_left_button(self):
+        assert SandboxInputAction(kind="click", x=0.5, y=0.5).button == "left"
+
+    def test_type_accepts_bounded_text(self):
+        SandboxInputAction(kind="type", text="a")
+        SandboxInputAction(kind="type", text="x" * MAX_INPUT_TEXT_LENGTH)
+
+    def test_type_rejects_empty_text(self):
+        with pytest.raises(ValueError, match="1-"):
+            SandboxInputAction(kind="type", text="")
+
+    def test_type_rejects_oversized_text(self):
+        with pytest.raises(ValueError, match="1-"):
+            SandboxInputAction(kind="type", text="x" * (MAX_INPUT_TEXT_LENGTH + 1))
+
+    def test_type_rejects_non_string_text(self):
+        with pytest.raises(ValueError, match="1-"):
+            SandboxInputAction(kind="type", text=12345)
+
+    @pytest.mark.parametrize("text", ["hi\n", "hi\r", "hi\ttab", "bad\x00null"])
+    def test_type_rejects_control_characters(self, text):
+        with pytest.raises(ValueError, match="control characters"):
+            SandboxInputAction(kind="type", text=text)
+
+    def test_type_rejects_extra_fields_from_other_kinds(self):
+        with pytest.raises(ValueError, match="only text"):
+            SandboxInputAction(kind="type", text="hi", key="enter")
+
+    @pytest.mark.parametrize("key", ["enter", "escape", "tab", "backspace"])
+    def test_key_accepts_allow_listed_names(self, key):
+        SandboxInputAction(kind="key", key=key)
+
+    def test_key_rejects_unknown_name(self):
+        with pytest.raises(ValueError, match="key name is invalid"):
+            SandboxInputAction(kind="key", key="F5")
+
+    def test_key_rejects_extra_fields_from_other_kinds(self):
+        with pytest.raises(ValueError, match="only key"):
+            SandboxInputAction(kind="key", key="enter", x=0.5)
+
+    def test_rejects_unknown_kind(self):
+        with pytest.raises(ValueError, match="kind is invalid"):
+            SandboxInputAction(kind="drag")
 
 
 def test_run_root_is_isolated_from_other_profiles(tmp_path):
@@ -490,3 +573,68 @@ def test_capture_frame_delegates_to_the_live_session_while_running(tmp_path):
     assert result.status == RunStatus.CANCELLED
     # Once the run has finished, the runner no longer has a live session to capture from.
     assert runner.capture_frame(request.run_id) is None
+
+
+def test_send_input_returns_false_when_nothing_is_running(tmp_path):
+    runner = InteractiveSessionRunner(capability_detector=_capability, runtime_root=tmp_path)
+    action = SandboxInputAction(kind="key", key="enter")
+    assert runner.send_input("11111111-1111-1111-1111-111111111111", action) is False
+
+
+def test_send_input_delegates_to_the_live_session_while_running(tmp_path):
+    clock = _Clock()
+    session = _FakeSession()
+    request = InteractiveSessionRequest()
+    cancellation = Event()
+    sent: dict = {}
+    action = SandboxInputAction(kind="click", x=0.5, y=0.5)
+
+    def sleeper(seconds: float) -> None:
+        clock.sleeper(seconds)
+        if "during_run" not in sent:
+            sent["during_run"] = runner.send_input(request.run_id, action)
+            sent["wrong_run_id"] = runner.send_input("22222222-2222-2222-2222-222222222222", action)
+        cancellation.set()
+
+    runner = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=lambda argv: _FakeProcess(),
+        monotonic=clock.monotonic, sleeper=sleeper, poll_interval=1,
+        session_factory=lambda pid, started_at: session,
+        runtime_root=tmp_path,
+    )
+    result = runner.run(request, cancellation)
+
+    assert sent["during_run"] is True
+    assert sent["wrong_run_id"] is False
+    assert session.input_calls == [action]
+    assert result.status == RunStatus.CANCELLED
+    # Once the run has finished, the runner no longer has a live session to send input to.
+    assert runner.send_input(request.run_id, action) is False
+
+
+def test_send_input_reports_when_the_session_declines_the_action(tmp_path):
+    """The session itself can decline (e.g. the focus-verification gate failed inside the
+    sandbox) -- the runner must pass that False through, not paper over it."""
+    clock = _Clock()
+    session = _FakeSession()
+    session.input_result = False
+    request = InteractiveSessionRequest()
+    cancellation = Event()
+    sent: dict = {}
+    action = SandboxInputAction(kind="key", key="escape")
+
+    def sleeper(seconds: float) -> None:
+        clock.sleeper(seconds)
+        if "during_run" not in sent:
+            sent["during_run"] = runner.send_input(request.run_id, action)
+        cancellation.set()
+
+    runner = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=lambda argv: _FakeProcess(),
+        monotonic=clock.monotonic, sleeper=sleeper, poll_interval=1,
+        session_factory=lambda pid, started_at: session,
+        runtime_root=tmp_path,
+    )
+    runner.run(request, cancellation)
+
+    assert sent["during_run"] is False

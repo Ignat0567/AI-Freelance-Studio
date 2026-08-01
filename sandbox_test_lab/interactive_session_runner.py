@@ -11,6 +11,7 @@ from .capability import detect_sandbox_capability
 from .fixture_installation import ensure_no_active_windows_sandbox_session
 from .interactive_session import (
     InteractiveSessionRequest,
+    SandboxInputAction,
     interactive_session_run_root,
     write_interactive_session_wsb,
 )
@@ -188,6 +189,16 @@ class InteractiveSessionRunner:
         finally:
             if process is not None:
                 _stop_owned_process(process)
+
+    def send_input(self, run_id: str, action: SandboxInputAction) -> bool:
+        """Send a validated input action to the running session's Sandbox window, or do
+        nothing and return False if there is no live session for this run_id right now.
+        The actual send happens outside the lock, matching capture_frame()."""
+        with self._live_lock:
+            if self._live_run_id != run_id or self._live_session is None:
+                return False
+            session = self._live_session
+        return session.send_input(action)
 
     def capture_frame(self, run_id: str) -> bytes | None:
         """Best-effort live thumbnail of the running session's Sandbox window, or None if

@@ -13,6 +13,7 @@ from sandbox_test_lab.adapter import (
     SandboxStatus,
     SandboxTestLabAdapter,
 )
+from sandbox_test_lab.interactive_session import SandboxInputAction
 from sandbox_test_lab.job_service import SandboxJobDisabledError
 from sandbox_test_lab.models import RunStatus, SandboxCapability, SandboxRunResult
 from sandbox_test_lab.production_bridge import (
@@ -237,14 +238,20 @@ def test_bridge_routes_interactive_session_profile_to_its_own_runner():
 
 
 class _CaptureCapableRunner(_BlockingRunner):
-    def __init__(self, *args, frame=b"frame-bytes", **kwargs):
+    def __init__(self, *args, frame=b"frame-bytes", input_result=True, **kwargs):
         super().__init__(*args, **kwargs)
         self.frame = frame
         self.capture_calls = []
+        self.input_result = input_result
+        self.input_calls = []
 
     def capture_frame(self, run_id):
         self.capture_calls.append(run_id)
         return self.frame
+
+    def send_input(self, run_id, action):
+        self.input_calls.append((run_id, action))
+        return self.input_result
 
 
 def test_current_frame_delegates_for_interactive_session_run():
@@ -291,6 +298,53 @@ def test_current_frame_is_none_when_runner_lacks_capture_support():
 def test_current_frame_is_none_without_a_prepared_run():
     bridge = ProductionSandboxTestLabRunner(opt_in_enabled=lambda: True)
     assert bridge.current_frame(RUN_ID) is None
+
+
+def test_send_input_delegates_for_interactive_session_run():
+    release = threading.Event()
+    interactive = _CaptureCapableRunner(RunStatus.CANCELLED, release)
+    bridge = ProductionSandboxTestLabRunner(
+        opt_in_enabled=lambda: True,
+        interactive_session_runner_factory=lambda: interactive,
+        interactive_session_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+    )
+    bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+    bridge.launch(RUN_ID)
+    assert interactive.started.wait(1)
+
+    action = SandboxInputAction(kind="key", key="enter")
+    assert bridge.send_input(RUN_ID, action) is True
+    assert interactive.input_calls == [(RUN_ID, action)]
+    assert bridge.send_input("99999999-9999-9999-9999-999999999999", action) is False
+    release.set()
+
+
+def test_send_input_is_false_for_non_interactive_profile():
+    release = threading.Event()
+    blocking = _BlockingRunner(RunStatus.CANCELLED, release)
+    bridge = _runner(blocking)
+    bridge.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    bridge.launch(RUN_ID)
+    assert blocking.started.wait(1)
+
+    assert bridge.send_input(RUN_ID, SandboxInputAction(kind="key", key="enter")) is False
+    release.set()
+
+
+def test_send_input_is_false_when_runner_lacks_input_support():
+    interactive = _BlockingRunner(RunStatus.CANCELLED)
+    bridge = ProductionSandboxTestLabRunner(
+        opt_in_enabled=lambda: True,
+        interactive_session_runner_factory=lambda: interactive,
+        interactive_session_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+    )
+    bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+    assert bridge.send_input(RUN_ID, SandboxInputAction(kind="key", key="enter")) is False
+
+
+def test_send_input_is_false_without_a_prepared_run():
+    bridge = ProductionSandboxTestLabRunner(opt_in_enabled=lambda: True)
+    assert bridge.send_input(RUN_ID, SandboxInputAction(kind="key", key="enter")) is False
 
 
 def test_bridge_rechecks_exact_opt_in_before_launch():

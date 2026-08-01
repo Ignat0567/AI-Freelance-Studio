@@ -36,9 +36,14 @@ const ALLOWED_ERROR_CODES = new Set([
     'run_already_terminal',
     'invalid_launch_request',
     'invalid_cancel_request',
+    'invalid_input_request',
     'internal_error',
 ]);
 const ALLOWED_RUN_ERRORS = new Set(['run_failed', 'run_timed_out', 'run_interrupted']);
+const ALLOWED_INPUT_KINDS = new Set(['click', 'type', 'key']);
+const ALLOWED_INPUT_BUTTONS = new Set(['left', 'right']);
+const ALLOWED_INPUT_KEYS = new Set(['enter', 'escape', 'tab', 'backspace']);
+const MAX_INPUT_TEXT_LENGTH = 500;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 // The frame endpoint returns a base64-encoded downscaled screenshot, which can comfortably
 // exceed the 256 KB cap used by every other (tiny JSON) response.
@@ -164,6 +169,37 @@ function sanitizeFrame(payload) {
     return { run_id: payload.run_id, captured_at: payload.captured_at, frame_base64: payload.frame_base64 };
 }
 
+function sanitizeInputResult(payload) {
+    if (!payload || !isCanonicalUuid(payload.run_id) || typeof payload.executed !== 'boolean') return null;
+    return { run_id: payload.run_id, executed: payload.executed };
+}
+
+// Renderer code is untrusted: this builds the exact, closed-vocabulary request body sent to
+// the backend from an arbitrary renderer-supplied object, rejecting anything that doesn't
+// match one of the three allowed action shapes. The backend re-validates this independently
+// (SandboxInputAction.__post_init__) -- this is defense in depth, not a redundant check to
+// trim, matching how launch/cancel already pre-validate before ever building a request.
+function sanitizeOutgoingInputAction(action) {
+    if (!action || typeof action !== 'object' || !ALLOWED_INPUT_KINDS.has(action.kind)) return null;
+    if (action.kind === 'click') {
+        const { x, y } = action;
+        const button = action.button === undefined ? 'left' : action.button;
+        if (typeof x !== 'number' || !Number.isFinite(x) || x < 0 || x > 1) return null;
+        if (typeof y !== 'number' || !Number.isFinite(y) || y < 0 || y > 1) return null;
+        if (!ALLOWED_INPUT_BUTTONS.has(button)) return null;
+        return { kind: 'click', x, y, button };
+    }
+    if (action.kind === 'type') {
+        const { text } = action;
+        if (typeof text !== 'string' || text.length < 1 || text.length > MAX_INPUT_TEXT_LENGTH) return null;
+        if ([...text].some(char => char.codePointAt(0) < 0x20)) return null;
+        return { kind: 'type', text };
+    }
+    const { key } = action;
+    if (!ALLOWED_INPUT_KEYS.has(key)) return null;
+    return { kind: 'key', key };
+}
+
 function responseError(payload, status) {
     const candidate = payload?.error?.code || payload?.detail;
     const code = ALLOWED_ERROR_CODES.has(candidate) ? candidate : 'internal_error';
@@ -286,6 +322,17 @@ function getSandboxTestLabRunFrame(context, runId) {
     );
 }
 
+function sendSandboxTestLabRunInput(context, runId, action) {
+    if (!isCanonicalUuid(runId)) return Promise.resolve(errorResult('run_not_found', 404));
+    const body = sanitizeOutgoingInputAction(action);
+    if (!body) return Promise.resolve(errorResult('invalid_input_request', 422));
+    return requestJson(
+        context,
+        { method: 'POST', path: `/api/sandbox-test-lab/runs/${runId}/input`, body },
+        sanitizeInputResult,
+    );
+}
+
 function cancelSandboxTestLabRun(context, runId) {
     if (!isCanonicalUuid(runId)) return Promise.resolve(errorResult('run_not_found', 404));
     return requestJson(
@@ -308,9 +355,12 @@ module.exports = {
     sanitizeRun,
     sanitizeCancel,
     sanitizeFrame,
+    sanitizeInputResult,
+    sanitizeOutgoingInputAction,
     getSandboxTestLabCapabilities,
     launchSandboxTestLabRun,
     getSandboxTestLabRun,
     getSandboxTestLabRunFrame,
+    sendSandboxTestLabRunInput,
     cancelSandboxTestLabRun,
 };

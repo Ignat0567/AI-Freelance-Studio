@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend_security import StrictRequestModel, require_local_only_request
 from sandbox_test_lab.adapter import (
@@ -27,6 +27,7 @@ from sandbox_test_lab.adapter import (
     SandboxReadiness,
     SandboxTestLabAdapter,
 )
+from sandbox_test_lab.interactive_session import SandboxInputAction
 from sandbox_test_lab.job_service import (
     SandboxJobDisabledError,
     SandboxJobError,
@@ -57,11 +58,12 @@ class TestLabRoute(APIRoute):
             try:
                 return await route_handler(request)
             except RequestValidationError:
-                code = (
-                    "invalid_cancel_request"
-                    if request.url.path.endswith("/cancel")
-                    else "invalid_launch_request"
-                )
+                if request.url.path.endswith("/cancel"):
+                    code = "invalid_cancel_request"
+                elif request.url.path.endswith("/input"):
+                    code = "invalid_input_request"
+                else:
+                    code = "invalid_launch_request"
                 return _error_response(422, code, "The JSON request body is invalid.")
             except TestLabAPIError as exc:
                 return _error_response(exc.status_code, exc.code, exc.message)
@@ -105,6 +107,22 @@ class TestLabLaunchRequest(StrictRequestModel):
 
 class TestLabCancelRequest(StrictRequestModel):
     reason: Literal["user_requested"]
+
+
+class TestLabInputRequest(StrictRequestModel):
+    """Mirrors sandbox_test_lab.interactive_session.SandboxInputAction's closed vocabulary
+    exactly -- this is the real security-critical validation surface for input injection,
+    replacing what the original design doc expected to need as a guest-side command schema
+    with an equivalent, simpler host-side one at the same rigor. Bounds are enforced twice
+    (here, and again in SandboxInputAction.__post_init__) deliberately -- defense in depth,
+    not redundancy to trim."""
+
+    kind: Literal["click", "type", "key"]
+    x: float | None = Field(default=None, ge=0.0, le=1.0)
+    y: float | None = Field(default=None, ge=0.0, le=1.0)
+    button: Literal["left", "right"] = "left"
+    text: str | None = Field(default=None, min_length=1, max_length=500)
+    key: Literal["enter", "escape", "tab", "backspace"] | None = None
 
 
 class TestLabCapabilityReason(StrictResponseModel):
@@ -161,6 +179,11 @@ class TestLabFrameResponse(StrictResponseModel):
     run_id: str
     captured_at: str | None
     frame_base64: str | None
+
+
+class TestLabInputResponse(StrictResponseModel):
+    run_id: str
+    executed: bool
 
 
 class TestLabErrorDetail(StrictResponseModel):
@@ -361,11 +384,12 @@ async def require_unambiguous_json(request: Request) -> None:
         return
     except ValueError as exc:
         if str(exc) == "duplicate_json_field":
-            code = (
-                "invalid_cancel_request"
-                if request.url.path.endswith("/cancel")
-                else "invalid_launch_request"
-            )
+            if request.url.path.endswith("/cancel"):
+                code = "invalid_cancel_request"
+            elif request.url.path.endswith("/input"):
+                code = "invalid_input_request"
+            else:
+                code = "invalid_launch_request"
             raise TestLabAPIError(422, code, "Duplicate JSON fields are not allowed.") from None
         raise
 
@@ -565,6 +589,42 @@ def get_test_lab_run_frame(
         captured_at=captured_at,
         frame_base64=base64.b64encode(frame).decode("ascii"),
     )
+
+
+@router.post(
+    "/api/sandbox-test-lab/runs/{run_id}/input",
+    response_model=TestLabInputResponse,
+    responses={404: {"model": TestLabErrorResponse}, 422: {"model": TestLabErrorResponse}},
+)
+def send_test_lab_run_input(
+    run_id: str,
+    payload: TestLabInputRequest,
+    _context=Depends(require_local_only_request),
+    _unambiguous=Depends(require_unambiguous_json),
+    service: SandboxTestLabJobService = Depends(get_test_lab_job_service),
+) -> TestLabInputResponse:
+    """Send one validated input action (click/type/key) to an active interactive_session
+    run. A second, narrow, documented exception alongside /frame -- scoped to
+    interactive_session only, every other profile always reports executed=false. Unlike
+    /frame, a genuinely unknown run_id is a 404: a caller sending input needs to know
+    clearly whether the target existed, not have that silently folded into "nothing
+    happened". `executed` still reports false (200) for a real run that simply isn't a live
+    interactive_session right now (wrong profile, already terminal, or a focus-verification
+    failure inside the sandbox -- see OwnedSandboxSession.send_input)."""
+    _snapshot(service, run_id)
+    try:
+        action = SandboxInputAction(
+            kind=payload.kind, x=payload.x, y=payload.y,
+            button=payload.button, text=payload.text, key=payload.key,
+        )
+    except ValueError:
+        raise TestLabAPIError(422, "invalid_input_request", "The input action is invalid.") from None
+    try:
+        executed = service.send_input(run_id, action)
+    except Exception as exc:
+        LOGGER.error("Test Lab input send failed: %s", type(exc).__name__)
+        executed = False
+    return TestLabInputResponse(run_id=run_id, executed=executed)
 
 
 @router.post(

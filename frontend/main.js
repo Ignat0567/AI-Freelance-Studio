@@ -21,6 +21,7 @@ const {
     launchSandboxTestLabRun,
     getSandboxTestLabRun,
     getSandboxTestLabRunFrame,
+    sendSandboxTestLabRunInput,
     cancelSandboxTestLabRun,
 } = require('./sandbox-test-lab-transport');
 
@@ -109,6 +110,10 @@ ipcMain.handle('sandbox-test-lab-status', (event, runId) => (
 
 ipcMain.handle('sandbox-test-lab-frame', (event, runId) => (
     trustedSandboxTestLabCall(event, context => getSandboxTestLabRunFrame(context, runId))
+));
+
+ipcMain.handle('sandbox-test-lab-input', (event, runId, action) => (
+    trustedSandboxTestLabCall(event, context => sendSandboxTestLabRunInput(context, runId, action))
 ));
 
 ipcMain.handle('sandbox-test-lab-cancel', (event, runId) => (

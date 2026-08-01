@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('env', Object.freeze({
         launchRun: (operation, idempotencyKey) => ipcRenderer.invoke('sandbox-test-lab-launch', operation, idempotencyKey),
         getRun: (runId) => ipcRenderer.invoke('sandbox-test-lab-status', runId),
         getFrame: (runId) => ipcRenderer.invoke('sandbox-test-lab-frame', runId),
+        sendInput: (runId, action) => ipcRenderer.invoke('sandbox-test-lab-input', runId, action),
         cancelRun: (runId) => ipcRenderer.invoke('sandbox-test-lab-cancel', runId),
     }),
 }));

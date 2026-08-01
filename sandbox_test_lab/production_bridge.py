@@ -18,7 +18,7 @@ from .adapter import (
     SandboxTestLabResult,
     ValidatedSandboxCheck,
 )
-from .interactive_session import InteractiveSessionRequest
+from .interactive_session import InteractiveSessionRequest, SandboxInputAction
 from .interactive_session_runner import InteractiveSessionRunner
 from .job_service import JsonSandboxJobStateStore, SandboxTestLabJobService
 from .models import RunStatus, SandboxRunResult
@@ -256,6 +256,18 @@ class ProductionSandboxTestLabRunner:
         if capture is None:
             return None
         return capture(run_id)
+
+    def send_input(self, run_id: str, action: SandboxInputAction) -> bool:
+        """Send a validated input action to an interactive_session run, or do nothing and
+        return False for every other profile or if there is no matching live run right now."""
+        with self._lock:
+            run = self._run
+            if run is None or run.profile is not SandboxProfile.INTERACTIVE_SESSION or run.request.run_id != run_id:
+                return False
+            sender = getattr(run.runner, "send_input", None)
+        if sender is None:
+            return False
+        return sender(run_id, action)
 
     def _owned_run(self, run_id: str) -> _PreparedRun:
         if self._run is None or self._run.request.run_id != run_id:

@@ -25,6 +25,7 @@ from sandbox_test_lab.adapter import (
     SandboxTestLabAdapter,
     SandboxTestLabResult,
 )
+from sandbox_test_lab.interactive_session import SandboxInputAction
 from sandbox_test_lab.job_service import (
     SandboxJobError,
     SandboxJobSnapshot,
@@ -81,6 +82,8 @@ class FakeJobService:
         self.cancel_error = None
         self.frame_calls = []
         self.frame_result = None
+        self.input_calls = []
+        self.input_result = False
 
     def start(self, profile):
         self.start_calls.append(profile)
@@ -121,6 +124,10 @@ class FakeJobService:
     def frame(self, run_id):
         self.frame_calls.append(run_id)
         return self.frame_result
+
+    def send_input(self, run_id, action):
+        self.input_calls.append((run_id, action))
+        return self.input_result
 
     def shutdown(self, timeout=2.0):
         self.shutdown_calls.append(timeout)
@@ -381,6 +388,115 @@ def test_frame_route_never_errors_on_a_service_exception():
     assert response.status_code == 200
     assert response.json()["frame_base64"] is None
     assert "private failure detail" not in response.text
+
+
+def test_input_route_sends_a_click_and_reports_executed():
+    item = _snapshot(SandboxJobStatus.RUNNING)
+    app, service = _app(FakeJobService((item,)))
+    service.input_result = True
+
+    response = _client(app).post(
+        f"{BASE_PATH}/runs/{item.run_id}/input",
+        json={"kind": "click", "x": 0.5, "y": 0.25, "button": "left"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"run_id": item.run_id, "executed": True}
+    [(sent_run_id, sent_action)] = service.input_calls
+    assert sent_run_id == item.run_id
+    assert sent_action == SandboxInputAction(kind="click", x=0.5, y=0.25, button="left")
+
+
+def test_input_route_sends_type_and_key_actions():
+    item = _snapshot(SandboxJobStatus.RUNNING)
+    app, service = _app(FakeJobService((item,)))
+    service.input_result = True
+    client = _client(app)
+
+    typed = client.post(
+        f"{BASE_PATH}/runs/{item.run_id}/input",
+        json={"kind": "type", "text": "hello"},
+    )
+    keyed = client.post(
+        f"{BASE_PATH}/runs/{item.run_id}/input",
+        json={"kind": "key", "key": "enter"},
+    )
+
+    assert typed.status_code == 200
+    assert typed.json() == {"run_id": item.run_id, "executed": True}
+    assert keyed.status_code == 200
+    assert keyed.json() == {"run_id": item.run_id, "executed": True}
+    assert [action for _, action in service.input_calls] == [
+        SandboxInputAction(kind="type", text="hello"),
+        SandboxInputAction(kind="key", key="enter"),
+    ]
+
+
+def test_input_route_reports_executed_false_without_erroring():
+    item = _snapshot(SandboxJobStatus.RUNNING)
+    app, service = _app(FakeJobService((item,)))
+    service.input_result = False
+
+    response = _client(app).post(
+        f"{BASE_PATH}/runs/{item.run_id}/input",
+        json={"kind": "key", "key": "escape"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"run_id": item.run_id, "executed": False}
+
+
+def test_input_route_is_404_for_an_unknown_run():
+    app, service = _app()
+
+    response = _client(app).post(
+        f"{BASE_PATH}/runs/{uuid4()}/input",
+        json={"kind": "key", "key": "escape"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "run_not_found"
+    assert service.input_calls == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"kind": "click", "x": 1.5, "y": 0.5},
+        {"kind": "click", "x": -0.1, "y": 0.5},
+        {"kind": "click", "x": 0.5},
+        {"kind": "click", "x": 0.5, "y": 0.5, "button": "middle"},
+        {"kind": "type", "text": "x" * 501},
+        {"kind": "type", "text": ""},
+        {"kind": "key", "key": "f1"},
+        {"kind": "spacebar", "key": "enter"},
+        {"kind": "click", "x": 0.5, "y": 0.5, "text": "extra"},
+    ],
+)
+def test_input_route_rejects_out_of_bounds_or_malformed_payloads(payload):
+    item = _snapshot(SandboxJobStatus.RUNNING)
+    app, service = _app(FakeJobService((item,)))
+
+    response = _client(app).post(f"{BASE_PATH}/runs/{item.run_id}/input", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_input_request"
+    assert service.input_calls == []
+
+
+def test_input_route_rejects_duplicate_json_fields():
+    item = _snapshot(SandboxJobStatus.RUNNING)
+    app, service = _app(FakeJobService((item,)))
+
+    response = _client(app).post(
+        f"{BASE_PATH}/runs/{item.run_id}/input",
+        content='{"kind":"key","key":"enter","key":"escape"}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_input_request"
+    assert service.input_calls == []
 
 
 @pytest.mark.parametrize(

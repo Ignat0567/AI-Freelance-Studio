@@ -61,13 +61,22 @@ function OperationSelector({ selected, disabled, onSelect, onLaunch }) {
   );
 }
 
-function RunView({ run, reconnecting, cancellationPending, cancellationNote, liveFrame, onCancel, onReturn, onRunAgain }) {
+function RunView({ run, reconnecting, cancellationPending, cancellationNote, liveFrame, onFrameClick, onCancel, onReturn, onRunAgain }) {
   const headingRef = useRef(null);
   useEffect(() => { headingRef.current?.focus(); }, []);
   const operation = operationDetails(run.operation);
   const status = statusDetails(run.status);
   const duration = formatObservedDuration(run.startedAt, run.finishedAt);
   const canCancel = CANCELLABLE_STATUSES.has(run.status) && !cancellationPending;
+  const interactive = Boolean(onFrameClick) && run.status === 'running';
+  const handleFrameClick = event => {
+    if (!interactive) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    onFrameClick(x, y);
+  };
   return (
     <section className={`fs-panel fs-test-lab-run ${status.tone}`} aria-labelledby="test-lab-run-title">
       <div className="fs-test-lab-run-heading">
@@ -76,9 +85,17 @@ function RunView({ run, reconnecting, cancellationPending, cancellationNote, liv
       </div>
       {reconnecting && <div className="fs-test-lab-reconnecting" role="status" aria-live="polite">Reconnecting to the local backend. The operation will not be relaunched.</div>}
       {liveFrame && (
-        <div className="fs-test-lab-live-frame">
-          <img src={liveFrame.dataUrl} alt="Live Sandbox session preview" />
-          <span className="fs-test-lab-live-frame-caption">Live preview -- updates every few seconds</span>
+        <div className={`fs-test-lab-live-frame ${interactive ? 'interactive' : ''}`}>
+          <img
+            src={liveFrame.dataUrl}
+            alt="Live Sandbox session preview"
+            onClick={handleFrameClick}
+            role={interactive ? 'button' : undefined}
+            tabIndex={interactive ? 0 : undefined}
+          />
+          <span className="fs-test-lab-live-frame-caption">
+            {interactive ? 'Live preview -- click to send a click into the sandbox' : 'Live preview -- updates every few seconds'}
+          </span>
         </div>
       )}
       <div className="fs-test-lab-progress" role="status" aria-live="polite" aria-atomic="true">
@@ -206,6 +223,17 @@ export default function SandboxTestLabPage({ active }) {
       && currentRun.operation === 'interactive_session' && currentRun.status === 'running',
     ),
   });
+
+  const frameClickPending = useRef(false);
+  const sendFrameClick = async (x, y) => {
+    if (!currentRun || frameClickPending.current) return;
+    frameClickPending.current = true;
+    try {
+      await sandboxTestLabApi.sendInput(currentRun.run_id, { kind: 'click', x, y, button: 'left' });
+    } finally {
+      frameClickPending.current = false;
+    }
+  };
 
   const selectOperation = operation => {
     if (!Object.hasOwn(SANDBOX_OPERATIONS, operation)) return;
@@ -369,6 +397,7 @@ export default function SandboxTestLabPage({ active }) {
           cancellationPending={cancelPending}
           cancellationNote={cancellationNote}
           liveFrame={liveFrame}
+          onFrameClick={currentRun.operation === 'interactive_session' ? sendFrameClick : undefined}
           onCancel={cancelRun}
           onReturn={() => resetRun(true)}
           onRunAgain={runAgain}

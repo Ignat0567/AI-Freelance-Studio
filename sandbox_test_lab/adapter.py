@@ -6,6 +6,7 @@ from threading import RLock
 from typing import Callable, Protocol
 
 from .capability import detect_sandbox_capability
+from .interactive_session import SandboxInputAction
 from .models import SandboxCapability, validate_run_id
 
 
@@ -418,6 +419,21 @@ class SandboxTestLabAdapter:
         if capture is None:
             return None
         return capture(normalized_run_id)
+
+    def send_input(self, run_id: str, action: SandboxInputAction) -> bool:
+        """Send a validated input action to a run this adapter actually owns, or do nothing
+        and return False otherwise. Only interactive_session runners implement send_input;
+        every other profile always returns False here."""
+        normalized_run_id = _validate_exact_run_id(run_id)
+        with self._registry_lock:
+            owned_run = self._runs.get(normalized_run_id)
+            if owned_run is None:
+                return False
+            runner = owned_run.runner
+        sender = getattr(runner, "send_input", None)
+        if sender is None:
+            return False
+        return sender(normalized_run_id, action)
 
     def repair_handoff(self, run_id: str) -> SandboxRepairHandoff:
         normalized_run_id = _validate_exact_run_id(run_id)

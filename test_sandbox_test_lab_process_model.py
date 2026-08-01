@@ -35,6 +35,7 @@ from sandbox_test_lab.sandbox_session import (
     SERVER_PROCESS_NAME,
 )
 from sandbox_test_lab import sandbox_session as session_module
+from sandbox_test_lab.interactive_session import SandboxInputAction
 from sandbox_test_lab.workspace import WorkspaceError
 
 pytestmark = pytest.mark.unit
@@ -821,6 +822,106 @@ class TestCaptureWindowPng:
             self._session().capture_window_png(max_width=50)
         with pytest.raises(ValueError, match="max_width"):
             self._session().capture_window_png(max_width=True)
+
+
+class TestSendInput:
+    """Tests for send_input with mocked PowerShell. Real end-to-end injection (click +
+    escape) was validated by hand against a live Windows Sandbox on 2026-07-31 (see
+    docs/interactive-sandbox-test-lab-phase-5-design.md) -- these tests only cover the
+    Python-side plumbing and the safety-critical focus-verification gate."""
+
+    def _session(self):
+        return OwnedSandboxSession(
+            model="legacy_client", launcher_pid=4242,
+            client_pid=4343, client_start_ticks=638800000000000000,
+            client_started_at="2026-07-24T10:00:00.0000000Z",
+            client_path=r"C:\Windows\System32\WindowsSandboxClient.exe",
+        )
+
+    def _mock_run(self, monkeypatch, *, returncode=0, stdout="FOCUS_VERIFIED\nACTION_SENT\n"):
+        calls = []
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        def run(argv, **kwargs):
+            calls.append(argv[-1])
+            return type("Result", (), {"returncode": returncode, "stdout": stdout})()
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+        return calls
+
+    def test_click_sends_normalized_coordinates(self, monkeypatch):
+        calls = self._mock_run(monkeypatch)
+        action = SandboxInputAction(kind="click", x=0.25, y=0.75, button="left")
+        assert self._session().send_input(action) is True
+        assert "$TargetPid = 4343" in calls[0]
+        assert "0.25" in calls[0]
+        assert "0.75" in calls[0]
+        assert "mouse_event(2, " in calls[0]  # MOUSEEVENTF_LEFTDOWN
+
+    def test_click_right_button_uses_right_click_flags(self, monkeypatch):
+        calls = self._mock_run(monkeypatch)
+        action = SandboxInputAction(kind="click", x=0.5, y=0.5, button="right")
+        assert self._session().send_input(action) is True
+        assert "mouse_event(8, " in calls[0]  # MOUSEEVENTF_RIGHTDOWN
+
+    def test_type_escapes_sendkeys_special_characters(self, monkeypatch):
+        calls = self._mock_run(monkeypatch)
+        action = SandboxInputAction(kind="type", text="a+b^c%d(e)")
+        assert self._session().send_input(action) is True
+        assert "{+}" in calls[0]
+        assert "{^}" in calls[0]
+        assert "{%}" in calls[0]
+        assert "{(}" in calls[0]
+        assert "{)}" in calls[0]
+
+    def test_type_escapes_single_quotes_for_the_powershell_literal(self, monkeypatch):
+        calls = self._mock_run(monkeypatch)
+        action = SandboxInputAction(kind="type", text="it's fine")
+        assert self._session().send_input(action) is True
+        assert "it''s fine" in calls[0]
+
+    def test_key_sends_correct_virtual_key_code(self, monkeypatch):
+        calls = self._mock_run(monkeypatch)
+        action = SandboxInputAction(kind="key", key="escape")
+        assert self._session().send_input(action) is True
+        assert "keybd_event(27, " in calls[0]  # VK_ESCAPE
+
+    def test_returns_false_when_action_marker_is_missing(self, monkeypatch):
+        self._mock_run(monkeypatch, stdout="FOCUS_VERIFIED\n")
+        action = SandboxInputAction(kind="key", key="enter")
+        assert self._session().send_input(action) is False
+
+    def test_returns_false_on_nonzero_exit(self, monkeypatch):
+        self._mock_run(monkeypatch, returncode=2, stdout="ABORT_FOCUS_VERIFICATION_FAILED")
+        action = SandboxInputAction(kind="key", key="enter")
+        assert self._session().send_input(action) is False
+
+    def test_returns_false_on_timeout(self, monkeypatch):
+        monkeypatch.setattr(session_module, "_powershell_path", lambda: Path("powershell.exe"))
+        monkeypatch.setattr(session_module, "_controlled_environment", lambda: {})
+        def run(argv, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=10)
+        monkeypatch.setattr(session_module.subprocess, "run", run)
+        action = SandboxInputAction(kind="key", key="enter")
+        assert self._session().send_input(action) is False
+
+    def test_never_sends_anything_without_identity_and_focus_verification_in_the_script(self, monkeypatch):
+        """The safety gate lives inside the generated PowerShell itself (GetForegroundWindow
+        == hwnd, checked immediately before every action) -- confirm the script we actually
+        send contains that check ahead of the action body, for every action kind."""
+        calls = self._mock_run(monkeypatch)
+        for action in (
+            SandboxInputAction(kind="click", x=0.5, y=0.5),
+            SandboxInputAction(kind="type", text="hello"),
+            SandboxInputAction(kind="key", key="tab"),
+        ):
+            calls.clear()
+            self._session().send_input(action)
+            script = calls[0]
+            assert "GetForegroundWindow" in script
+            focus_check_index = script.index("GetForegroundWindow() -ne $hwnd")
+            action_marker_index = script.index("ACTION_SENT")
+            assert focus_check_index < action_marker_index
+
 
 class TestCaptureOwnedSandboxSession:
     """Tests for capture_owned_sandbox_session with mocked PowerShell."""

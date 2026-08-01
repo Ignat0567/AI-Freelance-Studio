@@ -107,6 +107,7 @@ http.request = (options, callback) => {
       frame_base64: 'aGVsbG8=',
       secret: 'C:\\private\\frame-path.png',
     };
+    else if (options.path.endsWith('/input')) payload = { run_id: runId, executed: true, secret: 'hidden' };
     else if (options.method === 'GET') payload = {
       run_id: runId,
       operation: 'production_self_test',
@@ -137,8 +138,9 @@ const keyTwo = '33333333-3333-4333-8333-333333333333';
   const invalid = await transport.launchSandboxTestLabRun(context, 'powershell -Command whoami', keyOne);
   const status = await transport.getSandboxTestLabRun(context, runId);
   const frame = await transport.getSandboxTestLabRunFrame(context, runId);
+  const input = await transport.sendSandboxTestLabRunInput(context, runId, { kind: 'click', x: 0.5, y: 0.5 });
   const cancel = await transport.cancelSandboxTestLabRun(context, runId);
-  console.log(JSON.stringify({ requests, capabilities, launch, retry, invalid, status, frame, cancel }));
+  console.log(JSON.stringify({ requests, capabilities, launch, retry, invalid, status, frame, input, cancel }));
 })();
 """
     )
@@ -151,6 +153,7 @@ const keyTwo = '33333333-3333-4333-8333-333333333333';
         ("POST", "/api/sandbox-test-lab/runs"),
         ("GET", "/api/sandbox-test-lab/runs/11111111-1111-4111-8111-111111111111"),
         ("GET", "/api/sandbox-test-lab/runs/11111111-1111-4111-8111-111111111111/frame"),
+        ("POST", "/api/sandbox-test-lab/runs/11111111-1111-4111-8111-111111111111/input"),
         ("POST", "/api/sandbox-test-lab/runs/11111111-1111-4111-8111-111111111111/cancel"),
     ]
     assert requests[1]["body"] == {"operation": "production_self_test", "parameters": {}}
@@ -167,11 +170,103 @@ const keyTwo = '33333333-3333-4333-8333-333333333333';
         "captured_at": "2026-07-31T12:00:00Z",
         "frame_base64": "aGVsbG8=",
     }
+    assert output["input"]["data"] == {
+        "run_id": "11111111-1111-4111-8111-111111111111",
+        "executed": True,
+    }
+    assert requests[-2]["body"] == {"kind": "click", "x": 0.5, "y": 0.5, "button": "left"}
     serialized = json.dumps(output).lower()
     assert "private\\" not in serialized
     assert "raw detail" not in serialized
     assert "backend_process" not in serialized
     assert "main-memory-token" not in serialized
+    assert "\"secret\"" not in serialized
+
+
+def test_sanitize_outgoing_input_action_enforces_the_closed_vocabulary():
+    output = _run_node(
+        r"""
+const { sanitizeOutgoingInputAction } = require('./frontend/sandbox-test-lab-transport');
+console.log(JSON.stringify({
+  click: sanitizeOutgoingInputAction({ kind: 'click', x: 0.25, y: 0.75 }),
+  clickExplicitButton: sanitizeOutgoingInputAction({ kind: 'click', x: 0, y: 1, button: 'right' }),
+  clickOutOfRange: sanitizeOutgoingInputAction({ kind: 'click', x: 1.5, y: 0.5 }),
+  clickBadButton: sanitizeOutgoingInputAction({ kind: 'click', x: 0.5, y: 0.5, button: 'middle' }),
+  clickNonNumeric: sanitizeOutgoingInputAction({ kind: 'click', x: '0.5', y: 0.5 }),
+  type: sanitizeOutgoingInputAction({ kind: 'type', text: 'hello' }),
+  typeEmpty: sanitizeOutgoingInputAction({ kind: 'type', text: '' }),
+  typeTooLong: sanitizeOutgoingInputAction({ kind: 'type', text: 'x'.repeat(501) }),
+  typeControlChar: sanitizeOutgoingInputAction({ kind: 'type', text: 'a\nb' }),
+  key: sanitizeOutgoingInputAction({ kind: 'key', key: 'enter' }),
+  keyUnknown: sanitizeOutgoingInputAction({ kind: 'key', key: 'f1' }),
+  unknownKind: sanitizeOutgoingInputAction({ kind: 'scroll' }),
+  notAnObject: sanitizeOutgoingInputAction('click'),
+  nullAction: sanitizeOutgoingInputAction(null),
+}));
+"""
+    )
+
+    assert output["click"] == {"kind": "click", "x": 0.25, "y": 0.75, "button": "left"}
+    assert output["clickExplicitButton"] == {"kind": "click", "x": 0, "y": 1, "button": "right"}
+    assert output["clickOutOfRange"] is None
+    assert output["clickBadButton"] is None
+    assert output["clickNonNumeric"] is None
+    assert output["type"] == {"kind": "type", "text": "hello"}
+    assert output["typeEmpty"] is None
+    assert output["typeTooLong"] is None
+    assert output["typeControlChar"] is None
+    assert output["key"] == {"kind": "key", "key": "enter"}
+    assert output["keyUnknown"] is None
+    assert output["unknownKind"] is None
+    assert output["notAnObject"] is None
+    assert output["nullAction"] is None
+
+
+def test_sanitize_input_result_accepts_only_the_known_shape():
+    output = _run_node(
+        r"""
+const { sanitizeInputResult } = require('./frontend/sandbox-test-lab-transport');
+const runId = '11111111-1111-4111-8111-111111111111';
+console.log(JSON.stringify({
+  executed: sanitizeInputResult({ run_id: runId, executed: true }),
+  notExecuted: sanitizeInputResult({ run_id: runId, executed: false }),
+  badRunId: sanitizeInputResult({ run_id: 'not-a-uuid', executed: true }),
+  badExecuted: sanitizeInputResult({ run_id: runId, executed: 'yes' }),
+  missing: sanitizeInputResult(null),
+}));
+"""
+    )
+
+    assert output["executed"] == {"run_id": "11111111-1111-4111-8111-111111111111", "executed": True}
+    assert output["notExecuted"] == {"run_id": "11111111-1111-4111-8111-111111111111", "executed": False}
+    assert output["badRunId"] is None
+    assert output["badExecuted"] is None
+    assert output["missing"] is None
+
+
+def test_send_input_rejects_invalid_run_id_or_action_without_a_network_call():
+    output = _run_node(
+        r"""
+let called = false;
+const http = require('http');
+http.request = () => { called = true; throw new Error('should not be called'); };
+const transport = require('./frontend/sandbox-test-lab-transport');
+const context = { ready: true, restarting: false, host: '127.0.0.1', port: 8080, token: 'main-memory-token' };
+(async () => {
+  const badRunId = await transport.sendSandboxTestLabRunInput(context, 'not-a-uuid', { kind: 'key', key: 'enter' });
+  const badAction = await transport.sendSandboxTestLabRunInput(
+    context,
+    '11111111-1111-4111-8111-111111111111',
+    { kind: 'key', key: 'f1' },
+  );
+  console.log(JSON.stringify({ called, badRunId, badAction }));
+})();
+"""
+    )
+
+    assert output["called"] is False
+    assert output["badRunId"]["error"]["code"] == "run_not_found"
+    assert output["badAction"]["error"]["code"] == "invalid_input_request"
 
 
 def test_preload_and_ipc_surface_are_narrow_and_token_free():
@@ -179,7 +274,7 @@ def test_preload_and_ipc_surface_are_narrow_and_token_free():
     main_source = Path("frontend/main.js").read_text(encoding="utf-8")
     package = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
 
-    for method in ("getCapabilities", "launchRun", "getRun", "getFrame", "cancelRun"):
+    for method in ("getCapabilities", "launchRun", "getRun", "getFrame", "sendInput", "cancelRun"):
         assert method in preload
     assert "authenticatedFetch" not in preload
     assert "fetch:" not in preload
@@ -193,6 +288,7 @@ def test_preload_and_ipc_surface_are_narrow_and_token_free():
     assert "sandbox-test-lab-launch" in main_source
     assert "sandbox-test-lab-status" in main_source
     assert "sandbox-test-lab-frame" in main_source
+    assert "sandbox-test-lab-input" in main_source
     assert "sandbox-test-lab-cancel" in main_source
     assert "existingInstance !== instanceId" in main_source
     assert "backend_restarted" in main_source

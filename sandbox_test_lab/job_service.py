@@ -16,6 +16,7 @@ from .adapter import (
     SandboxTestLabAdapter,
     SandboxTestLabResult,
 )
+from .interactive_session import SandboxInputAction
 from .models import validate_run_id
 
 
@@ -264,6 +265,19 @@ class SandboxTestLabJobService:
             adapter = record.adapter
             backend_run_id = record.backend_run_id
         return adapter.frame(backend_run_id)
+
+    def send_input(self, run_id: str, action: SandboxInputAction) -> bool:
+        """Send a validated input action to an active interactive_session run, or do nothing
+        and return False if there's no matching active run or adapter yet. Best-effort,
+        never raises past run_id validation."""
+        normalized_run_id = self._exact_run_id(run_id)
+        with self._lock:
+            record = self._records.get(normalized_run_id)
+            if record is None or record.adapter is None or record.backend_run_id is None:
+                return False
+            adapter = record.adapter
+            backend_run_id = record.backend_run_id
+        return adapter.send_input(backend_run_id, action)
 
     def cancel(self, run_id: str) -> SandboxJobSnapshot:
         normalized_run_id = self._exact_run_id(run_id)

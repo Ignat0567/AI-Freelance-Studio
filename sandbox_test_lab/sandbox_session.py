@@ -10,6 +10,7 @@ import subprocess
 import time
 from typing import Callable
 
+from .interactive_session import SandboxInputAction
 from .sandbox_process_model import (
     LEGACY_CLIENT_NAME,
     REMOTE_SESSION_NAME,
@@ -116,6 +117,99 @@ Write-Output "FRAME_B64_END"
 
 $graphics.Dispose(); $bitmap.Dispose(); $ms.Dispose()
 """
+
+# Shared identity + focus verification for every input action. This is the safety-critical
+# core: no action script below ever runs unless GetForegroundWindow() confirms the exact
+# identity-verified target window currently has real OS focus. If that check fails, the
+# script exits before sending anything -- there is no best-effort fallback that could land
+# input somewhere else.
+_INPUT_HEADER_SCRIPT = r"""
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace AifsInput {
+    public struct Rect { public int Left; public int Top; public int Right; public int Bottom; }
+
+    public static class Win32 {
+        [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+        [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+        [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+    }
+}
+'@
+
+$proc = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue
+if (-not $proc) { exit 1 }
+if ($proc.StartTime.ToUniversalTime().Ticks -ne $StartTicks) { exit 1 }
+if ([IO.Path]::GetFullPath($proc.Path) -ine $ExpectedPath) { exit 1 }
+$hwnd = $proc.MainWindowHandle
+if ($hwnd -eq [IntPtr]::Zero) { exit 1 }
+
+[AifsInput.Win32]::SetForegroundWindow($hwnd) | Out-Null
+Start-Sleep -Milliseconds 150
+if ([AifsInput.Win32]::GetForegroundWindow() -ne $hwnd) { exit 2 }
+"""
+
+_MOUSE_BUTTON_FLAGS = {
+    "left": (0x0002, 0x0004),   # MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
+    "right": (0x0008, 0x0010),  # MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP
+}
+_KEY_VIRTUAL_CODES = {
+    "enter": 0x0D,
+    "escape": 0x1B,
+    "tab": 0x09,
+    "backspace": 0x08,
+}
+_SENDKEYS_SPECIAL_CHARS = "+^%~(){}[]"
+
+
+def _escape_sendkeys(text: str) -> str:
+    escaped = []
+    for char in text:
+        if char in _SENDKEYS_SPECIAL_CHARS:
+            escaped.append("{" + char + "}")
+        else:
+            escaped.append(char)
+    return "".join(escaped)
+
+
+def _build_input_action_script(action: SandboxInputAction) -> str:
+    if action.kind == "click":
+        down_flag, up_flag = _MOUSE_BUTTON_FLAGS[action.button]
+        return f"""
+$rect = New-Object AifsInput.Rect
+[AifsInput.Win32]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
+$x = $rect.Left + [int](($rect.Right - $rect.Left) * {action.x!r})
+$y = $rect.Top + [int](($rect.Bottom - $rect.Top) * {action.y!r})
+[AifsInput.Win32]::SetCursorPos($x, $y) | Out-Null
+Start-Sleep -Milliseconds 100
+if ([AifsInput.Win32]::GetForegroundWindow() -ne $hwnd) {{ exit 3 }}
+[AifsInput.Win32]::mouse_event({down_flag}, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 50
+[AifsInput.Win32]::mouse_event({up_flag}, 0, 0, 0, [UIntPtr]::Zero)
+Write-Output "ACTION_SENT"
+"""
+    if action.kind == "type":
+        assert action.text is not None
+        escaped = _escape_sendkeys(action.text).replace("'", "''")
+        return f"""
+[System.Windows.Forms.SendKeys]::SendWait('{escaped}')
+Write-Output "ACTION_SENT"
+"""
+    if action.kind == "key":
+        vk = _KEY_VIRTUAL_CODES[action.key]
+        return f"""
+[AifsInput.Win32]::keybd_event({vk}, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 50
+[AifsInput.Win32]::keybd_event({vk}, 0, 0x0002, [UIntPtr]::Zero)
+Write-Output "ACTION_SENT"
+"""
+    raise ValueError("input action kind is invalid")
 
 
 def _powershell_path() -> Path:
@@ -301,6 +395,48 @@ class OwnedSandboxSession:
             return base64.b64decode(body, validate=True)
         except (ValueError, TypeError):
             return None
+
+    def send_input(self, action: SandboxInputAction, *, timeout: float = 10.0) -> bool:
+        """Best-effort, identity-verified host-side input injection against the owned
+        Sandbox window: a click, typed text, or a single named key. Returns whether the
+        action actually executed -- unlike capture_window_png(), a caller needs to know if
+        an input action was silently dropped, not have that swallowed.
+
+        Safety-critical: the exact same identity-verified window is used as capture_window_png(),
+        and every single action re-verifies GetForegroundWindow() == that window immediately
+        before sending anything, aborting with zero input sent if focus does not land exactly
+        there. This directly closes a real 2026-07-31 incident where a script trusted
+        SetForegroundWindow's return value instead of verifying focus and sent keystrokes into
+        an unrelated window."""
+        if self.model == "legacy_client":
+            pid, start_ticks, expected_path = self.client_pid, self.client_start_ticks, self.client_path
+        elif self.model == "remote_session":
+            pid, start_ticks, expected_path = (
+                self.remote_session_pid, self.remote_session_start_ticks, self.remote_session_path,
+            )
+        else:
+            return False
+        if pid is None or start_ticks is None or expected_path is None:
+            return False
+        expected_path_escaped = expected_path.replace("'", "''")
+        header = (
+            f"$TargetPid = {pid}\n"
+            f"$StartTicks = {start_ticks}\n"
+            f"$ExpectedPath = '{expected_path_escaped}'\n"
+        )
+        try:
+            script = header + _INPUT_HEADER_SCRIPT + _build_input_action_script(action)
+        except ValueError:
+            return False
+        try:
+            result = subprocess.run(
+                [str(_powershell_path()), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+                shell=False, check=False, capture_output=True, text=True, timeout=timeout,
+                env=_controlled_environment(),
+            )
+        except subprocess.TimeoutExpired:
+            return False
+        return result.returncode == 0 and "ACTION_SENT" in result.stdout
 
     @staticmethod
     def _process_alive(pid: int | None, start_ticks: int | None, expected_path: str | None) -> bool:

@@ -2,7 +2,7 @@
 
 ## Status
 
-This is a **design/roadmap document for proposed work**, most of it not yet built. Unlike the other documents in this directory (Phases 1 through 4E), which describe completed, shipped functionality from the start, this one exists to break a large product-roadmap goal into implementable, independently reviewable slices before each is scheduled. **Phases 5a and 5b are now implemented** (see their sections below) — 5c-5e remain proposals only.
+This is a **design/roadmap document for proposed work**, most of it not yet built. Unlike the other documents in this directory (Phases 1 through 4E), which describe completed, shipped functionality from the start, this one exists to break a large product-roadmap goal into implementable, independently reviewable slices before each is scheduled. **Phases 5a, 5b, and 5c are now implemented** (see their sections below) — 5d-5e remain proposals only.
 
 ## Why
 
@@ -64,17 +64,32 @@ Side note from the same test: the minimal `.wsb`'s `LogonCommand notepad.exe` di
 
 **Verified end to end 2026-07-31** against real Windows Sandbox, twice, through the actual production wiring (`create_production_sandbox_runtime` -> `job_service.start()` -> poll `job_service.frame()`, the same path the API route uses): capture correctly showed exactly what was on screen -- including, in both runs, an unrelated host-level Windows Sandbox init flakiness already documented in the Phase 4E notes (`0x80070003`, intermittent on this dev machine, not caused by this code) -- and cleanup plus post-cancel `frame() -> None` behaved correctly in every case. A separate isolated capture test (bypassing the flaky launch) confirmed a real, correctly-rendered Sandbox desktop capture end to end. All 716 sandbox-lab automated tests pass, including a Playwright UI regression fix (`radio` count 2 -> 3, left over from 5a not being caught by that suite at the time).
 
-## Phase 5c — Agent-Driven Actions (the real architectural fork)
+## Phase 5c — Agent-Driven Actions — IMPLEMENTED
 
 **Goal:** let an AI agent click, type, and navigate inside the guest as part of an automated QA flow.
 
-**Scope:**
+**Original scope (superseded):**
 - Guest-side input injection: new `SendInput`-based (or equivalent) primitives, following the existing P/Invoke pattern already used for `PrintWindow`/`PostMessage`.
 - Command channel — the hard part: today's guest is one-shot and argument-free by deliberate design, and that invariant must not simply be relaxed. Proposed approach: a **separate**, still hash-pinned, still argument-free guest entry script — a fixed "QA agent" payload — that, once started, polls the mapped folder for new command *files* matching a constrained, schema-validated vocabulary (e.g. `{"action": "click", "x": ..., "y": ...}` / `{"action": "type", "text": "..."}`) — never arbitrary code or shell commands. This keeps "no dynamic source" intact (the executable logic stays 100% pinned) while allowing dynamic *parameters* inside a closed schema, generalizing the same request.json pattern Phase 4E already uses from a single read into a loop.
+- **Risk flagged at the time:** the single biggest security-review item in this whole plan — any looseness in the command schema becomes an execution primitive inside the VM.
 
-**Risk:** the single biggest security-review item in this whole plan. Any looseness in the command schema becomes an execution primitive inside the VM — still sandboxed, but deserves the same rigor as the rest of this codebase's evidence validation (allow-listed fields, bounded values, no path/string injection). This needs its own dedicated security design pass before implementation, not a review after the fact.
+**Re-scoped during implementation:** exactly the same reasoning that re-scoped 5b applies here. Once 5b existed, host-side `PrintWindow`/`CopyFromScreen` had already proven the `interactive_session` Sandbox window is a normal, host-visible, focusable window — and the same is true in reverse for input: host-side `SendInput`/cursor placement targeted at that window, while it holds real OS focus, is indistinguishable to the guest from a human clicking into it. This eliminated the need for any new guest-side trust boundary, hash-pinned payload, or relaxation of the "no dynamic source" guest invariant — the single biggest security-review item the original scope flagged simply does not exist in the shipped design. Everything happens host-side, on the same pattern as 5b's capture.
 
-**Depends on:** 5b, so the agent (and a human watching) can see the effect of its actions.
+**Direct motivation:** this re-scoping followed a real incident during this work — a broken host-side script sent synthetic keystrokes into the wrong window (the chat itself) because it called `SetForegroundWindow` and trusted its return value without verifying focus actually landed. The shipped design makes that failure mode structurally impossible: every single input action's PowerShell script calls `SetForegroundWindow`, then immediately verifies `GetForegroundWindow() == $hwnd` in that same invocation (not a separate, racy, earlier Python-side check), aborting with **zero input sent** if verification fails.
+
+**Implementation (2026-08-01):**
+
+- `sandbox_test_lab/interactive_session.py` — `SandboxInputAction` (frozen dataclass): a closed action vocabulary of exactly three kinds — `click` (`x`/`y` normalized to `[0.0, 1.0]`, `button` in `{"left", "right"}`), `type` (1-500 characters, no control characters), `key` (allow-listed to `enter`/`escape`/`tab`/`backspace`) — validated in `__post_init__` (extra fields per kind are rejected, e.g. a `click` may not also carry `text`).
+- `sandbox_test_lab/sandbox_session.py` — `OwnedSandboxSession.send_input(action)`: identity-verified the same way as `capture_window_png()`/`is_running()` (PID + process start-time ticks + exact executable path), then the focus-verification gate, then the action itself (`SetCursorPos`+`mouse_event` for click, `SendKeys.SendWait` for type with `+^%~(){}[]` brace-escaping, `keybd_event` down/up for key). Unlike the best-effort `capture_window_png()`, this returns an explicit `bool` — a caller needs to know whether the action actually executed, not have it silently swallowed.
+- Threaded through purely additively, mirroring `capture_frame()`/`frame()` exactly at every layer (no changes to `SandboxJobSnapshot`, `SandboxTestLabResult`, or the `SandboxTestLabRunner` Protocol): `InteractiveSessionRunner.send_input()` (locking pattern identical to `capture_frame()`), `ProductionSandboxTestLabRunner.send_input()` (`production_bridge.py`, profile-gated via `getattr` duck-typing), `SandboxTestLabAdapter.send_input()` (`adapter.py`, ownership-verified), `SandboxTestLabJobService.send_input()` (`job_service.py`).
+- New route `POST /api/sandbox-test-lab/runs/{run_id}/input` (`api/sandbox_test_lab.py`): a `TestLabInputRequest` (`StrictRequestModel`) with a `Literal["click", "type", "key"]` discriminator and the same bounds as `SandboxInputAction`, enforced twice by design (Pydantic here, the dataclass again) — defense in depth, not redundancy to trim. A genuinely unknown `run_id` is a `404` (unlike `/frame`'s always-`200`) — a caller sending input needs to know clearly whether the target existed. A second, narrow, documented exception alongside `/frame` in `docs/sandbox-test-lab-control-api.md`, scoped to `interactive_session` only.
+- Electron wiring end to end (`preload.js` -> `main.js` -> `sandbox-test-lab-transport.js`), new IPC channel `sandbox-test-lab-input`. `sanitizeOutgoingInputAction()` re-validates the renderer-supplied action against the same closed vocabulary *before* ever building a request — defense in depth against an untrusted renderer, matching how launch/cancel already pre-validate.
+- Frontend: clicking directly on the existing 5b live-preview `<img>` sends a `click` action at the normalized position within the image (`SandboxTestLabPage.jsx`). No keyboard/typing UI in this pass — `type`/`key` stay reachable at the API level for a future agent integration.
+- Bounded automatic launch retry (added during this work, not originally scoped): `MAX_LAUNCH_ATTEMPTS = 3` in `InteractiveSessionRunner.run()`, retrying only the exact `owned_sandbox_client_discovery_failed` transient error, re-checking `session_guard()` before every retry so an orphan from a prior failed attempt is caught rather than raced against. Scoped to `interactive_session` only — `production_self_test`/`production_screenshot` still have no automatic retry by design (masking a transient failure in a deterministic, evidence-producing QA check would defeat the point of the check).
+
+**Verified end to end 2026-08-01** against real Windows Sandbox, through the actual production wiring (`create_production_sandbox_runtime` -> `job_service.start()` -> `job_service.send_input()` -> poll `job_service.frame()`, the same path the API routes use): a right-click and an `Escape` key action both reported `executed=True`, with identity verification and focus verification (`GetForegroundWindow() == hwnd`) both passing against the live, running Sandbox window before each action. Screenshots confirmed the actions landed precisely on the identity-verified target window — in this run, that target was showing the same pre-existing host-level `0x80070003` Windows Sandbox init flakiness already documented in the Phase 4E and 5b notes (intermittent on this dev machine, not caused by this code, not fixed by the new retry logic since it manifests after a session is already reported `running`). Cleanup was confirmed via `tasklist` showing no residual `WindowsSandbox*` processes after cancellation. All 796 sandbox-lab automated tests pass (up from 716 at the end of 5b), plus a clean `npm run build:vite`.
+
+**Depended on:** 5b, so a human watching the live view can see the effect of actions sent this way.
 
 ## Phase 5d — Video Evidence
 
@@ -97,6 +112,8 @@ Side note from the same test: the minimal `.wsb`'s `LogonCommand notepad.exe` di
 ## Recommended sequencing
 
 5a (cheapest, resolves the biggest unknown) → 5b (foundational for everything visual) → 5d (extends 5b, low incremental risk) → 5c (hardest, most security-sensitive) → 5e (largest scope, do last).
+
+**Actual sequencing:** 5a → 5b → 5c → (5d, 5e not yet started). 5c's re-scoping during 5b (see its section above) removed the guest-side command-channel risk that originally justified doing 5d first, so it was implemented next instead once that was clear.
 
 ## Not covered by this document
 

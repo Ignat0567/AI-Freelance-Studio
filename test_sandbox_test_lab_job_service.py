@@ -12,6 +12,7 @@ from sandbox_test_lab.adapter import (
     SandboxStatus,
     SandboxTestLabResult,
 )
+from sandbox_test_lab.interactive_session import SandboxInputAction
 from sandbox_test_lab.job_service import (
     InMemorySandboxJobStateStore,
     JsonSandboxJobStateStore,
@@ -34,6 +35,7 @@ class ScriptedAdapter:
         block_running=None,
         sensitive_values=False,
         frame_result=None,
+        input_result=False,
     ):
         self.backend_run_id = str(uuid4())
         self.profile = SandboxProfile.PRODUCTION_SELF_TEST
@@ -45,6 +47,8 @@ class ScriptedAdapter:
         self.sensitive_values = sensitive_values
         self.frame_result = frame_result
         self.frame_calls = []
+        self.input_result = input_result
+        self.input_calls = []
         self.calls = []
         if sensitive_values:
             self.absolute_path = r"C:\private\artifact.exe"
@@ -117,6 +121,10 @@ class ScriptedAdapter:
     def frame(self, run_id):
         self.frame_calls.append(run_id)
         return self.frame_result
+
+    def send_input(self, run_id, action):
+        self.input_calls.append((run_id, action))
+        return self.input_result
 
 
 def _service(adapter, **kwargs):
@@ -229,6 +237,32 @@ def test_job_service_frame_delegates_to_the_adapter_once_prepared():
 def test_job_service_frame_is_none_for_an_unknown_run():
     service = _service(ScriptedAdapter())
     assert service.frame(str(uuid4())) is None
+
+
+def test_job_service_send_input_delegates_to_the_adapter_once_prepared():
+    running = Event()
+    adapter = ScriptedAdapter(
+        statuses=(SandboxStatus.RUNNING,) * 10,
+        evidence_statuses=(SandboxStatus.RUNNING,) * 10,
+        block_running=running,
+        input_result=True,
+    )
+    service = _service(adapter)
+    started = service.start(SandboxProfile.INTERACTIVE_SESSION)
+    assert running.wait(1)
+
+    action = SandboxInputAction(kind="key", key="escape")
+    assert service.send_input(started.run_id, action) is True
+    assert adapter.input_calls == [(adapter.backend_run_id, action)]
+
+    service.cancel(started.run_id)
+    assert service.wait(started.run_id, 1).status is SandboxJobStatus.CANCELLED
+
+
+def test_job_service_send_input_is_false_for_an_unknown_run():
+    service = _service(ScriptedAdapter())
+    action = SandboxInputAction(kind="key", key="escape")
+    assert service.send_input(str(uuid4()), action) is False
 
 
 def test_cooperative_cancellation_uses_exact_owned_backend_run():

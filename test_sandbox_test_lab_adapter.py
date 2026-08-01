@@ -23,6 +23,7 @@ from sandbox_test_lab.adapter import (
     SandboxTestLabUnavailableError,
     ValidatedSandboxCheck,
 )
+from sandbox_test_lab.interactive_session import SandboxInputAction
 from sandbox_test_lab.models import SandboxCapability
 
 
@@ -105,14 +106,20 @@ def _adapter(runner=None, detector=lambda: _capability()):
 
 
 class _CaptureCapableRunner(MockSandboxRunner):
-    def __init__(self, frame=b"frame-bytes"):
+    def __init__(self, frame=b"frame-bytes", input_result=True):
         super().__init__()
         self.frame = frame
         self.capture_calls = []
+        self.input_result = input_result
+        self.input_calls = []
 
     def current_frame(self, run_id):
         self.capture_calls.append(run_id)
         return self.frame
+
+    def send_input(self, run_id, action):
+        self.input_calls.append((run_id, action))
+        return self.input_result
 
 
 def test_frame_delegates_when_runner_supports_it():
@@ -139,6 +146,35 @@ def test_frame_is_none_for_an_unowned_run_id():
 
     assert adapter.frame(str(uuid4())) is None
     assert runner.capture_calls == []
+
+
+def test_send_input_delegates_when_runner_supports_it():
+    runner = _CaptureCapableRunner()
+    adapter = _adapter(runner)
+    prepared = adapter.prepare(SandboxProfile.INTERACTIVE_SESSION)
+    action = SandboxInputAction(kind="key", key="enter")
+
+    assert adapter.send_input(prepared.run_id, action) is True
+    assert runner.input_calls == [(prepared.run_id, action)]
+
+
+def test_send_input_is_false_when_runner_lacks_input_support():
+    runner = MockSandboxRunner()
+    adapter = _adapter(runner)
+    prepared = adapter.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+    action = SandboxInputAction(kind="key", key="enter")
+
+    assert adapter.send_input(prepared.run_id, action) is False
+
+
+def test_send_input_is_false_for_an_unowned_run_id():
+    runner = _CaptureCapableRunner()
+    adapter = _adapter(runner)
+    adapter.prepare(SandboxProfile.INTERACTIVE_SESSION)
+    action = SandboxInputAction(kind="key", key="enter")
+
+    assert adapter.send_input(str(uuid4()), action) is False
+    assert runner.input_calls == []
 
 
 def test_disabled_adapter_does_not_probe_or_prepare():
