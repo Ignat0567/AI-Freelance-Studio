@@ -167,6 +167,31 @@ def test_send_input_is_false_when_runner_lacks_input_support():
     assert adapter.send_input(prepared.run_id, action) is False
 
 
+class _StageCapableRunner(MockSandboxRunner):
+    def __init__(self):
+        super().__init__()
+        self.stage_calls = []
+
+    def stage_project(self, project_name):
+        self.stage_calls.append(project_name)
+
+
+def test_stage_project_delegates_when_runner_supports_it():
+    runner = _StageCapableRunner()
+    adapter = _adapter(runner)
+
+    adapter.stage_project("demo-project")
+
+    assert runner.stage_calls == ["demo-project"]
+
+
+def test_stage_project_no_ops_when_runner_lacks_support():
+    runner = MockSandboxRunner()
+    adapter = _adapter(runner)
+
+    adapter.stage_project("demo-project")  # must not raise
+
+
 def test_send_input_is_false_for_an_unowned_run_id():
     runner = _CaptureCapableRunner()
     adapter = _adapter(runner)

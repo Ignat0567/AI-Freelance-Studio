@@ -269,6 +269,62 @@ const context = { ready: true, restarting: false, host: '127.0.0.1', port: 8080,
     assert output["badAction"]["error"]["code"] == "invalid_input_request"
 
 
+def test_launch_project_name_is_wired_through_and_validated_before_any_network_call():
+    output = _run_node(
+        r"""
+const requests = [];
+const http = require('http');
+http.request = (options, callback) => {
+  const { EventEmitter } = require('events');
+  const request = new EventEmitter();
+  request.write = () => {};
+  request.destroy = () => {};
+  request.end = () => {
+    requests.push({ path: options.path, body: JSON.parse(request.body || '{}') });
+    const response = new EventEmitter();
+    response.statusCode = 202;
+    response.resume = () => {};
+    callback(response);
+    process.nextTick(() => {
+      response.emit('data', Buffer.from(JSON.stringify({ run_id: '11111111-1111-4111-8111-111111111111', status: 'queued' })));
+      response.emit('end');
+    });
+  };
+  request.body = '';
+  const originalWrite = request.write;
+  request.write = chunk => { request.body += chunk; };
+  return request;
+};
+const transport = require('./frontend/sandbox-test-lab-transport');
+const context = { ready: true, restarting: false, host: '127.0.0.1', port: 8080, token: 'main-memory-token' };
+(async () => {
+  const withProject = await transport.launchSandboxTestLabRun(
+    context, 'interactive_session', '22222222-2222-4222-8222-222222222222', 'demo-project',
+  );
+  const withoutProject = await transport.launchSandboxTestLabRun(
+    context, 'production_self_test', '33333333-3333-4333-8333-333333333333', null,
+  );
+  const wrongOperation = await transport.launchSandboxTestLabRun(
+    context, 'production_self_test', '44444444-4444-4444-8444-444444444444', 'demo-project',
+  );
+  const badFormat = await transport.launchSandboxTestLabRun(
+    context, 'interactive_session', '55555555-5555-4555-8555-555555555555', '../escape',
+  );
+  console.log(JSON.stringify({ requests, withProject, withoutProject, wrongOperation, badFormat }));
+})();
+"""
+    )
+
+    assert [item["body"] for item in output["requests"]] == [
+        {"operation": "interactive_session", "parameters": {"project_name": "demo-project"}},
+        {"operation": "production_self_test", "parameters": {}},
+    ]
+    assert output["withProject"]["ok"] is True
+    assert output["withoutProject"]["ok"] is True
+    assert output["wrongOperation"]["error"]["code"] == "invalid_launch_request"
+    assert output["badFormat"]["error"]["code"] == "invalid_launch_request"
+
+
 def test_preload_and_ipc_surface_are_narrow_and_token_free():
     preload = Path("frontend/preload.js").read_text(encoding="utf-8")
     main_source = Path("frontend/main.js").read_text(encoding="utf-8")

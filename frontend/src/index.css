@@ -654,6 +654,10 @@ html,
 .fs-test-lab-operation small { margin-top: 5px; color: var(--fs-muted); font-size: 11px; line-height: 1.45; }
 .fs-test-lab-operation i { width: 13px; height: 13px; border: 2px solid var(--fs-dim); border-radius: 50%; }
 .fs-test-lab-operation.selected i { border: 4px solid var(--fs-accent); }
+.fs-test-lab-project-field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--fs-border); border-radius: 12px; background: var(--fs-panel-subtle); }
+.fs-test-lab-project-field label { color: var(--fs-text); font-size: 12px; font-weight: 600; }
+.fs-test-lab-project-field input { border: 1px solid var(--fs-border-strong); border-radius: 8px; padding: 8px 10px; font-size: 12px; background: var(--fs-surface); color: var(--fs-text); }
+.fs-test-lab-project-field small { color: var(--fs-muted); font-size: 11px; line-height: 1.45; }
 .fs-test-lab-launch-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--fs-border); }
 .fs-test-lab-launch-row p { margin: 0; color: var(--fs-muted); font-size: 11px; }
 .fs-test-lab-run { border-color: color-mix(in srgb, var(--fs-accent) 24%, var(--fs-border)); }

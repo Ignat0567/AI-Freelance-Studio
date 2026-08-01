@@ -15,6 +15,7 @@ from .interactive_session import (
     InteractiveSessionRequest,
     SandboxInputAction,
     interactive_session_run_root,
+    stage_project_files,
     write_interactive_session_wsb,
 )
 from .models import RunStatus, SandboxCapability, SandboxRunResult, validate_transition
@@ -167,7 +168,21 @@ class InteractiveSessionRunner:
                 raise RuntimeError("capability did not provide WindowsSandbox.exe path")
 
             run_root = interactive_session_run_root(request.run_id, self.runtime_root)
-            config_file = write_interactive_session_wsb(run_root)
+            # Resolved to the real physical location before anything derived from it is
+            # ever handed to an external process (WindowsSandbox.exe via the .wsb file's
+            # HostFolder, ffmpeg via video_evidence.py) -- on a machine where Python itself
+            # runs via a virtualized install (e.g. Microsoft Store Python's LocalAppData
+            # redirection, confirmed to affect this exact runtime_root during Phase 5d),
+            # Path.resolve() from within this process follows that redirect correctly, but
+            # an external process launched with the logical, unresolved path cannot see it.
+            run_root.mkdir(parents=True, exist_ok=True)
+            run_root = run_root.resolve()
+            staged_project = (
+                stage_project_files(request.project_source, run_root)
+                if request.project_source is not None
+                else None
+            )
+            config_file = write_interactive_session_wsb(run_root, project_source=staged_project)
 
             transition(RunStatus.LAUNCHING)
             for attempt in range(1, MAX_LAUNCH_ATTEMPTS + 1):

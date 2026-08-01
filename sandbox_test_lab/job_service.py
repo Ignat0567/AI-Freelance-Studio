@@ -16,7 +16,7 @@ from .adapter import (
     SandboxTestLabAdapter,
     SandboxTestLabResult,
 )
-from .interactive_session import SandboxInputAction
+from .interactive_session import SandboxInputAction, resolve_project_source
 from .models import validate_run_id
 
 
@@ -177,6 +177,7 @@ class _JobRecord:
     backend_run_id: str | None = None
     cancel_sent: bool = False
     worker: Thread | None = None
+    project_name: str | None = None
 
 
 class SandboxTestLabJobService:
@@ -190,6 +191,7 @@ class SandboxTestLabJobService:
         state_store: SandboxJobStateStore | None = None,
         poll_interval: float = 0.1,
         thread_factory: Callable[..., Thread] = Thread,
+        generated_projects_root: Path | None = None,
     ) -> None:
         if poll_interval <= 0:
             raise ValueError("poll_interval must be positive")
@@ -198,18 +200,32 @@ class SandboxTestLabJobService:
         self._state_store = state_store or InMemorySandboxJobStateStore()
         self._poll_interval = float(poll_interval)
         self._thread_factory = thread_factory
+        self._generated_projects_root = generated_projects_root
         self._records: dict[str, _JobRecord] = {}
         self._active_run_id: str | None = None
         self._accepting = True
         self._lock = RLock()
         self._restore()
 
-    def start(self, profile: SandboxProfile | str) -> SandboxJobSnapshot:
+    def start(self, profile: SandboxProfile | str, *, project_name: str | None = None) -> SandboxJobSnapshot:
         normalized_profile = self._normalize_profile(profile)
         if not self._enabled:
             raise SandboxJobDisabledError("sandbox_test_lab_disabled")
         if self._adapter_factory is None:
             raise SandboxJobError("sandbox_job_backend_not_configured")
+        if project_name is not None:
+            # Validated eagerly, before any job record or worker thread is created: a
+            # mistyped project name is the expected common case (this phase ships no "list
+            # available projects" API), so it must fail clearly and immediately rather than
+            # opaquely through async polling.
+            if normalized_profile is not SandboxProfile.INTERACTIVE_SESSION:
+                raise SandboxJobError("sandbox_job_project_name_not_supported")
+            if self._generated_projects_root is None:
+                raise SandboxJobError("sandbox_job_generated_projects_not_configured")
+            try:
+                resolve_project_source(project_name, projects_root=self._generated_projects_root)
+            except (ValueError, OSError) as exc:
+                raise SandboxJobError("sandbox_job_invalid_project") from exc
         with self._lock:
             if not self._accepting:
                 raise SandboxJobError("sandbox_job_service_stopping")
@@ -224,7 +240,7 @@ class SandboxTestLabJobService:
                 SandboxJobStatus.QUEUED,
                 SandboxProgress.NOT_STARTED,
             )
-            record = _JobRecord(snapshot=snapshot, cancellation=Event())
+            record = _JobRecord(snapshot=snapshot, cancellation=Event(), project_name=project_name)
             try:
                 worker = self._thread_factory(
                     target=self._run_job,
@@ -399,6 +415,10 @@ class SandboxTestLabJobService:
             adapter = self._adapter_factory()
             with self._lock:
                 record.adapter = adapter
+            if record.project_name is not None:
+                stage = getattr(adapter, "stage_project", None)
+                if stage is not None:
+                    stage(record.project_name)
             prepared = adapter.prepare(record.snapshot.profile)
             with self._lock:
                 record.backend_run_id = prepared.run_id

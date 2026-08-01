@@ -21,6 +21,7 @@ from sandbox_test_lab.production_bridge import (
     ProductionSandboxTestLabRunner,
     create_production_sandbox_runtime,
 )
+from sandbox_test_lab.workspace import WorkspaceError
 
 
 RUN_ID = "93bdb128-a642-4f33-b05e-b2ec9cdad1e3"
@@ -345,6 +346,92 @@ def test_send_input_is_false_when_runner_lacks_input_support():
 def test_send_input_is_false_without_a_prepared_run():
     bridge = ProductionSandboxTestLabRunner(opt_in_enabled=lambda: True)
     assert bridge.send_input(RUN_ID, SandboxInputAction(kind="key", key="enter")) is False
+
+
+class _RequestCapturingRunner:
+    """Captures the InteractiveSessionRequest a real (non-overridden) request factory
+    produced, since ProductionSandboxTestLabRunner exposes no public way to inspect it."""
+
+    def __init__(self):
+        self.received_request = None
+        self.started = threading.Event()
+
+    def run(self, request, cancellation):
+        self.received_request = request
+        self.started.set()
+        cancellation.wait(2)
+        return _result(RunStatus.CANCELLED)
+
+
+class TestStageProject:
+    def test_resolves_into_the_next_interactive_session_request(self, tmp_path):
+        (tmp_path / "demo" / "app.exe").parent.mkdir(parents=True)
+        (tmp_path / "demo" / "app.exe").write_bytes(b"fake")
+        interactive = _RequestCapturingRunner()
+        bridge = ProductionSandboxTestLabRunner(
+            opt_in_enabled=lambda: True,
+            interactive_session_runner_factory=lambda: interactive,
+            generated_projects_root=tmp_path,
+        )
+
+        bridge.stage_project("demo")
+        prepared = bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+        bridge.launch(prepared.run_id)
+        assert interactive.started.wait(1)
+
+        assert interactive.received_request.project_source == tmp_path / "demo"
+        bridge.cancel(prepared.run_id)
+
+    def test_none_resolves_to_no_project_source(self, tmp_path):
+        interactive = _RequestCapturingRunner()
+        bridge = ProductionSandboxTestLabRunner(
+            opt_in_enabled=lambda: True,
+            interactive_session_runner_factory=lambda: interactive,
+            generated_projects_root=tmp_path,
+        )
+
+        bridge.stage_project(None)
+        prepared = bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+        bridge.launch(prepared.run_id)
+        assert interactive.started.wait(1)
+
+        assert interactive.received_request.project_source is None
+        bridge.cancel(prepared.run_id)
+
+    def test_other_profiles_prepare_is_unaffected_by_a_pending_stage(self, tmp_path):
+        (tmp_path / "demo").mkdir()
+        (tmp_path / "demo" / "app.exe").write_bytes(b"fake")
+        interactive = _RequestCapturingRunner()
+        bridge = ProductionSandboxTestLabRunner(
+            opt_in_enabled=lambda: True,
+            self_test_runner_factory=lambda: _BlockingRunner(RunStatus.PASSED),
+            self_test_request_factory=lambda: SimpleNamespace(run_id=RUN_ID),
+            interactive_session_runner_factory=lambda: interactive,
+            generated_projects_root=tmp_path,
+        )
+
+        bridge.stage_project("demo")
+        prepared = bridge.prepare(SandboxProfile.PRODUCTION_SELF_TEST)
+        assert prepared.profile is SandboxProfile.PRODUCTION_SELF_TEST
+        assert interactive.received_request is None
+
+    def test_double_stage_before_prepare_raises(self):
+        bridge = ProductionSandboxTestLabRunner(opt_in_enabled=lambda: True)
+        bridge.stage_project("first")
+        with pytest.raises(RuntimeError, match="already_staged"):
+            bridge.stage_project("second")
+
+    def test_prepare_raises_when_project_name_is_invalid(self, tmp_path):
+        bridge = ProductionSandboxTestLabRunner(opt_in_enabled=lambda: True, generated_projects_root=tmp_path)
+        bridge.stage_project("does-not-exist")
+        with pytest.raises(WorkspaceError):
+            bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
+
+    def test_prepare_raises_when_generated_projects_root_is_not_configured(self):
+        bridge = ProductionSandboxTestLabRunner(opt_in_enabled=lambda: True)
+        bridge.stage_project("demo")
+        with pytest.raises(RuntimeError, match="generated_projects_root is not configured"):
+            bridge.prepare(SandboxProfile.INTERACTIVE_SESSION)
 
 
 def test_bridge_rechecks_exact_opt_in_before_launch():

@@ -49,6 +49,7 @@ class ScriptedAdapter:
         self.frame_calls = []
         self.input_result = input_result
         self.input_calls = []
+        self.stage_calls = []
         self.calls = []
         if sensitive_values:
             self.absolute_path = r"C:\private\artifact.exe"
@@ -125,6 +126,9 @@ class ScriptedAdapter:
     def send_input(self, run_id, action):
         self.input_calls.append((run_id, action))
         return self.input_result
+
+    def stage_project(self, project_name):
+        self.stage_calls.append(project_name)
 
 
 def _service(adapter, **kwargs):
@@ -396,3 +400,51 @@ def test_snapshots_and_persisted_state_exclude_sensitive_backend_data(tmp_path):
     ):
         assert forbidden not in serialized
         assert forbidden not in persisted
+
+
+def test_start_rejects_project_name_for_non_interactive_session_profile(tmp_path):
+    (tmp_path / "demo").mkdir()
+    (tmp_path / "demo" / "app.exe").write_bytes(b"fake")
+    service = _service(ScriptedAdapter(), generated_projects_root=tmp_path)
+
+    with pytest.raises(SandboxJobError, match="sandbox_job_project_name_not_supported"):
+        service.start(SandboxProfile.PRODUCTION_SELF_TEST, project_name="demo")
+
+
+def test_start_rejects_invalid_project_name_before_creating_a_job_record(tmp_path):
+    service = _service(ScriptedAdapter(), generated_projects_root=tmp_path)
+
+    with pytest.raises(SandboxJobError, match="sandbox_job_invalid_project"):
+        service.start(SandboxProfile.INTERACTIVE_SESSION, project_name="does-not-exist")
+
+    assert service._records == {}
+    assert service._active_run_id is None
+
+
+def test_start_rejects_project_name_when_generated_projects_root_is_not_configured():
+    service = _service(ScriptedAdapter())
+
+    with pytest.raises(SandboxJobError, match="sandbox_job_generated_projects_not_configured"):
+        service.start(SandboxProfile.INTERACTIVE_SESSION, project_name="demo")
+
+
+def test_start_wires_a_valid_project_name_to_the_adapter(tmp_path):
+    (tmp_path / "demo").mkdir()
+    (tmp_path / "demo" / "app.exe").write_bytes(b"fake")
+    adapter = ScriptedAdapter()
+    service = _service(adapter, generated_projects_root=tmp_path)
+
+    started = service.start(SandboxProfile.INTERACTIVE_SESSION, project_name="demo")
+    service.wait(started.run_id, 1)
+
+    assert adapter.stage_calls == ["demo"]
+
+
+def test_start_without_project_name_never_calls_stage_project(tmp_path):
+    adapter = ScriptedAdapter()
+    service = _service(adapter, generated_projects_root=tmp_path)
+
+    started = service.start(SandboxProfile.PRODUCTION_SELF_TEST)
+    service.wait(started.run_id, 1)
+
+    assert adapter.stage_calls == []

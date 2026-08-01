@@ -9,9 +9,12 @@ import pytest
 from sandbox_test_lab.interactive_session import (
     MAX_INPUT_TEXT_LENGTH,
     MAX_SESSION_SECONDS,
+    PROJECT_DESTINATION,
     InteractiveSessionRequest,
     SandboxInputAction,
     interactive_session_run_root,
+    resolve_project_source,
+    stage_project_files,
     write_interactive_session_wsb,
 )
 from sandbox_test_lab.interactive_session_runner import InteractiveSessionRunner
@@ -213,6 +216,150 @@ def test_wsb_rejects_out_of_range_memory(tmp_path):
         write_interactive_session_wsb(tmp_path, memory_mb=1024)
 
 
+def test_wsb_maps_project_source_read_write_and_disables_redirection(tmp_path):
+    project = tmp_path / "staged"
+    project.mkdir()
+    config_file = write_interactive_session_wsb(tmp_path / "run", project_source=project)
+    tree = ET.parse(config_file)
+    root = tree.getroot()
+    assert root.find("LogonCommand") is None
+    assert root.find("Networking").text == "Disable"
+    assert root.find("ClipboardRedirection").text == "Disable"
+    assert root.find("PrinterRedirection").text == "Disable"
+    mapped = root.find("MappedFolders/MappedFolder")
+    assert mapped.findtext("HostFolder") == str(project)
+    assert mapped.findtext("SandboxFolder") == PROJECT_DESTINATION
+    assert mapped.findtext("ReadOnly") == "false"
+
+
+class TestInteractiveSessionRequestProjectSource:
+    def test_accepts_a_real_existing_absolute_directory(self, tmp_path):
+        request = InteractiveSessionRequest(project_source=tmp_path)
+        assert request.project_source == tmp_path
+
+    def test_rejects_a_relative_path(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ValueError, match="absolute existing directory"):
+            InteractiveSessionRequest(project_source=Path("relative"))
+
+    def test_rejects_a_nonexistent_directory(self, tmp_path):
+        with pytest.raises(ValueError, match="absolute existing directory"):
+            InteractiveSessionRequest(project_source=tmp_path / "missing")
+
+
+class TestResolveProjectSource:
+    def _project(self, projects_root, name="my-project"):
+        project = projects_root / name
+        project.mkdir(parents=True)
+        (project / "app.exe").write_bytes(b"fake")
+        return project
+
+    def test_valid_name_and_existing_directory_resolves(self, tmp_path):
+        project = self._project(tmp_path)
+        resolved = resolve_project_source("my-project", projects_root=tmp_path)
+        assert resolved == project
+
+    @pytest.mark.parametrize("name", ["", "a" * 101, "../escape", "sub/dir", "back\\slash", "has space", "unïcode"])
+    def test_invalid_name_formats_are_rejected(self, tmp_path, name):
+        with pytest.raises(ValueError, match="project name is invalid"):
+            resolve_project_source(name, projects_root=tmp_path)
+
+    def test_missing_directory_is_rejected(self, tmp_path):
+        with pytest.raises(WorkspaceError):
+            resolve_project_source("does-not-exist", projects_root=tmp_path)
+
+    def test_file_instead_of_directory_is_rejected(self, tmp_path):
+        (tmp_path / "not-a-dir").write_bytes(b"x")
+        with pytest.raises(WorkspaceError, match="regular non-reparse directory"):
+            resolve_project_source("not-a-dir", projects_root=tmp_path)
+
+    def test_empty_directory_is_rejected(self, tmp_path):
+        (tmp_path / "empty-project").mkdir()
+        with pytest.raises(WorkspaceError, match="empty"):
+            resolve_project_source("empty-project", projects_root=tmp_path)
+
+    def test_reparse_point_directory_is_rejected(self, tmp_path, monkeypatch):
+        project = self._project(tmp_path, "reparse-project")
+        import sandbox_test_lab.interactive_session as interactive_session_module
+        monkeypatch.setattr(
+            interactive_session_module, "_is_reparse_point",
+            lambda path: path == project,
+        )
+        with pytest.raises(WorkspaceError, match="regular non-reparse directory"):
+            resolve_project_source("reparse-project", projects_root=tmp_path)
+
+    def test_symlinked_directory_is_rejected(self, tmp_path):
+        target = tmp_path / "real-project"
+        target.mkdir()
+        (target / "app.exe").write_bytes(b"fake")
+        link = tmp_path / "linked-project"
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except OSError:
+            pytest.skip("directory symlink creation is unavailable")
+        with pytest.raises(WorkspaceError):
+            resolve_project_source("linked-project", projects_root=tmp_path)
+
+
+class TestStageProjectFiles:
+    def test_copies_nested_content(self, tmp_path):
+        source = tmp_path / "source"
+        (source / "sub").mkdir(parents=True)
+        (source / "app.exe").write_bytes(b"fake")
+        (source / "sub" / "data.txt").write_text("hello")
+        run_root = tmp_path / "run"
+
+        staged = stage_project_files(source, run_root)
+
+        assert staged == run_root / "project"
+        assert (staged / "app.exe").read_bytes() == b"fake"
+        assert (staged / "sub" / "data.txt").read_text() == "hello"
+
+    @pytest.mark.parametrize("excluded_name", [".env", ".env.local", ".git", ".freelancerstudio"])
+    def test_excludes_secret_shaped_entries(self, tmp_path, excluded_name):
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "app.exe").write_bytes(b"fake")
+        excluded = source / excluded_name
+        if excluded_name in {".git", ".freelancerstudio"}:
+            excluded.mkdir()
+            (excluded / "secret").write_text("token")
+        else:
+            excluded.write_text("SECRET=token")
+        run_root = tmp_path / "run"
+
+        staged = stage_project_files(source, run_root)
+
+        assert (staged / "app.exe").is_file()
+        assert not (staged / excluded_name).exists()
+
+    def test_excludes_nested_secret_shaped_entries(self, tmp_path):
+        source = tmp_path / "source"
+        (source / "sub").mkdir(parents=True)
+        (source / "sub" / ".env").write_text("SECRET=token")
+        run_root = tmp_path / "run"
+
+        staged = stage_project_files(source, run_root)
+
+        assert not (staged / "sub" / ".env").exists()
+
+    def test_skips_symlinks_rather_than_following_them(self, tmp_path):
+        source = tmp_path / "source"
+        source.mkdir()
+        target = tmp_path / "outside-secret.txt"
+        target.write_text("SECRET")
+        link = source / "linked.txt"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("symlink creation is unavailable")
+        run_root = tmp_path / "run"
+
+        staged = stage_project_files(source, run_root)
+
+        assert not (staged / "linked.txt").exists()
+
+
 def test_runner_reports_unavailable_when_capability_missing(tmp_path):
     result = InteractiveSessionRunner(
         capability_detector=lambda: _capability(available=False, blockers=("sandbox_feature_disabled",)),
@@ -230,6 +377,60 @@ def test_runner_reports_cancelled_before_launch(tmp_path):
     ).run(InteractiveSessionRequest(), cancellation)
     assert result.status == RunStatus.CANCELLED
     assert result.exit_reason == "cancelled_before_launch"
+
+
+def test_runner_resolves_run_root_to_its_physical_location_before_use(tmp_path, monkeypatch):
+    """Regression test mirroring video_evidence.py's Phase 5d fix: on a machine where
+    Python itself runs via a virtualized install, Path.resolve() can return a real physical
+    location that differs from the logical path used to build run_root -- but
+    WindowsSandbox.exe (an external, unpackaged process reading the .wsb file's
+    HostFolder) can only ever see the physical path. Simulated here (no privilege to create
+    real symlinks in this environment) by monkeypatching Path.resolve to map one directory
+    tree onto another."""
+    import sandbox_test_lab.interactive_session_runner as runner_module
+
+    logical_root = tmp_path / "logical"
+    physical_root = tmp_path / "physical"
+    physical_root.mkdir()
+
+    real_resolve = Path.resolve
+
+    def fake_resolve(path, *args, **kwargs):
+        try:
+            relative = path.relative_to(logical_root)
+        except ValueError:
+            return real_resolve(path, *args, **kwargs)
+        return real_resolve(physical_root / relative, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+
+    captured = {}
+    real_write = runner_module.write_interactive_session_wsb
+
+    def spy_write(run_root, **kwargs):
+        captured["run_root"] = run_root
+        return real_write(run_root, **kwargs)
+
+    monkeypatch.setattr(runner_module, "write_interactive_session_wsb", spy_write)
+
+    clock = _Clock()
+    session = _FakeSession()
+    cancellation = Event()
+
+    def sleeper(seconds: float) -> None:
+        clock.sleeper(seconds)
+        cancellation.set()
+
+    runner = InteractiveSessionRunner(
+        capability_detector=_capability, launcher=lambda argv: _FakeProcess(),
+        monotonic=clock.monotonic, sleeper=sleeper, poll_interval=1,
+        session_factory=lambda pid, started_at: session,
+        runtime_root=logical_root,
+    )
+    runner.run(InteractiveSessionRequest(), cancellation)
+
+    assert str(logical_root) not in str(captured["run_root"])
+    assert str(physical_root) in str(captured["run_root"])
 
 
 def test_runner_closes_session_when_host_cancels_mid_run(tmp_path):

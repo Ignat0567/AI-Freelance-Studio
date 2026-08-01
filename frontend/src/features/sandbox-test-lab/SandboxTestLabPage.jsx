@@ -38,7 +38,7 @@ function CapabilityState({ state, capability, onRefresh }) {
   );
 }
 
-function OperationSelector({ selected, disabled, onSelect, onLaunch }) {
+function OperationSelector({ selected, disabled, projectName, onProjectNameChange, onSelect, onLaunch }) {
   return (
     <section className="fs-panel fs-test-lab-selector" aria-labelledby="test-lab-operations-title">
       <div className="fs-panel-title"><div><span>Controlled operations</span><strong id="test-lab-operations-title">Choose one validation workflow</strong></div></div>
@@ -53,6 +53,21 @@ function OperationSelector({ selected, disabled, onSelect, onLaunch }) {
           </label>
         ))}
       </fieldset>
+      {selected === 'interactive_session' && (
+        <div className="fs-test-lab-project-field">
+          <label htmlFor="test-lab-project-name">Stage a generated project (optional)</label>
+          <input
+            id="test-lab-project-name"
+            type="text"
+            value={projectName}
+            disabled={disabled}
+            maxLength={100}
+            placeholder="generated_projects folder name"
+            onChange={event => onProjectNameChange(event.target.value)}
+          />
+          <small>Leave blank for an empty Sandbox desktop. Must match an existing folder name under generated_projects/.</small>
+        </div>
+      )}
       <div className="fs-test-lab-launch-row">
         <p>{selected ? `${operationDetails(selected).name} is selected.` : 'Select one operation to continue.'}</p>
         <button type="button" className="fs-primary" disabled={disabled || !selected} onClick={onLaunch}>Review and launch</button>
@@ -125,6 +140,7 @@ export default function SandboxTestLabPage({ active }) {
   const [capabilityState, setCapabilityState] = useState('loading');
   const [capability, setCapability] = useState(null);
   const [selectedOperation, setSelectedOperation] = useState('');
+  const [projectName, setProjectName] = useState('');
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [launchPending, setLaunchPending] = useState(false);
   const [launchError, setLaunchError] = useState('');
@@ -238,16 +254,27 @@ export default function SandboxTestLabPage({ active }) {
   const selectOperation = operation => {
     if (!Object.hasOwn(SANDBOX_OPERATIONS, operation)) return;
     setSelectedOperation(operation);
+    setProjectName('');
     setLaunchError('');
     setLaunchRetryAvailable(false);
     launchIntent.current = null;
   };
 
+  const changeProjectName = value => {
+    setProjectName(value);
+    launchIntent.current = null;
+  };
+
   const performLaunch = async () => {
     if (launchPending || !selectedOperation || !Object.hasOwn(SANDBOX_OPERATIONS, selectedOperation)) return;
-    if (!launchIntent.current || launchIntent.current.operation !== selectedOperation) {
+    const trimmedProjectName = selectedOperation === 'interactive_session' && projectName.trim() ? projectName.trim() : null;
+    if (
+      !launchIntent.current
+      || launchIntent.current.operation !== selectedOperation
+      || launchIntent.current.projectName !== trimmedProjectName
+    ) {
       try {
-        launchIntent.current = { operation: selectedOperation, key: createSecureIdempotencyKey() };
+        launchIntent.current = { operation: selectedOperation, projectName: trimmedProjectName, key: createSecureIdempotencyKey() };
       } catch {
         setLaunchError('backend_security_unavailable');
         return;
@@ -256,7 +283,7 @@ export default function SandboxTestLabPage({ active }) {
     setLaunchPending(true);
     setLaunchError('');
     const intent = launchIntent.current;
-    const result = await sandboxTestLabApi.launchRun(intent.operation, intent.key);
+    const result = await sandboxTestLabApi.launchRun(intent.operation, intent.key, intent.projectName);
     if (!mounted.current || launchIntent.current !== intent) return;
     setLaunchPending(false);
     if (!result.ok) {
@@ -403,7 +430,14 @@ export default function SandboxTestLabPage({ active }) {
           onRunAgain={runAgain}
         />
       ) : (
-        <OperationSelector selected={selectedOperation} disabled={selectorDisabled} onSelect={selectOperation} onLaunch={() => setConfirmationOpen(true)} />
+        <OperationSelector
+          selected={selectedOperation}
+          disabled={selectorDisabled}
+          projectName={projectName}
+          onProjectNameChange={changeProjectName}
+          onSelect={selectOperation}
+          onLaunch={() => setConfirmationOpen(true)}
+        />
       )}
 
       {launchError && !currentRun && (

@@ -36,7 +36,7 @@ export function createSecureIdempotencyKey() {
 
 export const sandboxTestLabApi = Object.freeze({
   getCapabilities: () => invoke('getCapabilities'),
-  launchRun: (operation, idempotencyKey) => invoke('launchRun', operation, idempotencyKey),
+  launchRun: (operation, idempotencyKey, projectName) => invoke('launchRun', operation, idempotencyKey, projectName),
   getRun: runId => invoke('getRun', runId),
   getFrame: runId => invoke('getFrame', runId),
   sendInput: (runId, action) => invoke('sendInput', runId, action),

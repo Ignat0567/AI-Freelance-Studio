@@ -26,7 +26,7 @@ There are two deliberate, narrow exceptions, both scoped to `interactive_session
 
 ## Operations And States
 
-The only accepted operations are `production_self_test`, `production_screenshot`, and `interactive_session`, each with a required empty `parameters` object. Commands, PowerShell, executable paths, arguments, environment variables, and arbitrary installer settings are rejected as extra or unknown fields.
+The only accepted operations are `production_self_test`, `production_screenshot`, and `interactive_session`. `parameters` is empty for the first two. For `interactive_session` only (Phase 5e), `parameters` may additionally carry `project_name` (`^[A-Za-z0-9_-]{1,100}$`) -- an already-built project folder under `generated_projects/` to stage (read-write, into a disposable per-run copy, never the canonical source) into the sandbox for manual QA. Supplying `project_name` for any other operation is `422`; an unresolvable name is `422` synchronously at launch time, before any run is created. Commands, PowerShell, executable paths, arguments, environment variables, and arbitrary installer settings are rejected as extra or unknown fields.
 
 Public lifecycle statuses are `queued`, `preparing`, `launching`, `running`, `cancelling`, `succeeded`, `failed`, `cancelled`, and `infrastructure_error`. Internal states are explicitly mapped; raw enum names, backend run IDs, process details, paths, and exception text are not returned.
 

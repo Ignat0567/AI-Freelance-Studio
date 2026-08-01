@@ -365,6 +365,16 @@ class SandboxTestLabAdapter:
             )
         return SandboxAvailability(True, SandboxReadiness.READY, warnings=warnings)
 
+    def stage_project(self, project_name: str | None) -> None:
+        """Forward an optional project name (Phase 5e) to the underlying runner, if it
+        supports project staging -- only interactive_session runners do. No-ops harmlessly
+        for every other runner/profile and for any runner double that doesn't implement it.
+        Must be called before prepare(); no run-ownership registry is involved since this
+        happens on a fresh, not-yet-prepared adapter/runner pair."""
+        stage = getattr(self._runner, "stage_project", None)
+        if stage is not None:
+            stage(project_name)
+
     def prepare(self, profile: SandboxProfile | str) -> SandboxTestLabResult:
         if type(profile) is SandboxProfile:
             normalized_profile = profile

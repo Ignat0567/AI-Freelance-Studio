@@ -81,12 +81,13 @@ ipcMain.handle('sandbox-test-lab-capabilities', event => (
     trustedSandboxTestLabCall(event, getSandboxTestLabCapabilities)
 ));
 
-ipcMain.handle('sandbox-test-lab-launch', (event, operation, idempotencyKey) => (
+ipcMain.handle('sandbox-test-lab-launch', (event, operation, idempotencyKey, projectName) => (
     trustedSandboxTestLabCall(
         event,
         context => {
+            const normalizedProjectName = typeof projectName === 'string' ? projectName : null;
             if (!ALLOWED_OPERATIONS.has(operation) || !isCanonicalUuid(idempotencyKey)) {
-                return launchSandboxTestLabRun(context, operation, idempotencyKey);
+                return launchSandboxTestLabRun(context, operation, idempotencyKey, normalizedProjectName);
             }
             const instanceId = backendDescriptor?.instance_id;
             const existingInstance = sandboxLaunchInstances.get(idempotencyKey);
@@ -99,7 +100,7 @@ ipcMain.handle('sandbox-test-lab-launch', (event, operation, idempotencyKey) => 
                     sandboxLaunchInstances.delete(sandboxLaunchInstances.keys().next().value);
                 }
             }
-            return launchSandboxTestLabRun(context, operation, idempotencyKey);
+            return launchSandboxTestLabRun(context, operation, idempotencyKey, normalizedProjectName);
         },
     )
 ));

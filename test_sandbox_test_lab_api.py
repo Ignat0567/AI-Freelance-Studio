@@ -84,9 +84,11 @@ class FakeJobService:
         self.frame_result = None
         self.input_calls = []
         self.input_result = False
+        self.project_name_calls = []
 
-    def start(self, profile):
+    def start(self, profile, *, project_name=None):
         self.start_calls.append(profile)
+        self.project_name_calls.append(project_name)
         if self.start_error:
             raise self.start_error
         item = _snapshot(profile=profile)
@@ -346,6 +348,55 @@ def test_interactive_session_operation_is_accepted_and_routed_to_its_profile():
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
     assert service.start_calls == [SandboxProfile.INTERACTIVE_SESSION]
+
+
+def test_interactive_session_launch_with_project_name_is_wired_through():
+    app, service = _app()
+    response = _launch(
+        _client(app),
+        payload={"operation": "interactive_session", "parameters": {"project_name": "demo-project"}},
+    )
+
+    assert response.status_code == 202
+    assert service.start_calls == [SandboxProfile.INTERACTIVE_SESSION]
+    assert service.project_name_calls == ["demo-project"]
+
+
+def test_project_name_is_rejected_for_a_non_interactive_session_operation():
+    app, service = _app()
+    response = _launch(
+        _client(app),
+        payload={"operation": "production_self_test", "parameters": {"project_name": "demo-project"}},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_launch_request"
+    assert service.start_calls == []
+
+
+@pytest.mark.parametrize("project_name", ["", "a" * 101, "../escape", "has space", "back\\slash"])
+def test_project_name_rejects_invalid_formats(project_name):
+    app, service = _app()
+    response = _launch(
+        _client(app),
+        payload={"operation": "interactive_session", "parameters": {"project_name": project_name}},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_launch_request"
+    assert service.start_calls == []
+
+
+def test_invalid_project_name_from_the_job_service_maps_to_422():
+    app, service = _app()
+    service.start_error = SandboxJobError("sandbox_job_invalid_project")
+    response = _launch(
+        _client(app),
+        payload={"operation": "interactive_session", "parameters": {"project_name": "does-not-exist"}},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_launch_request"
 
 
 def test_frame_route_returns_base64_when_available():

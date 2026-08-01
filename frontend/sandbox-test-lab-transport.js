@@ -51,6 +51,10 @@ const MAX_FRAME_RESPONSE_BYTES = 1024 * 1024;
 const FRAME_BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 const REQUEST_TIMEOUT_MS = 10_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// Mirrors sandbox_test_lab.interactive_session.PROJECT_NAME_PATTERN -- only meaningful for
+// the interactive_session operation (Phase 5e), validated here too before ever building a
+// request, matching how launch/cancel/input already pre-validate.
+const PROJECT_NAME_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 
 const PHASE_MESSAGES = Object.freeze({
     not_started: 'The run is queued.',
@@ -287,16 +291,22 @@ function getSandboxTestLabCapabilities(context) {
     );
 }
 
-function launchSandboxTestLabRun(context, operation, idempotencyKey) {
+function launchSandboxTestLabRun(context, operation, idempotencyKey, projectName = null) {
     if (!ALLOWED_OPERATIONS.has(operation) || !isCanonicalUuid(idempotencyKey)) {
         return Promise.resolve(errorResult('invalid_launch_request', 400));
     }
+    if (projectName !== null) {
+        if (operation !== 'interactive_session' || typeof projectName !== 'string' || !PROJECT_NAME_PATTERN.test(projectName)) {
+            return Promise.resolve(errorResult('invalid_launch_request', 400));
+        }
+    }
+    const parameters = projectName !== null ? { project_name: projectName } : {};
     return requestJson(
         context,
         {
             method: 'POST',
             path: '/api/sandbox-test-lab/runs',
-            body: { operation, parameters: {} },
+            body: { operation, parameters },
             idempotencyKey,
         },
         sanitizeLaunch,

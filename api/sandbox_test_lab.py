@@ -97,7 +97,13 @@ class TestLabPublicStatus(str, Enum):
 
 
 class TestLabLaunchParameters(StrictRequestModel):
-    pass
+    """project_name is accepted only for interactive_session (Phase 5e) -- an
+    already-built project folder under generated_projects/ to stage into the sandbox.
+    Mirrors sandbox_test_lab.interactive_session.PROJECT_NAME_PATTERN as a separate literal
+    value, matching how TestLabInputRequest already mirrors SandboxInputAction's bounds --
+    defense in depth, not redundancy to trim."""
+
+    project_name: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,100}$")
 
 
 class TestLabLaunchRequest(StrictRequestModel):
@@ -516,6 +522,8 @@ def launch_test_lab_run(
     provider: Callable[[], SandboxAvailability] = Depends(get_test_lab_availability_provider),
     idempotency: LaunchIdempotencyRegistry = Depends(get_test_lab_idempotency),
 ) -> TestLabLaunchResponse:
+    if payload.parameters.project_name is not None and payload.operation is not TestLabOperation.INTERACTIVE_SESSION:
+        raise TestLabAPIError(422, "invalid_launch_request", "The launch request is invalid.")
     key = _idempotency_key(request)
     fingerprint = _launch_fingerprint(payload)
     existing = idempotency.lookup(key, fingerprint)
@@ -525,7 +533,10 @@ def launch_test_lab_run(
 
     def start() -> TestLabLaunchResponse:
         try:
-            snapshot = service.start(_operation_profile(payload.operation))
+            snapshot = service.start(
+                _operation_profile(payload.operation),
+                project_name=payload.parameters.project_name,
+            )
         except ValueError:
             raise TestLabAPIError(422, "invalid_launch_request", "The launch request is invalid.") from None
         except SandboxJobDisabledError:
@@ -536,6 +547,12 @@ def launch_test_lab_run(
                 raise TestLabAPIError(409, "launch_rejected", "Another Test Lab run is active.") from None
             if code in {"sandbox_job_backend_not_configured", "sandbox_job_service_stopping"}:
                 raise TestLabAPIError(503, "job_service_unavailable", "The Test Lab job service is unavailable.") from None
+            if code in {
+                "sandbox_job_project_name_not_supported",
+                "sandbox_job_generated_projects_not_configured",
+                "sandbox_job_invalid_project",
+            }:
+                raise TestLabAPIError(422, "invalid_launch_request", "The launch request is invalid.") from None
             LOGGER.error("Test Lab launch failed: %s", type(exc).__name__)
             raise TestLabAPIError(500, "internal_error", "The Test Lab service failed.") from None
         except Exception as exc:

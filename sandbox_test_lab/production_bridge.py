@@ -18,7 +18,7 @@ from .adapter import (
     SandboxTestLabResult,
     ValidatedSandboxCheck,
 )
-from .interactive_session import InteractiveSessionRequest, SandboxInputAction
+from .interactive_session import InteractiveSessionRequest, SandboxInputAction, resolve_project_source
 from .interactive_session_runner import InteractiveSessionRunner
 from .job_service import JsonSandboxJobStateStore, SandboxTestLabJobService
 from .models import RunStatus, SandboxRunResult
@@ -66,10 +66,11 @@ class ProductionSandboxTestLabRunner:
         interactive_session_runner_factory: Callable[[], _BlockingRunner] | None = None,
         self_test_request_factory: Callable[[], ProductionSelfTestRequest] = ProductionSelfTestRequest,
         screenshot_request_factory: Callable[[], ProductionSelfTestRequest] = ScreenshotSelfTestRequest,
-        interactive_session_request_factory: Callable[[], InteractiveSessionRequest] = InteractiveSessionRequest,
+        interactive_session_request_factory: Callable[[], InteractiveSessionRequest] | None = None,
         thread_factory: Callable[..., Thread] = Thread,
         diagnostics_root: Path | None = None,
         ffmpeg_path: Path | None = None,
+        generated_projects_root: Path | None = None,
     ) -> None:
         self._opt_in_enabled = opt_in_enabled or (
             lambda: os.environ.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1"
@@ -87,11 +88,34 @@ class ProductionSandboxTestLabRunner:
         self._request_factories = {
             SandboxProfile.PRODUCTION_SELF_TEST: self_test_request_factory,
             SandboxProfile.PRODUCTION_SCREENSHOT: screenshot_request_factory,
-            SandboxProfile.INTERACTIVE_SESSION: interactive_session_request_factory,
+            SandboxProfile.INTERACTIVE_SESSION: interactive_session_request_factory
+            or (lambda: InteractiveSessionRequest(project_source=self._resolve_pending_project_source())),
         }
         self._thread_factory = thread_factory
+        self._generated_projects_root = generated_projects_root
+        self._pending_project_name: str | None = None
         self._run: _PreparedRun | None = None
         self._lock = RLock()
+
+    def stage_project(self, project_name: str | None) -> None:
+        """Record a project name (Phase 5e) to be resolved into the next interactive_session
+        request's project_source when prepare() is called. Must be called before prepare(),
+        and only once per run -- fails loud rather than silently overwriting a pending name,
+        matching prepare()'s own "already prepared" guard."""
+        with self._lock:
+            if self._pending_project_name is not None:
+                raise RuntimeError("production_runner_project_already_staged")
+            self._pending_project_name = project_name
+
+    def _resolve_pending_project_source(self) -> Path | None:
+        with self._lock:
+            project_name = self._pending_project_name
+            self._pending_project_name = None
+        if project_name is None:
+            return None
+        if self._generated_projects_root is None:
+            raise RuntimeError("generated_projects_root is not configured")
+        return resolve_project_source(project_name, projects_root=self._generated_projects_root)
 
     def prepare(self, profile: SandboxProfile) -> SandboxTestLabResult:
         self._require_opt_in()
@@ -329,6 +353,7 @@ def create_production_sandbox_runtime(
     *,
     environ: Mapping[str, str] | None = None,
     ffmpeg_path: Path | None = None,
+    generated_projects_root: Path | None = None,
 ) -> ProductionSandboxRuntime:
     source = environ if environ is not None else os.environ
     opt_in_enabled = lambda: source.get(PRODUCTION_UI_EXTERNAL_OPT_IN) == "1"
@@ -360,6 +385,7 @@ def create_production_sandbox_runtime(
                 opt_in_enabled=opt_in_enabled,
                 diagnostics_root=diagnostics_root,
                 ffmpeg_path=ffmpeg_path,
+                generated_projects_root=generated_projects_root,
             ),
         )
 
@@ -374,5 +400,6 @@ def create_production_sandbox_runtime(
         enabled=True,
         adapter_factory=adapter_factory,
         state_store=JsonSandboxJobStateStore(Path(runtime_dir) / "sandbox-test-lab-jobs.json"),
+        generated_projects_root=generated_projects_root,
     )
     return ProductionSandboxRuntime(service, availability_provider)
