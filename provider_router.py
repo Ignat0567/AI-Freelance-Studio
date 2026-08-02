@@ -9,7 +9,7 @@ from provider_registry import provider_registry
 
 
 SUBSCRIPTION_TYPES = {ConnectionType.CODEX_CHATGPT_SUBSCRIPTION.value, ConnectionType.CLAUDE_SUBSCRIPTION.value, ConnectionType.GEMINI_GOOGLE_ACCOUNT.value}
-API_TYPES = {ConnectionType.OPENAI_API_KEY.value, ConnectionType.ANTHROPIC_API_KEY.value, ConnectionType.GEMINI_API_KEY.value}
+API_TYPES = {ConnectionType.OPENAI_API_KEY.value, ConnectionType.ANTHROPIC_API_KEY.value, ConnectionType.GEMINI_API_KEY.value, ConnectionType.OPENROUTER_API_KEY.value}
 LOCAL_TYPES = {ConnectionType.OLLAMA_LOCAL.value, ConnectionType.LM_STUDIO_LOCAL.value, ConnectionType.LLAMA_CPP_SERVER.value, ConnectionType.LOCALAI_LOCAL.value, ConnectionType.VLLM_LOCAL.value, ConnectionType.OPENAI_COMPATIBLE_LOCAL.value}
 
 

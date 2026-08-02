@@ -35,4 +35,8 @@ def test_electron_package_manifest_bundles_only_sidecar_and_built_frontend_resou
             "filter": ["**/*", "!**/*.{pfx,p12,pem,key,cer,crt}"],
         },
         {"from": "dist", "to": "frontend-dist", "filter": ["**/*", "!**/*.map"]},
+        # Sandbox Test Lab video evidence (Phase 5d) encodes with a vendored, hash-pinned
+        # LGPL ffmpeg. The filter stays narrow so the rest of the ffmpeg distribution
+        # (headers, docs, ffplay/ffprobe) never reaches the installer.
+        {"from": "../third_party/ffmpeg", "to": "ffmpeg", "filter": ["ffmpeg.exe", "*.dll"]},
     ]
