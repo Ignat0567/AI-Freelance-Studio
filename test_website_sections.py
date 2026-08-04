@@ -8,6 +8,7 @@ import pytest
 from design_system import DEFAULT_TOKENS, render_tokens_css
 from website_sections import SECTION_LIBRARY, get_section, materialize_site
 from website_sections.materialize import _escape_jsx_text
+from website_sections.sections.agent_pipeline_demo import AGENT_PIPELINE_DEMO
 
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 
@@ -148,3 +149,22 @@ def test_materialize_site_writes_custom_tokens_css_when_provided(tmp_path):
     materialize_site([(section.slug, _fill_all_fields(section))], tmp_path, tokens_css=custom_css)
 
     assert (tmp_path / "frontend/src/tokens.css").read_text(encoding="utf-8") == custom_css
+
+
+def test_agent_pipeline_demo_is_in_the_library():
+    assert AGENT_PIPELINE_DEMO in SECTION_LIBRARY
+    assert get_section("agent_pipeline_demo") is AGENT_PIPELINE_DEMO
+
+
+def test_agent_pipeline_demo_content_schema_is_small_and_curated():
+    # Stage/agent facts are fixed in the component itself, not AI-authored copy —
+    # only the framing heading/intro should be content-fillable.
+    assert {name for name, _description in AGENT_PIPELINE_DEMO.content_schema} == {"heading", "intro"}
+
+
+def test_agent_pipeline_demo_lists_the_real_pipeline_stages_and_agents():
+    jsx = AGENT_PIPELINE_DEMO.files["sections/AgentPipelineDemo.jsx"]
+    for agent in ("Alex", "Studio", "Codex", "BugCatcher", "Product Judge"):
+        assert agent in jsx, f"missing real agent name: {agent}"
+    for stage in ("Requirements", "Planning", "Implementation", "Verification", "Delivery"):
+        assert stage in jsx, f"missing real pipeline stage: {stage}"
