@@ -24,6 +24,7 @@ from typing import Optional
 import httpx
 import config_storage
 import secret_store
+from execution_config import build_effective_execution_config, normalize_model_id, validate_native_model_id
 from repair_scope import resolve_inside
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,25 @@ _MODEL_MAP = {
     "google": "gemini-2.0-flash-001",
 }
 
+_OPENCODE_MODEL_LIST_CACHE: dict[str, object] = {"binary": "", "models": [], "checked_at": 0.0}
+
+
+def normalize_opencode_model_id(model: str, connection_id: str = "", known_connection_ids: set[str] | None = None) -> dict:
+    """Return a native OpenCode model ID, removing only proven Studio connection prefixes."""
+    return normalize_model_id(model, connection_id, known_connection_ids)
+
+
+def _is_internal_model_reference(model: str, known_connection_ids: set[str] | None = None) -> bool:
+    raw = str(model or "").strip()
+    if "/" not in raw:
+        return False
+    first, rest = raw.split("/", 1)
+    return bool(rest and "/" in rest and first in {str(item) for item in (known_connection_ids or set()) if item})
+
+
+def _native_opencode_model(model: str, connection_id: str = "", known_connection_ids: set[str] | None = None) -> str:
+    return str(normalize_opencode_model_id(model, connection_id, known_connection_ids).get("model_id") or "")
+
 
 def _provider_key(config: dict, provider: str) -> str:
     return secret_store.get_secret(f"{provider}_key", config) or secret_store.get_secret("api_key", config)
@@ -92,7 +112,12 @@ def _get_studio_config() -> dict:
 
 def _get_opencode_config_dir() -> str:
     """Return the OpenCode config directory, creating it if needed."""
-    config_dir = os.path.expanduser("~/.config/opencode")
+    configured = os.environ.get("OPENCODE_CONFIG_DIR") or ""
+    if configured and os.path.isabs(configured):
+        config_dir = configured
+    else:
+        studio_home = os.environ.get("FREELANCERSTUDIO_HOME") or os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.path.dirname(os.path.abspath(__file__))
+        config_dir = os.path.join(studio_home, ".opencode")
     os.makedirs(config_dir, exist_ok=True)
     return config_dir
 
@@ -188,15 +213,12 @@ def sync_opencode_config() -> bool:
 def _preferred_provider_model() -> tuple[str, str]:
     """Return provider/model using the same Studio config rules as OpenCode config generation."""
     studio_cfg = _get_studio_config()
-    system_cfg = studio_cfg.get("_system", {}) if isinstance(studio_cfg.get("_system"), dict) else {}
-    provider_raw = system_cfg.get("global_provider") or studio_cfg.get("global_provider") or "nvidia"
-    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
-    oc_provider, model, _note = _effective_opencode_provider_model(provider_raw, model, studio_cfg)
-    if oc_provider == "openai" and model in ("gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"):
-        model = _MODEL_MAP["openai"]
-    if "/" in model and model.startswith(f"{oc_provider}/"):
+    effective = build_effective_execution_config(studio_cfg)
+    model = effective.model_id or _MODEL_MAP.get(effective.provider_id, "meta/llama-3.3-70b-instruct")
+    provider = model.split("/", 1)[0] if effective.backend_type == "opencode" and "/" in model else effective.provider_id
+    if model.startswith(f"{provider}/"):
         model = model.split("/", 1)[1]
-    return oc_provider, model
+    return provider, model
 
 
 def _discover_opencode() -> Optional[str]:
@@ -368,10 +390,11 @@ def _readiness_result(error_code: str, message: str, checks: dict, **extra) -> d
 
 
 def test_opencode_readiness(executable_path: str = "", selected_model: str = "", server_url: str = "") -> dict:
-    """Verify local OpenCode installation, server, auth metadata, models, and selection."""
+    """Verify local OpenCode CLI readiness for opencode run without requiring Web/server."""
+    selected_model = _native_opencode_model(selected_model, known_connection_ids={"opencode_bridge", "opencode_oauth_bridge"})
     checks = {
         "executable": {"status": "not_checked"},
-        "server": {"status": "not_checked"},
+        "server": {"status": "not_required"},
         "authentication": {"status": "not_checked"},
         "models": {"status": "not_checked"},
         "selection": {"status": "not_checked", "provider": "", "model": selected_model},
@@ -391,63 +414,57 @@ def test_opencode_readiness(executable_path: str = "", selected_model: str = "",
         return _readiness_result("cli_command_failed", "OpenCode executable validation failed.", checks)
     checks["executable"] = {"status": "passed", "version": _strip_ansi(stdout or stderr).strip()}
 
-    candidates = []
-    for candidate in (server_url.strip(), _opencode_web_url, f"http://{OPCODE_SERVE_HOST}:{OPCODE_SERVE_PORT}"):
-        if candidate and re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):\d+", candidate) and candidate not in candidates:
-            candidates.append(candidate)
-    active_server = next((candidate for candidate in candidates if _opencode_web_ready(candidate)), "")
-    if not active_server:
-        checks["server"] = {"status": "failed", "error_code": "server_not_running"}
-        return _readiness_result("server_not_running", "OpenCode server is not running. Start OpenCode Web or the local server first.", checks, executable_path=binary)
-    checks["server"] = {"status": "passed", "url": active_server}
-
     code, stdout, stderr = _run_capture([binary, "auth", "list"], timeout=20)
     if code is None:
         error_code = "timeout" if stderr == "timeout" else "cli_command_failed"
         checks["authentication"] = {"status": "failed", "error_code": error_code, "providers": []}
-        return _readiness_result(error_code, "OpenCode authentication check timed out." if error_code == "timeout" else "OpenCode authentication check failed.", checks, executable_path=binary, server_url=active_server)
+        return _readiness_result(error_code, "OpenCode authentication check timed out." if error_code == "timeout" else "OpenCode authentication check failed.", checks, executable_path=binary, server_url="")
     if code != 0:
         checks["authentication"] = {"status": "failed", "error_code": "cli_command_failed", "providers": []}
-        return _readiness_result("cli_command_failed", "OpenCode authentication check failed.", checks, executable_path=binary, server_url=active_server)
+        return _readiness_result("cli_command_failed", "OpenCode authentication check failed.", checks, executable_path=binary, server_url="")
     credentials = _parse_opencode_auth_list(f"{stdout}\n{stderr}")
     providers = sorted({item["provider"] for item in credentials})
     auth_types = sorted({item["auth_type"] for item in credentials})
     if not providers:
         checks["authentication"] = {"status": "failed", "error_code": "provider_not_authenticated", "providers": [], "auth_types": []}
-        return _readiness_result("provider_not_authenticated", "No authenticated OpenCode provider was found. Select Authenticate Provider first.", checks, executable_path=binary, server_url=active_server)
+        return _readiness_result("provider_not_authenticated", "No authenticated OpenCode provider was found. Select Authenticate Provider first.", checks, executable_path=binary, server_url="")
     checks["authentication"] = {"status": "passed", "providers": providers, "auth_types": auth_types}
 
     code, stdout, stderr = _run_capture([binary, "models"], timeout=30)
     if code is None:
         error_code = "timeout" if stderr == "timeout" else "cli_command_failed"
         checks["models"] = {"status": "failed", "error_code": error_code, "count": 0}
-        return _readiness_result(error_code, "OpenCode model discovery timed out." if error_code == "timeout" else "OpenCode model discovery failed.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers)
+        return _readiness_result(error_code, "OpenCode model discovery timed out." if error_code == "timeout" else "OpenCode model discovery failed.", checks, executable_path=binary, server_url="", authorized_providers=providers)
     if code != 0:
         checks["models"] = {"status": "failed", "error_code": "cli_command_failed", "count": 0}
-        return _readiness_result("cli_command_failed", "OpenCode model discovery failed.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers)
+        return _readiness_result("cli_command_failed", "OpenCode model discovery failed.", checks, executable_path=binary, server_url="", authorized_providers=providers)
     models = sorted({line.strip() for line in _strip_ansi(stdout).splitlines() if re.fullmatch(r"[^\s/]+/.+", line.strip())})
     if not models:
         checks["models"] = {"status": "failed", "error_code": "models_unavailable", "count": 0}
-        return _readiness_result("models_unavailable", "OpenCode authentication exists, but no models are available.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=[])
+        return _readiness_result("models_unavailable", "OpenCode authentication exists, but no models are available.", checks, executable_path=binary, server_url="", authorized_providers=providers, available_models=[])
     checks["models"] = {"status": "passed", "count": len(models)}
 
     selected = selected_model.strip()
     selected_provider = _normalize_provider_id(selected.split("/", 1)[0]) if "/" in selected else ""
     checks["selection"] = {"status": "failed", "provider": selected_provider, "model": selected}
+    valid_model, invalid_reason = validate_native_model_id(selected, "opencode")
+    if not valid_model:
+        checks["selection"]["error_code"] = invalid_reason
+        return _readiness_result(invalid_reason, "Select a native OpenCode model ID in provider/model format.", checks, executable_path=binary, server_url="", authorized_providers=providers, available_models=models)
     if not selected_provider or not selected:
         checks["selection"]["error_code"] = "selected_model_missing"
-        return _readiness_result("selected_model_missing", "Select an OpenCode provider/model before testing.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=models)
+        return _readiness_result("selected_model_missing", "Select an OpenCode provider/model before testing.", checks, executable_path=binary, server_url="", authorized_providers=providers, available_models=models)
     if selected_provider not in providers:
         checks["selection"]["error_code"] = "selected_provider_not_authenticated"
-        return _readiness_result("selected_provider_not_authenticated", "The selected OpenCode provider is not authenticated.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=models)
+        return _readiness_result("selected_provider_not_authenticated", "The selected OpenCode provider is not authenticated.", checks, executable_path=binary, server_url="", authorized_providers=providers, available_models=models)
     if selected not in models:
         checks["selection"]["error_code"] = "selected_model_unavailable"
-        return _readiness_result("selected_model_unavailable", "The selected OpenCode model is not available.", checks, executable_path=binary, server_url=active_server, authorized_providers=providers, available_models=models)
+        return _readiness_result("selected_model_unavailable", "The selected OpenCode model is not available.", checks, executable_path=binary, server_url="", authorized_providers=providers, available_models=models)
     checks["selection"] = {"status": "passed", "provider": selected_provider, "model": selected}
     selected_auth_types = sorted({item["auth_type"] for item in credentials if item["provider"] == selected_provider})
     return {
-        "status": "ok", "ready": True, "error_code": "", "message": "OpenCode executable, server, provider authentication, and selected model are ready.",
-        "checks": checks, "executable_path": binary, "server_url": active_server,
+        "status": "ok", "ready": True, "error_code": "", "message": "OpenCode executable, provider authentication, and selected model are ready. Local server is not required for opencode run.",
+        "checks": checks, "executable_path": binary, "server_url": "",
         "authorized_providers": providers, "auth_types": auth_types, "selected_auth_types": selected_auth_types, "available_models": models,
     }
 
@@ -456,6 +473,9 @@ def _effective_opencode_provider_model(provider_raw: str, model: str, studio_cfg
     """Choose an OpenCode-compatible provider/model while staying inside OpenCode."""
     oc_provider = _PROVIDER_MAP.get(provider_raw, provider_raw)
     selected_model = model or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
+    if provider_raw in {"opencode_bridge", "opencode_oauth_bridge", "opencode"} and "/" in str(selected_model):
+        provider_from_model, model_part = str(selected_model).split("/", 1)
+        return provider_from_model, model_part, ""
     if isinstance(selected_model, str) and selected_model.startswith(f"{oc_provider}/"):
         selected_model = selected_model.split("/", 1)[1]
 
@@ -470,6 +490,8 @@ def _effective_opencode_provider_model(provider_raw: str, model: str, studio_cfg
 
 def _friendly_opencode_error(text: str) -> str:
     clean = _strip_ansi(text or "").strip()
+    if "model not found" in clean.lower():
+        return clean + "\nThe selected OpenCode model is not available. Select an available model in Settings -> AI Provider."
     if "ResourceExhausted" in clean or "Worker local total request limit reached" in clean:
         return (
             clean
@@ -544,16 +566,19 @@ def get_opencode_status() -> dict:
         "web_url": _opencode_web_url if _opencode_web_url and _opencode_web_ready(_opencode_web_url) else "",
     }
     studio_cfg = _get_studio_config()
-    system_cfg = studio_cfg.get("_system", {}) if isinstance(studio_cfg.get("_system"), dict) else {}
-    provider_raw = system_cfg.get("global_provider") or studio_cfg.get("global_provider") or "nvidia"
-    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
-    eff_provider, eff_model, eff_note = _effective_opencode_provider_model(provider_raw, model, studio_cfg)
+    effective = build_effective_execution_config(studio_cfg)
+    provider_raw = effective.provider_id
+    model = effective.model_id
+    eff_provider = effective.provider_id
+    eff_model = effective.model_id
+    eff_note = ""
     status.update({
         "selected_provider": provider_raw,
         "selected_model": model,
         "effective_provider": eff_provider,
         "effective_model": eff_model,
         "effective_note": eff_note,
+        "effective_execution_config": effective.to_dict(),
     })
     if not binary:
         return status
@@ -815,7 +840,7 @@ class OpencodeBridge:
 
     # ── high-level task methods ────────────────────────────────────────────
 
-    def execute_coding_task(self, project_dir: str, task_spec: str, log_callback=None, autonomous: bool = False) -> dict:
+    def execute_coding_task(self, project_dir: str, task_spec: str, log_callback=None, autonomous: bool = False, model_override: str = "") -> dict:
         """Delegate a coding task to OpenCode."""
         return self._run_agent_session(
             project_dir=project_dir,
@@ -839,9 +864,10 @@ class OpencodeBridge:
                 "9. Tell me exactly what files you changed and the real command results"
             ),
             log_callback=log_callback,
+            model_override=model_override,
         )
 
-    def execute_review_task(self, project_dir: str, review_type: str, context: str) -> dict:
+    def execute_review_task(self, project_dir: str, review_type: str, context: str, model_override: str = "") -> dict:
         """Delegate code review to OpenCode."""
         prompts = {
             "bugcatcher": "You are a QA engineer reviewing code for bugs, edge cases, and functionality issues.",
@@ -859,9 +885,10 @@ class OpencodeBridge:
                 "4. If no issues, say 'VERDICT: PASS'\n"
                 "5. If issues exist, say 'VERDICT: FAIL' and suggest specific fixes"
             ),
+            model_override=model_override,
         )
 
-    def execute_test_task(self, project_dir: str, test_spec: str) -> dict:
+    def execute_test_task(self, project_dir: str, test_spec: str, model_override: str = "") -> dict:
         """Delegate test writing and execution to OpenCode."""
         return self._run_agent_session(
             project_dir=project_dir,
@@ -874,9 +901,10 @@ class OpencodeBridge:
                 "4. Fix any failures\n"
                 "5. Report which tests passed/failed"
             ),
+            model_override=model_override,
         )
 
-    def execute_fix_task(self, project_dir: str, issues: str, log_callback=None) -> dict:
+    def execute_fix_task(self, project_dir: str, issues: str, log_callback=None, model_override: str = "") -> dict:
         """Delegate bug fixing to OpenCode based on review findings."""
         return self._run_agent_session(
             project_dir=project_dir,
@@ -889,6 +917,7 @@ class OpencodeBridge:
                 "4. Report what was fixed and the results"
             ),
             log_callback=log_callback,
+            model_override=model_override,
         )
 
     # ── session management ────────────────────────────────────────────────
@@ -922,17 +951,17 @@ class OpencodeBridge:
                         continue
         return {"status": "cancelled" if cancelled else "not_found", "sessions": cancelled}
 
-    def _run_agent_session(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None) -> dict:
+    def _run_agent_session(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None, model_override: str = "") -> dict:
         """
         Create an OpenCode session, send a task prompt, collect the result.
         Uses OpenCode CLI by default. The local HTTP API is useful for status/web,
         but its session message schema changes across OpenCode releases.
         """
         if os.environ.get("OPENCODE_USE_HTTP", "0") != "1":
-            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
 
         if not self._http:
-            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
 
         try:
             # 1. Create a session
@@ -946,6 +975,10 @@ class OpencodeBridge:
 
             # 2. Use Studio's effective OpenCode coding model, not a stale server default.
             provider_id, model_id = _preferred_provider_model()
+            if model_override:
+                native = _native_opencode_model(model_override, known_connection_ids={"opencode_bridge", "opencode_oauth_bridge"})
+                provider_id = native.split("/", 1)[0] if "/" in native else provider_id
+                model_id = native
             if log_callback:
                 log_callback(f"[Codex] OpenCode model: {provider_id}/{model_id}")
 
@@ -990,11 +1023,11 @@ class OpencodeBridge:
             logger.exception(f"OpenCode HTTP task failed: {body}")
             if log_callback:
                 log_callback("[Codex] OpenCode HTTP API rejected the task; retrying through OpenCode CLI...")
-            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+            return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
         except Exception as e:
             logger.exception(f"OpenCode task failed")
             if "401" in str(e) or "403" in str(e) or "Unauthorized" in str(e):
-                return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback)
+                return self._run_cli_task(project_dir, system_prompt, user_prompt, log_callback=log_callback, model_override=model_override)
             return {"success": False, "error": str(e), "session_id": None}
         finally:
             try:
@@ -1003,12 +1036,16 @@ class OpencodeBridge:
             except Exception:
                 pass
 
-    def _run_cli_task(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None) -> dict:
+    def _run_cli_task(self, project_dir: str, system_prompt: str, user_prompt: str, log_callback=None, model_override: str = "") -> dict:
         """Run OpenCode via CLI when the local HTTP API requires auth."""
         binary = self._binary or _discover_opencode()
         if not binary:
             return {"success": False, "error": "OpenCode binary not found", "session_id": None, "subprocess_started": False, "exit_code": None, "command_shape": []}
         provider, model = _preferred_provider_model()
+        if model_override:
+            native = _native_opencode_model(model_override, known_connection_ids={"opencode_bridge", "opencode_oauth_bridge"})
+            provider = native.split("/", 1)[0] if "/" in native else provider
+            model = native
         prompt = (
             f"SYSTEM:\n{system_prompt}\n\n"
             f"USER TASK:\n{user_prompt}\n\n"
@@ -1037,20 +1074,28 @@ class OpencodeBridge:
         task_metadata["task_file_exists"] = prompt_path.is_file()
         if not task_metadata["task_file_exists"]:
             return {"success": False, "error": "OpenCode task file was not created", "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "preflight_status": "task_file_not_found", **task_metadata}
+        native_model_id = model if "/" in model else f"{provider}/{model}"
+        if not native_model_id:
+            return {"success": False, "error": "OpenCode model is empty", "error_category": "opencode_model_reference_invalid", "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "command_shape": [], **task_metadata}
+        valid_model, invalid_reason = validate_native_model_id(native_model_id, "opencode")
+        if not valid_model:
+            return {"success": False, "error": f"Invalid OpenCode model reference: {native_model_id}", "error_category": invalid_reason, "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "command_shape": [], **task_metadata}
+        if _is_internal_model_reference(native_model_id, {"opencode_bridge", "opencode_oauth_bridge"}):
+            return {"success": False, "error": f"Invalid OpenCode model reference: {native_model_id}", "error_category": "opencode_model_reference_invalid", "session_id": "opencode-cli", "subprocess_started": False, "exit_code": None, "command_shape": [], **task_metadata}
         cmd = [
             binary,
             "run",
             "Read the attached .opencode_task.md file and complete the task exactly. Modify project files on disk.",
             "--model",
-            f"{provider}/{model}",
+            native_model_id,
             "--dangerously-skip-permissions",
             f"--file={task_file_argument}",
         ]
-        command_shape = [str(binary), "run", "<task>", "--model", f"{provider}/{model}", "--dangerously-skip-permissions", "--file=<task-file>"]
+        command_shape = [str(binary), "run", "<task>", "--model", native_model_id, "--dangerously-skip-permissions", "--file=<task-file>"]
         session_id = f"opencode-cli-{uuid.uuid4().hex[:8]}"
         if log_callback:
             log_callback(f"[Codex] Starting OpenCode CLI session: {session_id}")
-            log_callback(f"[Codex] OpenCode model: {provider}/{model}")
+            log_callback(f"[Codex] OpenCode model: {native_model_id}")
         try:
             proc = subprocess.Popen(
                 cmd,

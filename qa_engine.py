@@ -13,6 +13,13 @@ from ai_utils import ask_studio_ai_with_history
 from project_spec import Issue, detect_project_profiles
 from project_state import persist_project_state
 from repair_scope import EXCLUDED_REPAIR_DIRS, EXCLUDED_REPAIR_EXTENSIONS, resolve_inside, walk_repairable_files
+from sandbox_test_lab.adapter import (
+    SandboxAvailability,
+    SandboxProfile,
+    SandboxRepairHandoff,
+    SandboxTestLabAdapter,
+    SandboxTestLabResult,
+)
 
 MAX_ROUNDS = 4
 MAX_REPAIR_ATTEMPTS = 3
@@ -74,6 +81,7 @@ POLICY_GROUP_PROMPT_RULES = {
 
 IGNORED_QA_DIRS = EXCLUDED_REPAIR_DIRS
 IGNORED_QA_EXTENSIONS = EXCLUDED_REPAIR_EXTENSIONS
+SYNTAX_CHECK_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".txt", ".md", ".yml", ".yaml", ".toml", ""}
 
 
 def _npm_command() -> str:
@@ -311,7 +319,19 @@ def parse_codex_json(raw_reply):
 
 
 class QAEngine:
-    def __init__(self, project, target_path, project_id, provider, model, temperature, state_callback=None):
+    def __init__(
+        self,
+        project,
+        target_path,
+        project_id,
+        provider,
+        model,
+        temperature,
+        state_callback=None,
+        *,
+        sandbox_test_lab_enabled=False,
+        sandbox_test_lab_adapter=None,
+    ):
         self.project = project
         self.target_path = str(resolve_inside(target_path, "."))
         self.project_id = project_id
@@ -332,6 +352,10 @@ class QAEngine:
         self.needs_credentials = False
         self.needs_human_input = False
         self.policy_groups = select_policy_groups(project, target_path)
+        self.sandbox_test_lab_enabled = bool(sandbox_test_lab_enabled)
+        self.sandbox_test_lab_adapter = sandbox_test_lab_adapter or SandboxTestLabAdapter(
+            enabled=self.sandbox_test_lab_enabled
+        )
 
     def log(self, msg):
         self.logs.append(msg)
@@ -346,6 +370,36 @@ class QAEngine:
             except Exception:
                 pass
         self.log(f"[PROJECT STATE] {state.replace('_', ' ').title()}")
+
+    def sandbox_availability(self) -> SandboxAvailability:
+        if not self.sandbox_test_lab_enabled:
+            return SandboxAvailability.disabled()
+        return self.sandbox_test_lab_adapter.availability()
+
+    def prepare_sandbox_run(self, profile: SandboxProfile | str) -> SandboxTestLabResult:
+        return self._enabled_sandbox_adapter().prepare(profile)
+
+    def launch_sandbox_run(self, run_id: str) -> SandboxTestLabResult:
+        return self._enabled_sandbox_adapter().launch(run_id)
+
+    def sandbox_run_status(self, run_id: str) -> SandboxTestLabResult:
+        return self._enabled_sandbox_adapter().status(run_id)
+
+    def sandbox_run_evidence(self, run_id: str) -> SandboxTestLabResult:
+        return self._enabled_sandbox_adapter().evidence(run_id)
+
+    def cancel_sandbox_run(self, run_id: str) -> SandboxTestLabResult:
+        return self._enabled_sandbox_adapter().cancel(run_id)
+
+    def sandbox_repair_handoff(self, run_id: str) -> SandboxRepairHandoff:
+        return self._enabled_sandbox_adapter().repair_handoff(run_id)
+
+    def _enabled_sandbox_adapter(self) -> SandboxTestLabAdapter:
+        if not self.sandbox_test_lab_enabled:
+            from sandbox_test_lab.adapter import SandboxTestLabDisabledError
+
+            raise SandboxTestLabDisabledError("sandbox_test_lab_disabled")
+        return self.sandbox_test_lab_adapter
 
     def run_command(self, command, cwd=None, timeout=120):
         started = time.time()
@@ -381,29 +435,33 @@ class QAEngine:
         self.log("[QA Syntax]: Checking source code syntax...")
         errors = []
         for root, fname, fpath in _walk_project_files(self.target_path):
-                ext = os.path.splitext(fname)[1]
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                except Exception as e:
-                    errors.append(f"[{fname}] Read error: {e}")
-                    continue
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in IGNORED_QA_EXTENSIONS:
+                continue
+            if fname not in {"Dockerfile", "requirements.txt"} and ext not in SYNTAX_CHECK_EXTENSIONS:
+                continue
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError as e:
+                errors.append(f"[{fname}] Read error: {e}")
+                continue
 
-                if fname.endswith(".py"):
-                    try:
-                        compile(content, fname, "exec")
-                    except SyntaxError as e:
-                        errors.append(f"[{fname}] SyntaxError line {e.lineno}: {e.msg}")
-                elif fname == "Dockerfile":
-                    if "FROM" not in content:
-                        errors.append("[Dockerfile] Missing FROM instruction")
-                    if "CMD" not in content and "ENTRYPOINT" not in content:
-                        errors.append("[Dockerfile] Missing CMD or ENTRYPOINT")
-                elif fname == "requirements.txt":
-                    for line in content.strip().split("\n"):
-                        line = line.strip()
-                        if line and not line.startswith("#") and " " in line and "==" not in line and not line.startswith("git+"):
-                            pass
+            if fname.endswith(".py"):
+                try:
+                    compile(content, fname, "exec")
+                except SyntaxError as e:
+                    errors.append(f"[{fname}] SyntaxError line {e.lineno}: {e.msg}")
+            elif fname == "Dockerfile":
+                if "FROM" not in content:
+                    errors.append("[Dockerfile] Missing FROM instruction")
+                if "CMD" not in content and "ENTRYPOINT" not in content:
+                    errors.append("[Dockerfile] Missing CMD or ENTRYPOINT")
+            elif fname == "requirements.txt":
+                for line in content.strip().split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("#") and " " in line and "==" not in line and not line.startswith("git+"):
+                        pass
 
         if errors:
             self.log(f"[QA Syntax]: {len(errors)} issue(s) found.")
@@ -631,7 +689,7 @@ class QAEngine:
 
         if has_package_json:
             try:
-                with open(os.path.join(self.target_path, "package.json"), "r", encoding="utf-8") as f:
+                with open(os.path.join(self.target_path, "package.json"), "r", encoding="utf-8", errors="replace") as f:
                     pkg = json.load(f)
                 scripts = pkg.get("scripts", {}) if isinstance(pkg, dict) else {}
                 if "build" in scripts:
@@ -1246,9 +1304,19 @@ asyncio.run(main())
             error_text += f"\n... and {len(errors) - 20} more issues"
 
         opencode_result = self._request_opencode_fix(errors, error_text, repair_report)
-        if opencode_result:
-            self.log(f"[QA OpenCode Fix] Direct repair applied — {opencode_result.get('changed_files', '?')} file(s) changed. Skipping legacy fallback.")
-            return opencode_result
+        if isinstance(opencode_result, dict):
+            direct_status = str(opencode_result.get("status") or "")
+            changed = bool(opencode_result.get(OPENCODE_FIX_APPLIED) or opencode_result.get("meaningful_changes_detected"))
+            if changed:
+                self.log(f"[QA OpenCode Fix] Direct repair applied — {opencode_result.get('changed_files', '?')} file(s) changed. Skipping legacy fallback.")
+                if not opencode_result.get(OPENCODE_FIX_APPLIED):
+                    opencode_result[OPENCODE_FIX_APPLIED] = True
+                return opencode_result
+            if opencode_result.get("timeout") or direct_status == "subprocess_timeout":
+                self.log("[QA OpenCode Fix] OpenCode timed out and no meaningful files changed. Legacy JSON fallback is disabled for direct-backend timeout results.")
+                return None
+            if opencode_result:
+                self.log("[QA OpenCode Fix] Direct repair produced no file changes; continuing to labelled legacy JSON fallback.")
 
         self.log("[LEGACY JSON FALLBACK] OpenCode direct repair produced no meaningful disk changes. Attempting JSON-based repair.")
 

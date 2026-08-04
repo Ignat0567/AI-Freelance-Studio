@@ -1,0 +1,4 @@
+aifs_sandbox_fixture.nsi text eol=lf
+aifs_sandbox_fixture_gui.nsi text eol=lf
+fixture-manifest.json text eol=lf
+payload.txt text eol=lf

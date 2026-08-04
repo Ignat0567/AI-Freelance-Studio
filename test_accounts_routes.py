@@ -4,9 +4,10 @@ import api.accounts as accounts_routes
 import config_storage
 import connected_accounts
 import main
+from test_security_support import authorized_test_client
 
 
-client = TestClient(main.app)
+client = authorized_test_client(main.app)
 
 
 def test_list_accounts_returns_accounts_and_platforms(monkeypatch):

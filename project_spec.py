@@ -189,6 +189,36 @@ def append_agent_review_issues(project: dict, agent_id: str, report_text: str, i
     return issues
 
 
+def close_resolved_review_issues(project: dict, agent_id: str, iteration: int = 1) -> list[dict[str, Any]]:
+    """Close this reviewer's previously open issues once it reports no findings.
+
+    Review-loop issues (BugCatcher/Sentinel/Lupa) are appended by
+    append_agent_review_issues but were never closed again, so any earlier
+    finding kept blocking security_baseline/open_blocking_issues gates even
+    after a later re-review of the same agent confirmed it was fixed.
+    """
+    agent_key = str(agent_id or "").lower()
+    closed = []
+    for issue in project.get("issues", []):
+        if not isinstance(issue, dict) or issue.get("source") != agent_key:
+            continue
+        if str(issue.get("status", "open")).lower() != "open":
+            continue
+        evidence = issue.get("evidence") if isinstance(issue.get("evidence"), dict) else {}
+        evidence["resolution"] = {
+            "source": agent_key,
+            "status": "passed",
+            "summary": f"{agent_key} re-review at iteration {iteration} reported no further findings.",
+            "iteration": iteration,
+        }
+        issue["evidence"] = evidence
+        issue["status"] = "closed"
+        closed.append(issue)
+    if closed:
+        persist_project_state(project)
+    return closed
+
+
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -712,6 +742,16 @@ def _has_credential_fallback(lower: str, name: str) -> bool:
             and any(term in lower for term in ("console/log notification", "console notification", "log notification"))
             and any(term in lower for term in ("not provided", "without external credentials", "without real credentials"))
         )
+    if name in {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"}:
+        local_llm_terms = (
+            "local llm", "local model", "ollama", "llama.cpp", "lm studio", "localhost:11434",
+            "локальн", "офлайн", "автономн",
+        )
+        optional_cloud_terms = (
+            "optional", "if selected", "if a cloud", "cloud mode is selected", "cloud is optional",
+            "если выбран", "по выбору", "опционально", "необязательн",
+        )
+        return any(term in lower for term in local_llm_terms) and any(term in lower for term in optional_cloud_terms)
     return False
 
 
@@ -722,6 +762,12 @@ def _requires_live_credential(lower: str, name: str) -> bool:
         return any(term in lower for term in ("send real email", "send real emails", "live smtp", "production smtp"))
     if name == "DATABASE_URL":
         return any(term in lower for term in ("production database", "live database", "external postgres", "external mysql"))
+    if name in {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"}:
+        return any(term in lower for term in (
+            "real openai", "live openai", "production openai",
+            "real anthropic", "live anthropic", "production anthropic",
+            "cloud only", "must use cloud", "no local fallback",
+        ))
     return False
 
 

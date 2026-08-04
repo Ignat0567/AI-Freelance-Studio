@@ -1,0 +1,335 @@
+from __future__ import annotations
+
+from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
+import shutil
+import threading
+import time
+from types import SimpleNamespace
+from typing import Callable, Sequence
+
+from .capability import detect_sandbox_capability
+from .fixture_installation import ensure_no_active_windows_sandbox_session
+from .interactive_session import (
+    InteractiveSessionRequest,
+    SandboxInputAction,
+    interactive_session_run_root,
+    stage_project_files,
+    write_interactive_session_wsb,
+)
+from .models import RunStatus, SandboxCapability, SandboxRunResult, validate_transition
+from .runner import (
+    GUEST_SANDBOX_SHUTDOWN_GRACE_SECONDS,
+    ProcessHandle,
+    _stop_owned_process,
+    archive_run_diagnostics,
+    launch_sandbox,
+    utc_now,
+)
+from .sandbox_session import OwnedSandboxSession, capture_owned_sandbox_session
+from .video_evidence import (
+    FRAME_CAPTURE_INTERVAL_SECONDS,
+    MAX_RETAINED_FRAMES,
+    archive_session_video,
+    encode_session_video,
+)
+from .workspace import WorkspaceError, atomic_write_json
+
+
+MAX_LAUNCH_ATTEMPTS = 3
+LAUNCH_RETRY_DELAY_SECONDS = 2.0
+# The only launch failure retried automatically: session discovery timed out without ever
+# finding a child process at all. Confirmed empirically 2026-07-31 as the dominant transient
+# failure mode of this dev machine's Windows Sandbox stack -- other WorkspaceErrors (identity
+# mismatches, an already-active conflicting session, etc.) indicate a real problem and must
+# fail loud, not be silently retried.
+_RETRYABLE_DISCOVERY_ERROR = "owned_sandbox_client_discovery_failed"
+
+
+class InteractiveSessionRunner:
+    """Keeps a Windows Sandbox window open for direct human control instead of running any
+    automated check. The guest desktop is already fully mouse/keyboard interactive with no
+    guest script at all -- confirmed empirically 2026-07-31, see docs/interactive-sandbox-
+    test-lab-phase-5-design.md. This runner only owns the session lifecycle: launch, watch
+    for the host cancelling it or the user closing the guest window themselves, and enforce
+    a hard maximum duration so a forgotten session can never run unattended forever.
+    """
+
+    def __init__(
+        self,
+        *,
+        capability_detector: Callable[[], SandboxCapability] = detect_sandbox_capability,
+        launcher: Callable[[Sequence[str]], ProcessHandle] = launch_sandbox,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+        poll_interval: float = 1.0,
+        utc_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        session_guard: Callable[[], None] = ensure_no_active_windows_sandbox_session,
+        session_factory: Callable[[int, datetime], OwnedSandboxSession] = capture_owned_sandbox_session,
+        launch_guard: Callable[[], None] = lambda: None,
+        runtime_root: Path | None = None,
+        diagnostics_root: Path | None = None,
+        ffmpeg_path: Path | None = None,
+        frame_capture_interval: float = FRAME_CAPTURE_INTERVAL_SECONDS,
+        max_retained_frames: int = MAX_RETAINED_FRAMES,
+        video_encoder: Callable[..., bool] = encode_session_video,
+        video_archiver: Callable[[Path | None, str, Path], None] = archive_session_video,
+    ):
+        self.capability_detector = capability_detector
+        self.launcher = launcher
+        self.monotonic = monotonic
+        self.sleeper = sleeper
+        self.poll_interval = poll_interval
+        self.utc_clock = utc_clock
+        self.session_guard = session_guard
+        self.session_factory = session_factory
+        self.launch_guard = launch_guard
+        self.runtime_root = runtime_root
+        self.diagnostics_root = diagnostics_root
+        self.ffmpeg_path = ffmpeg_path
+        self.frame_capture_interval = frame_capture_interval
+        self.max_retained_frames = max_retained_frames
+        self.video_encoder = video_encoder
+        self.video_archiver = video_archiver
+        self._live_lock = threading.Lock()
+        self._live_run_id: str | None = None
+        self._live_session: OwnedSandboxSession | None = None
+
+    def run(self, request: InteractiveSessionRequest, cancellation: threading.Event | None = None) -> SandboxRunResult:
+        host_started_utc = self.utc_clock().astimezone(timezone.utc)
+        started_at = host_started_utc.isoformat(timespec="microseconds").replace("+00:00", "Z")
+        started_monotonic = self.monotonic()
+        deadline = started_monotonic + request.timeout_seconds
+        status = RunStatus.CREATED
+        errors: list[str] = []
+        warnings: list[str] = []
+        process: ProcessHandle | None = None
+        owned_session: OwnedSandboxSession | None = None
+        run_root: Path | None = None
+        frame_paths: deque[Path] = deque()
+        frame_index = 0
+
+        def transition(target: RunStatus) -> None:
+            nonlocal status
+            validate_transition(status, target)
+            status = target
+
+        def finish(reason: str) -> SandboxRunResult:
+            with self._live_lock:
+                if self._live_run_id == request.run_id:
+                    self._live_run_id = None
+                    self._live_session = None
+            result = SandboxRunResult(
+                run_id=request.run_id, status=status, started_at=started_at, finished_at=utc_now(),
+                duration_seconds=round(max(0.0, self.monotonic() - started_monotonic), 3), exit_reason=reason,
+                evidence_path=None, errors=tuple(errors), warnings=tuple(dict.fromkeys(warnings)),
+            )
+            if run_root is not None:
+                atomic_write_json(run_root / "host-result.json", result.to_dict())
+                (run_root / "host.log").write_text(
+                    f"run_id={request.run_id}\nstatus={status.value}\nexit_reason={reason}\n", encoding="utf-8",
+                )
+                if frame_paths:
+                    video_path = run_root / "session.webm"
+                    try:
+                        encoded = self.video_encoder(
+                            list(frame_paths), video_path,
+                            run_root=run_root, ffmpeg_path=self.ffmpeg_path,
+                        )
+                    except Exception:  # noqa: BLE001 -- video evidence is never fatal to the run
+                        encoded = False
+                    if encoded:
+                        try:
+                            self.video_archiver(self.diagnostics_root, request.run_id, video_path)
+                        except Exception:  # noqa: BLE001 -- same as above
+                            pass
+                    shutil.rmtree(run_root / "frames", ignore_errors=True)
+                archive_run_diagnostics(
+                    self.diagnostics_root, request.run_id,
+                    SimpleNamespace(run_root=run_root, logs_directory=run_root),
+                )
+            return result
+
+        try:
+            capability = self.capability_detector()
+            warnings.extend(capability.warnings)
+            if not capability.available:
+                transition(RunStatus.UNAVAILABLE)
+                errors.extend(capability.blockers)
+                return finish("sandbox_unavailable")
+            if cancellation is not None and cancellation.is_set():
+                transition(RunStatus.CANCELLED)
+                return finish("cancelled_before_launch")
+            if self.monotonic() >= deadline:
+                transition(RunStatus.TIMED_OUT)
+                return finish("timeout_before_launch")
+            if not capability.executable_path:
+                raise RuntimeError("capability did not provide WindowsSandbox.exe path")
+
+            run_root = interactive_session_run_root(request.run_id, self.runtime_root)
+            # Resolved to the real physical location before anything derived from it is
+            # ever handed to an external process (WindowsSandbox.exe via the .wsb file's
+            # HostFolder, ffmpeg via video_evidence.py) -- on a machine where Python itself
+            # runs via a virtualized install (e.g. Microsoft Store Python's LocalAppData
+            # redirection, confirmed to affect this exact runtime_root during Phase 5d),
+            # Path.resolve() from within this process follows that redirect correctly, but
+            # an external process launched with the logical, unresolved path cannot see it.
+            run_root.mkdir(parents=True, exist_ok=True)
+            run_root = run_root.resolve()
+            staged_project = (
+                stage_project_files(request.project_source, run_root)
+                if request.project_source is not None
+                else None
+            )
+            config_file = write_interactive_session_wsb(run_root, project_source=staged_project)
+
+            transition(RunStatus.LAUNCHING)
+            for attempt in range(1, MAX_LAUNCH_ATTEMPTS + 1):
+                # Re-checked on every attempt, not just the first: a prior failed attempt
+                # can leave an orphaned Sandbox process behind, and that must fail loud
+                # here rather than let a retry silently race against it.
+                self.session_guard()
+                if cancellation is not None and cancellation.is_set():
+                    transition(RunStatus.CANCELLED)
+                    return finish("cancelled_before_launch")
+                if self.monotonic() >= deadline:
+                    transition(RunStatus.TIMED_OUT)
+                    return finish("timeout_before_launch")
+
+                launcher_started_utc = self.utc_clock().astimezone(timezone.utc)
+                self.launch_guard()
+                process = self.launcher([capability.executable_path, str(config_file)])
+                try:
+                    owned_session = self.session_factory(process.pid, launcher_started_utc)
+                    break
+                except WorkspaceError as exc:
+                    _stop_owned_process(process)
+                    process = None
+                    if str(exc) != _RETRYABLE_DISCOVERY_ERROR or attempt == MAX_LAUNCH_ATTEMPTS:
+                        raise
+                    errors.append(f"launch_attempt_{attempt}_failed_{exc}")
+                    self.sleeper(LAUNCH_RETRY_DELAY_SECONDS)
+
+            with self._live_lock:
+                self._live_run_id = request.run_id
+                self._live_session = owned_session
+            transition(RunStatus.RUNNING)
+
+            next_frame_due = self.monotonic() + self.frame_capture_interval
+            while True:
+                if cancellation is not None and cancellation.is_set():
+                    self._close_session(owned_session, errors)
+                    transition(RunStatus.CANCELLED)
+                    return finish("cancelled_by_host")
+                if self.monotonic() >= deadline:
+                    self._close_session(owned_session, errors)
+                    transition(RunStatus.TIMED_OUT)
+                    return finish("interactive_session_max_duration_exceeded")
+                if not owned_session.is_running():
+                    transition(RunStatus.CANCELLED)
+                    return finish("guest_closed_session")
+                if self.monotonic() >= next_frame_due:
+                    frame_index = self._record_frame(owned_session, run_root, frame_paths, frame_index)
+                    next_frame_due = self.monotonic() + self.frame_capture_interval
+                self.sleeper(self.poll_interval)
+        except (WorkspaceError, OSError, RuntimeError, ValueError) as exc:
+            errors.append(str(exc))
+            if owned_session is not None:
+                self._close_session(owned_session, errors)
+            if status in {RunStatus.CREATED, RunStatus.LAUNCHING, RunStatus.RUNNING}:
+                transition(RunStatus.INFRASTRUCTURE_ERROR)
+            return finish("infrastructure_error")
+        finally:
+            if process is not None:
+                _stop_owned_process(process)
+
+    def send_input(self, run_id: str, action: SandboxInputAction) -> bool:
+        """Send a validated input action to the running session's Sandbox window, or do
+        nothing and return False if there is no live session for this run_id right now.
+        The actual send happens outside the lock, matching capture_frame()."""
+        with self._live_lock:
+            if self._live_run_id != run_id or self._live_session is None:
+                return False
+            session = self._live_session
+        return session.send_input(action)
+
+    def _record_frame(
+        self, session: OwnedSandboxSession, run_root: Path | None, frame_paths: deque[Path], frame_index: int,
+    ) -> int:
+        """Best-effort periodic capture for video evidence, called from inside run()'s own
+        loop (no new thread -- no precedent for one in this codebase, and the loop's
+        existing monotonic/sleeper injection is already the established way to drive
+        periodic behavior deterministically). Never raises. A ring buffer: once
+        max_retained_frames is exceeded, the oldest frame file is deleted, since the loop's
+        own session deadline already bounds total captures to at most that count on a
+        normal run."""
+        if run_root is None:
+            return frame_index
+        try:
+            frame_bytes = session.capture_window_png()
+            if not frame_bytes:
+                return frame_index
+            frames_dir = run_root / "frames"
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            path = frames_dir / f"frame-{frame_index:06d}.png"
+            path.write_bytes(frame_bytes)
+            frame_paths.append(path)
+            if len(frame_paths) > self.max_retained_frames:
+                stale = frame_paths.popleft()
+                stale.unlink(missing_ok=True)
+        except OSError:
+            return frame_index
+        return frame_index + 1
+
+    def capture_frame(self, run_id: str) -> bytes | None:
+        """Best-effort live thumbnail of the running session's Sandbox window, or None if
+        there is no live session for this run_id right now. Never raises. The actual
+        capture happens outside the lock -- it shells out to PowerShell and can be slow,
+        and must never block the run() loop's own polling."""
+        with self._live_lock:
+            if self._live_run_id != run_id or self._live_session is None:
+                return None
+            session = self._live_session
+        return session.capture_window_png()
+
+    def _close_session(self, session: OwnedSandboxSession, errors: list[str]) -> bool:
+        """Best-effort graceful close, escalating to a verified kill and, as a last resort
+        for the remote_session model, to killing its server process directly (the server
+        does not always exit promptly once its client closes -- confirmed empirically
+        2026-07-31). Never declares success without actually re-checking that every owned
+        process is gone; a soft CloseMainWindow can return without the process exiting."""
+        try:
+            session.request_close()
+        except WorkspaceError as exc:
+            errors.append(f"owned_sandbox_request_close_failed_{type(exc).__name__}")
+        if self._wait_until_closed(session, GUEST_SANDBOX_SHUTDOWN_GRACE_SECONDS):
+            return True
+
+        try:
+            session.terminate()
+        except WorkspaceError as exc:
+            errors.append(f"owned_sandbox_terminate_failed_{type(exc).__name__}")
+        else:
+            if self._wait_until_closed(session, 5.0):
+                return True
+
+        if session.model == "remote_session" and session.server_pid is not None:
+            try:
+                session.terminate_server()
+            except WorkspaceError as exc:
+                errors.append(f"owned_sandbox_terminate_server_failed_{type(exc).__name__}")
+            else:
+                if self._wait_until_closed(session, 5.0):
+                    return True
+
+        errors.append("owned_sandbox_session_survived_terminate")
+        return False
+
+    def _wait_until_closed(self, session: OwnedSandboxSession, timeout_seconds: float) -> bool:
+        deadline = self.monotonic() + timeout_seconds
+        while self.monotonic() < deadline:
+            if not session.is_running():
+                return True
+            self.sleeper(min(0.5, max(0.0, deadline - self.monotonic())))
+        return not session.is_running()

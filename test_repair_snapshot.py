@@ -61,7 +61,15 @@ class SnapshotQAEngine(QAEngine):
             success = self.oc_result.get("success", False)
             if success or (timed_out and has_files) or (not success and not timed_out and has_files):
                 return {OPENCODE_FIX_APPLIED: True, "session_id": self.oc_result.get("session_id", "test-session"), "changed_files": 1 if has_files else 0}
-            return None
+            return {
+                "success": False,
+                "status": "subprocess_timeout" if timed_out else "subprocess_nonzero_exit",
+                "timeout": timed_out,
+                "session_id": self.oc_result.get("session_id", "test-session"),
+                "changed_files": [],
+                "meaningful_changes_detected": False,
+                "filesystem_changes_detected": False,
+            }
 
         if has_files:
             return {OPENCODE_FIX_APPLIED: True, "session_id": "test-session", "changed_files": 1}

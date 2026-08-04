@@ -6,12 +6,24 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 const {
     officialDownloadUrl,
     classifyWindowOpenUrl,
     isAllowedStudioNavigation,
     isAllowedDownloadSender,
 } = require('./official-downloads');
+const { authorizeRendererRequest } = require('./backend-request-policy');
+const {
+    ALLOWED_OPERATIONS,
+    isCanonicalUuid,
+    getSandboxTestLabCapabilities,
+    launchSandboxTestLabRun,
+    getSandboxTestLabRun,
+    getSandboxTestLabRunFrame,
+    sendSandboxTestLabRunInput,
+    cancelSandboxTestLabRun,
+} = require('./sandbox-test-lab-transport');
 
 let mainWindow = null;
 let backendProcess = null;
@@ -20,6 +32,13 @@ let backendStarting = false;
 let backendStartupFailure = '';
 let backendStartupOutput = '';
 let expectedRendererOrigin = '';
+let backendToken = '';
+let backendLaunchId = '';
+let backendDescriptor = null;
+let backendHost = '127.0.0.1';
+let requestAuthorizationConfigured = false;
+const sandboxLaunchInstances = new Map();
+const MAX_SANDBOX_LAUNCH_INSTANCES = 256;
 
 ipcMain.handle('open-official-download', async (event, downloadId) => {
     if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) {
@@ -40,6 +59,67 @@ ipcMain.handle('get-app-version', (event) => {
     if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) return '';
     return app.getVersion();
 });
+
+function sandboxTestLabBackendContext() {
+    return {
+        ready: Boolean(backendProcess && backendOwnedByElectron && backendDescriptor && backendToken),
+        restarting: backendStarting,
+        host: backendHost,
+        port: backendDescriptor?.port,
+        token: backendToken,
+    };
+}
+
+function trustedSandboxTestLabCall(event, callback) {
+    if (!isAllowedDownloadSender(event, mainWindow?.webContents, expectedRendererOrigin)) {
+        return { ok: false, status: 0, error: { code: 'untrusted_renderer' } };
+    }
+    return callback(sandboxTestLabBackendContext());
+}
+
+ipcMain.handle('sandbox-test-lab-capabilities', event => (
+    trustedSandboxTestLabCall(event, getSandboxTestLabCapabilities)
+));
+
+ipcMain.handle('sandbox-test-lab-launch', (event, operation, idempotencyKey, projectName) => (
+    trustedSandboxTestLabCall(
+        event,
+        context => {
+            const normalizedProjectName = typeof projectName === 'string' ? projectName : null;
+            if (!ALLOWED_OPERATIONS.has(operation) || !isCanonicalUuid(idempotencyKey)) {
+                return launchSandboxTestLabRun(context, operation, idempotencyKey, normalizedProjectName);
+            }
+            const instanceId = backendDescriptor?.instance_id;
+            const existingInstance = sandboxLaunchInstances.get(idempotencyKey);
+            if (existingInstance && existingInstance !== instanceId) {
+                return { ok: false, status: 0, error: { code: 'backend_restarted' } };
+            }
+            if (!existingInstance && typeof instanceId === 'string') {
+                sandboxLaunchInstances.set(idempotencyKey, instanceId);
+                while (sandboxLaunchInstances.size > MAX_SANDBOX_LAUNCH_INSTANCES) {
+                    sandboxLaunchInstances.delete(sandboxLaunchInstances.keys().next().value);
+                }
+            }
+            return launchSandboxTestLabRun(context, operation, idempotencyKey, normalizedProjectName);
+        },
+    )
+));
+
+ipcMain.handle('sandbox-test-lab-status', (event, runId) => (
+    trustedSandboxTestLabCall(event, context => getSandboxTestLabRun(context, runId))
+));
+
+ipcMain.handle('sandbox-test-lab-frame', (event, runId) => (
+    trustedSandboxTestLabCall(event, context => getSandboxTestLabRunFrame(context, runId))
+));
+
+ipcMain.handle('sandbox-test-lab-input', (event, runId, action) => (
+    trustedSandboxTestLabCall(event, context => sendSandboxTestLabRunInput(context, runId, action))
+));
+
+ipcMain.handle('sandbox-test-lab-cancel', (event, runId) => (
+    trustedSandboxTestLabCall(event, context => cancelSandboxTestLabRun(context, runId))
+));
 
 function appendBoundedLog(prefix, chunk) {
     const text = String(chunk || '')
@@ -79,26 +159,53 @@ function resolveExecutable(name) {
     return candidate && path.isAbsolute(candidate) && fs.existsSync(candidate) ? candidate : '';
 }
 
+function portableRootDirectory() {
+    const configured = process.env.FREELANCERSTUDIO_HOME || '';
+    if (configured && path.isAbsolute(configured)) return configured;
+    if (app.isPackaged) return path.dirname(app.getPath('exe'));
+    return path.resolve(__dirname, '..');
+}
+
 function runtimeDirectory() {
-    return app.isPackaged ? app.getPath('userData') : path.resolve(__dirname, '..');
+    return portableRootDirectory();
 }
 
-function readPortFile() {
-    const portFilePath = path.join(runtimeDirectory(), 'studio_port.txt');
-    if (!fs.existsSync(portFilePath)) return null;
-    try {
-        const port = parseInt(fs.readFileSync(portFilePath, 'utf8').trim(), 10);
-        return Number.isInteger(port) && port > 0 ? port : null;
-    } catch (e) {
-        return null;
-    }
-}
-
-function checkBackend(port, timeoutMs = 800) {
+function checkBackend(host, port, launchId, instanceId, timeoutMs = 800) {
     return new Promise((resolve) => {
-        const req = http.get({ hostname: '127.0.0.1', port, path: '/health', timeout: timeoutMs }, (res) => {
-            res.resume();
-            resolve(res.statusCode >= 200 && res.statusCode < 500);
+        const challenge = crypto.randomBytes(32).toString('base64url');
+        const req = http.get({
+            hostname: host,
+            port,
+            path: '/health/owner',
+            timeout: timeoutMs,
+            headers: {
+                'X-FreelancerStudio-Challenge': challenge,
+            },
+        }, (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', chunk => {
+                if (body.length < 4096) body += chunk;
+            });
+            res.on('end', () => {
+                try {
+                    const payload = JSON.parse(body);
+                    const expectedProof = crypto.createHmac('sha256', backendToken)
+                        .update(`${challenge}:${launchId}:${instanceId}:${port}`)
+                        .digest('base64url');
+                    resolve(
+                        res.statusCode === 200
+                        && payload.status === 'ok'
+                        && payload.service === 'FreelancerStudio'
+                        && payload.port === port
+                        && payload.launch_id === launchId
+                        && payload.instance_id === instanceId
+                        && payload.proof === expectedProof
+                    );
+                } catch (error) {
+                    resolve(false);
+                }
+            });
         });
         req.on('timeout', () => {
             req.destroy();
@@ -106,15 +213,6 @@ function checkBackend(port, timeoutMs = 800) {
         });
         req.on('error', () => resolve(false));
     });
-}
-
-async function discoverRunningBackend() {
-    const filePort = readPortFile();
-    if (filePort && await checkBackend(filePort)) {
-        console.log(`[Electron]: Reusing owned backend on port ${filePort}`);
-        return filePort;
-    }
-    return null;
 }
 
 function waitForBackend(maxWaitMs, processRef = null) {
@@ -127,11 +225,13 @@ function waitForBackend(maxWaitMs, processRef = null) {
                 resolve(null);
                 return;
             }
-            const filePort = readPortFile();
-            if (filePort) {
-                if (await checkBackend(filePort)) {
-                    console.log(`[Electron]: Backend is ready on port ${filePort}`);
-                    resolve(filePort);
+            const descriptor = backendDescriptor;
+            if (descriptor) {
+                if (await checkBackend(descriptor.connect_host, descriptor.port, descriptor.launch_id, descriptor.instance_id)) {
+                    backendHost = descriptor.connect_host;
+                    backendStarting = false;
+                    console.log(`[Electron]: Backend is ready on port ${descriptor.port}`);
+                    resolve(descriptor.port);
                     return;
                 }
             }
@@ -161,7 +261,7 @@ function resolvePythonCommand(rootDir) {
 }
 
 function backendLaunchSpec() {
-    const rootDir = path.resolve(__dirname, '..');
+    const rootDir = portableRootDirectory();
     if (app.isPackaged) {
         const sidecarDir = path.join(process.resourcesPath, 'backend', 'freelancerstudio-backend');
         const executable = path.join(sidecarDir, process.platform === 'win32' ? 'freelancerstudio-backend.exe' : 'freelancerstudio-backend');
@@ -182,7 +282,13 @@ function startBackend() {
     backendStartupOutput = '';
     const spec = backendLaunchSpec();
     const runtimeDir = runtimeDirectory();
-    const frontendDir = app.isPackaged ? path.join(process.resourcesPath, 'frontend-dist') : path.join(path.resolve(__dirname, '..'), 'frontend', 'dist');
+    const frontendDir = app.isPackaged ? path.join(process.resourcesPath, 'frontend-dist') : path.join(portableRootDirectory(), 'frontend', 'dist');
+    const ffmpegPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe')
+        : path.join(portableRootDirectory(), 'third_party', 'ffmpeg', 'ffmpeg.exe');
+    backendToken = crypto.randomBytes(32).toString('base64url');
+    backendLaunchId = crypto.randomUUID();
+    backendDescriptor = null;
 
     if (!spec.command || !path.isAbsolute(spec.command) || !fs.existsSync(spec.command)) {
         console.error(`[Critical]: Backend executable not found: ${spec.command || '<unresolved>'}`);
@@ -200,16 +306,22 @@ function startBackend() {
     }
 
     try {
+        const stalePortFile = path.join(runtimeDir, 'studio_port.txt');
+        if (fs.existsSync(stalePortFile)) fs.unlinkSync(stalePortFile);
         backendProcess = spawn(spec.command, spec.args, {
             cwd: spec.cwd,
             shell: false,
             windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
+            stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
             env: {
                 ...process.env,
                 FREELANCERSTUDIO_RUNTIME_DIR: runtimeDir,
                 FREELANCERSTUDIO_USER_DATA: runtimeDir,
+                FREELANCERSTUDIO_HOME: runtimeDir,
                 FREELANCERSTUDIO_FRONTEND_DIR: frontendDir,
+                FREELANCERSTUDIO_FFMPEG_PATH: ffmpegPath,
+                FREELANCERSTUDIO_AUTH_STDIN: '1',
+                FREELANCERSTUDIO_CONTROL_FD: '3',
                 ...(app.isPackaged ? {
                     SSL_CERT_FILE: path.join(spec.cwd, '_internal', 'certifi', 'cacert.bundle'),
                     REQUESTS_CA_BUNDLE: path.join(spec.cwd, '_internal', 'certifi', 'cacert.bundle')
@@ -218,6 +330,29 @@ function startBackend() {
         });
 
         backendOwnedByElectron = true;
+        backendProcess.stdin.end(JSON.stringify({ token: backendToken, launch_id: backendLaunchId }));
+        let controlOutput = '';
+        backendProcess.stdio[3].setEncoding('utf8');
+        backendProcess.stdio[3].on('data', chunk => {
+            controlOutput = `${controlOutput}${chunk}`.slice(0, 4096);
+            const newline = controlOutput.indexOf('\n');
+            if (newline < 0 || backendDescriptor) return;
+            try {
+                const descriptor = JSON.parse(controlOutput.slice(0, newline));
+                if (
+                    descriptor.launch_id === backendLaunchId
+                    && typeof descriptor.instance_id === 'string'
+                    && Number.isInteger(descriptor.port)
+                    && descriptor.port >= 1
+                    && descriptor.port <= 65535
+                    && ['127.0.0.1', '::1'].includes(descriptor.connect_host)
+                ) {
+                    backendDescriptor = descriptor;
+                }
+            } catch (error) {
+                backendStartupFailure = 'launch_error';
+            }
+        });
         backendProcess.stdout.on('data', chunk => appendBoundedLog('[Backend stdout]', chunk));
         backendProcess.stderr.on('data', chunk => {
             backendStartupOutput = `${backendStartupOutput}\n${appendBoundedLog('[Backend stderr]', chunk)}`.slice(-4000);
@@ -252,6 +387,10 @@ function stopBackend() {
     backendProcess = null;
     backendOwnedByElectron = false;
     backendStarting = false;
+    backendToken = '';
+    backendLaunchId = '';
+    backendDescriptor = null;
+    backendHost = '127.0.0.1';
     try {
         if (process.platform === 'win32') {
             spawnSync('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], { shell: false, windowsHide: true });
@@ -267,7 +406,8 @@ function stopBackend() {
 async function createWindow(backendPort) {
     console.log("[Electron]: Creating main application viewport...");
     console.log(`[Electron]: Using backend port: ${backendPort}`);
-    expectedRendererOrigin = `http://127.0.0.1:${backendPort}`;
+    const rendererHost = backendHost.includes(':') ? `[${backendHost}]` : backendHost;
+    expectedRendererOrigin = `http://${rendererHost}:${backendPort}`;
 
     mainWindow = new BrowserWindow({
         width: 1280,
@@ -284,6 +424,22 @@ async function createWindow(backendPort) {
         title: "AI Freelance Studio",
         icon: path.join(__dirname, 'build', 'icon.ico')
     });
+
+    if (!requestAuthorizationConfigured) {
+        mainWindow.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+            const requestHeaders = authorizeRendererRequest({
+                url: details.url,
+                method: details.method,
+                requestHeaders: details.requestHeaders,
+                webContentsId: details.webContentsId,
+                trustedWebContentsId: mainWindow?.webContents.id,
+                expectedOrigin: expectedRendererOrigin,
+                backendToken,
+            });
+            callback({ requestHeaders });
+        });
+        requestAuthorizationConfigured = true;
+    }
 
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
         if (classifyWindowOpenUrl(url) !== 'reject') {
@@ -308,12 +464,17 @@ async function createWindow(backendPort) {
         callback({
             responseHeaders: {
                 ...details.responseHeaders,
-                'content-security-policy': ["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; img-src 'self' data: blob:; frame-src 'self' http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';"]
+                'content-security-policy': [`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ${expectedRendererOrigin.replace('http:', 'ws:')}; img-src 'self' data: blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';`]
             }
         });
     });
 
-    mainWindow.loadURL(`http://127.0.0.1:${backendPort}/`);
+    try {
+        await mainWindow.webContents.session.clearCache();
+    } catch (error) {
+        console.warn(`[Electron]: Failed to clear renderer HTTP cache before load: ${error.message}`);
+    }
+    mainWindow.loadURL(`${expectedRendererOrigin}/`);
     if (process.env.ELECTRON_OPEN_DEVTOOLS === '1') {
         mainWindow.webContents.openDevTools();
     }
@@ -328,11 +489,8 @@ if (!app.requestSingleInstanceLock()) {
 } else {
 // Global lifecycle hooks handling application state changes safely
 app.whenReady().then(async () => {
-    let backendPort = await discoverRunningBackend();
-    if (!backendPort) {
-        const started = startBackend();
-        backendPort = started ? await waitForBackend(15000, backendProcess) : null;
-    }
+    const started = startBackend();
+    const backendPort = started ? await waitForBackend(15000, backendProcess) : null;
     if (!backendPort) {
         showBackendStartupFailure();
         stopBackend();

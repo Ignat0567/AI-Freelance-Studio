@@ -68,6 +68,16 @@ frontend/installers/
 # Local backups
 local_backups/
 .opencode_backups/
+/backups/
+/project_file_backups/
+
+# OpenCode CLI local runtime/session state (not Studio source)
+/.opencode/
+
+# Local runtime state
+/studio_port.txt
+/sandbox-test-lab-jobs.json
+/sandbox-test-lab-diagnostics/
 
 # OS
 Thumbs.db
@@ -75,6 +85,14 @@ Thumbs.db
 
 # Generated projects
 generated_projects/*/
+generated_projects/*.zip
+
+# Packaged backend distribution (build output)
+/backend_dist/
+
+# Bundled ffmpeg binary (must be downloaded manually, see third_party/ffmpeg/PROVENANCE.md)
+/third_party/ffmpeg/ffmpeg.exe
+/third_party/ffmpeg/*.dll
 
 # Generated QA and packaged-runtime evidence
 /artifacts/

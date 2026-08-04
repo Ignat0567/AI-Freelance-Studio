@@ -1,4 +1,6 @@
 import main
+from pipeline_stage_metadata import PIPELINE_UI_STAGE_ORDER
+from test_security_support import authorized_test_client
 
 
 def _project(status: str) -> dict:
@@ -207,10 +209,11 @@ def test_product_judge_stage_does_not_create_or_repair_issues_directly():
 
 
 def test_backend_pipeline_metadata_is_source_of_truth_for_stages_and_agents():
-    metadata = main.get_pipeline_metadata()
+    client = authorized_test_client(main.app)
+    metadata = client.get("/api/pipeline/metadata").json()
     agents = main.get_agents()
 
-    assert metadata["stage_order"] == main.PIPELINE_UI_STAGE_ORDER
+    assert metadata["stage_order"] == PIPELINE_UI_STAGE_ORDER
     assert metadata["stages"]["product_judge"]["label"] == "Product Judge"
     assert metadata["agent_stages"]["codex"]["stage"] == "coding"
     assert agents["codex"]["stage"] == "coding"

@@ -7,7 +7,7 @@ from typing import Any
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or BASE_DIR
+DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.environ.get("FREELANCERSTUDIO_HOME") or BASE_DIR
 CONFIG_FILE = os.path.join(DATA_DIR, "studio_config.json")
 
 

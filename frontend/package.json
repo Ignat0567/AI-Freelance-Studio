@@ -54,6 +54,8 @@
             "main.js",
             "preload.js",
             "official-downloads.js",
+            "backend-request-policy.js",
+            "sandbox-test-lab-transport.js",
             "build/icon.ico",
             "../package.json",
             "!**/*.{pfx,p12,pem,key,cer,crt}"
@@ -73,6 +75,14 @@
                 "filter": [
                     "**/*",
                     "!**/*.map"
+                ]
+            },
+            {
+                "from": "../third_party/ffmpeg",
+                "to": "ffmpeg",
+                "filter": [
+                    "ffmpeg.exe",
+                    "*.dll"
                 ]
             }
         ],

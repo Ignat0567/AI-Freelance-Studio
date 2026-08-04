@@ -3,4 +3,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('env', Object.freeze({
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
     openOfficialDownload: (downloadId) => ipcRenderer.invoke('open-official-download', downloadId),
+    sandboxTestLab: Object.freeze({
+        getCapabilities: () => ipcRenderer.invoke('sandbox-test-lab-capabilities'),
+        launchRun: (operation, idempotencyKey, projectName) => ipcRenderer.invoke('sandbox-test-lab-launch', operation, idempotencyKey, projectName),
+        getRun: (runId) => ipcRenderer.invoke('sandbox-test-lab-status', runId),
+        getFrame: (runId) => ipcRenderer.invoke('sandbox-test-lab-frame', runId),
+        sendInput: (runId, action) => ipcRenderer.invoke('sandbox-test-lab-input', runId, action),
+        cancelRun: (runId) => ipcRenderer.invoke('sandbox-test-lab-cancel', runId),
+    }),
 }));

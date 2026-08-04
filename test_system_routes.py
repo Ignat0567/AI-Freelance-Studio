@@ -1,13 +1,15 @@
 from fastapi.testclient import TestClient
 import json
+from pathlib import Path
 
 import api.system as system_routes
 import config_storage
 import main
 import system_settings
+from test_security_support import authorized_test_client
 
 
-client = TestClient(main.app)
+client = authorized_test_client(main.app)
 
 
 def test_system_router_uses_main_system_settings():
@@ -91,7 +93,7 @@ def test_system_config_get_preserves_existing_merge(monkeypatch, tmp_path):
         system_settings.SYSTEM_SETTINGS.update(original)
 
 
-def test_system_config_post_ignores_unknown_keys_and_mutates_in_place(monkeypatch, tmp_path):
+def test_system_config_post_rejects_unknown_keys(monkeypatch, tmp_path):
     original = dict(system_settings.SYSTEM_SETTINGS)
     original_id = id(system_settings.SYSTEM_SETTINGS)
     config_path = tmp_path / "studio_config.json"
@@ -99,18 +101,180 @@ def test_system_config_post_ignores_unknown_keys_and_mutates_in_place(monkeypatc
 
     try:
         monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+        previous_theme = system_settings.SYSTEM_SETTINGS["theme"]
         response = client.post("/api/config/system", json={"theme": "light", "unknown_key": "ignored"})
 
-        assert response.status_code == 200
-        assert response.json() == {"status": "saved"}
+        assert response.status_code == 422
         assert id(system_settings.SYSTEM_SETTINGS) == original_id
-        assert main.SYSTEM_SETTINGS["theme"] == "light"
-        assert system_routes.SYSTEM_SETTINGS["theme"] == "light"
+        assert main.SYSTEM_SETTINGS["theme"] == previous_theme
+        assert system_routes.SYSTEM_SETTINGS["theme"] == previous_theme
         saved = json.loads(config_path.read_text(encoding="utf-8"))
-        assert saved["_system"] == {"theme": "light"}
+        assert saved["_system"] == {"theme": "dark"}
     finally:
         system_settings.SYSTEM_SETTINGS.clear()
         system_settings.SYSTEM_SETTINGS.update(original)
+
+
+def test_system_paths_reports_portable_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("FREELANCERSTUDIO_HOME", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_USER_DATA", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_RUNTIME_DIR", str(tmp_path))
+
+    response = client.get("/api/system/paths")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["root"] == str(tmp_path.resolve())
+    assert data["paths"]["generated_projects"]["inside_portable_root"] is True
+    assert data["paths"]["opencode_config"]["inside_portable_root"] is True
+    assert data["paths"]["generated_projects"]["editable"] is True
+    assert data["paths"]["studio_config"]["editable"] is False
+    assert data["paths"]["studio_config"]["source"] == "derived"
+    assert data["paths"]["data_dir"]["source"] == "environment"
+    assert data["paths"]["data_dir"]["configured_value"] == ""
+
+
+def test_portable_migration_creates_required_directories(monkeypatch, tmp_path):
+    monkeypatch.setenv("FREELANCERSTUDIO_HOME", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_USER_DATA", str(tmp_path))
+    monkeypatch.setenv("FREELANCERSTUDIO_RUNTIME_DIR", str(tmp_path))
+
+    response = client.post("/api/system/portable-migration")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "repaired"
+    for name in ("generated_projects", "projects_data", "opencode_config", "backups"):
+        assert Path(data["paths"][name]["path"]).is_dir()
+
+
+def test_system_paths_can_save_manual_overrides(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({"_system": {"theme": "dark"}, "api_key": "secret-value"}), encoding="utf-8")
+    custom_data = tmp_path / "Custom Data With Spaces"
+    custom_generated = tmp_path / "custom-generated"
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"data_dir": f'"{custom_data}"', "generated_projects": str(custom_generated)})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "saved"
+    assert data["saved"] is True
+    assert data["applied"] is False
+    assert data["restart_required"] is True
+    assert data["paths"]["data_dir"]["path"] == str(custom_data.resolve(strict=False))
+    assert data["paths"]["data_dir"]["configured_value"] == str(custom_data.resolve(strict=False))
+    assert data["paths"]["data_dir"]["source"] == "stored_configuration"
+    assert data["paths"]["data_dir"]["restart_required"] is True
+    assert data["paths"]["generated_projects"]["path"] == str(custom_generated.resolve(strict=False))
+    assert data["paths"]["generated_projects"]["restart_required"] is False
+    assert custom_data.is_dir()
+    assert custom_generated.is_dir()
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["_storage_paths"]["data_dir"] == str(custom_data.resolve(strict=False))
+    assert saved["_storage_paths"]["generated_projects"] == str(custom_generated.resolve(strict=False))
+    assert saved["_system"] == {"theme": "dark"}
+    assert "secret-value" not in response.text
+
+
+def test_system_paths_get_after_post_shows_persisted_override(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+    custom_backups = tmp_path / "Backups"
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    post_response = client.post("/api/system/paths", json={"backups": str(custom_backups)})
+    get_response = client.get("/api/system/paths")
+
+    assert post_response.status_code == 200
+    assert get_response.status_code == 200
+    data = get_response.json()
+    assert data["paths"]["backups"]["configured_value"] == str(custom_backups.resolve(strict=False))
+    assert data["paths"]["backups"]["resolved_path"] == str(custom_backups.resolve(strict=False))
+    assert data["paths"]["backups"]["source"] == "stored_configuration"
+    assert data["paths"]["backups"]["restart_required"] is False
+
+
+def test_system_paths_rejects_existing_file(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+    existing_file = tmp_path / "not-a-directory"
+    existing_file.write_text("content", encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"generated_projects": str(existing_file)})
+
+    assert response.status_code == 400
+    assert "not a directory" in response.text
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "_storage_paths" not in saved
+
+
+def test_system_paths_rejects_null_byte_and_reserved_device_name(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    null_response = client.post("/api/system/paths", json={"generated_projects": "bad\u0000path"})
+    reserved_response = client.post("/api/system/paths", json={"generated_projects": str(tmp_path / "CON")})
+
+    assert null_response.status_code == 400
+    assert reserved_response.status_code == 400
+
+
+def test_system_paths_whitespace_clears_override_without_using_cwd(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    old_path = tmp_path / "old-generated"
+    config_path.write_text(json.dumps({"_storage_paths": {"generated_projects": str(old_path)}}), encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"generated_projects": "   "})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["paths"]["generated_projects"]["configured_value"] == ""
+    assert data["paths"]["generated_projects"]["source"] == "default"
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "_storage_paths" not in saved
+
+
+def test_system_paths_permission_failure_is_controlled(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+
+    def fail_mkdir(self, *args, **kwargs):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+    response = client.post("/api/system/paths", json={"projects_data": str(tmp_path / "blocked")})
+
+    assert response.status_code == 400
+    assert "permission denied" in response.text
+
+
+def test_system_paths_rejects_unknown_override_keys(monkeypatch, tmp_path):
+    config_path = tmp_path / "studio_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
+
+    monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
+    response = client.post("/api/system/paths", json={"data_dir": str(tmp_path), "unknown_path": str(tmp_path)})
+
+    assert response.status_code == 422
+
+
+def test_settings_contains_storage_paths_panel():
+    source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
+
+    assert "Storage & Paths" in source
+    assert "/api/system/paths" in source
+    assert "/api/system/portable-migration" in source
+    assert "Save paths" in source
+    assert "Restart required for runtime to use this path." in source
+    assert "Resolved:" in source
+    assert "Source:" in source
+    assert "Repair portable folders" in source
 
 
 def test_editor_candidates_use_shared_system_settings():
@@ -125,17 +289,38 @@ def test_editor_candidates_use_shared_system_settings():
 
 
 def test_system_config_routes_are_not_duplicated():
-    get_routes = [
-        route for route in main.app.routes
-        if getattr(route, "path", "") == "/api/config/system" and "GET" in getattr(route, "methods", set())
-    ]
-    post_routes = [
-        route for route in main.app.routes
-        if getattr(route, "path", "") == "/api/config/system" and "POST" in getattr(route, "methods", set())
-    ]
+    get_routes = main.find_app_routes(main.app, path="/api/config/system", method="GET")
+    post_routes = main.find_app_routes(main.app, path="/api/config/system", method="POST")
 
     assert len(get_routes) == 1
     assert len(post_routes) == 1
+
+
+class _FakeFlatRoute:
+    def __init__(self, path, methods):
+        self.path = path
+        self.methods = methods
+
+
+class _FakeIncludedRouterWrapper:
+    """Mimics FastAPI's lazily-wrapped include_router() route (no .path)."""
+
+    def __init__(self, routes):
+        self.original_router = type("R", (), {"routes": routes})()
+
+
+def test_route_helpers_resolve_wrapped_included_routers_without_path_attribute():
+    wrapped = _FakeIncludedRouterWrapper([
+        _FakeFlatRoute("/api/config/system", {"GET"}),
+        _FakeFlatRoute("/api/config/system", {"POST"}),
+        _FakeFlatRoute("/health", {"GET"}),
+    ])
+    routes = [_FakeFlatRoute("/", {"GET"}), wrapped]
+
+    assert main.iter_app_route_paths(routes) == ["/", "/api/config/system", "/api/config/system", "/health"]
+    assert len(main.find_app_routes(routes, path="/api/config/system", method="GET")) == 1
+    assert len(main.find_app_routes(routes, path="/api/config/system", method="POST")) == 1
+    assert main.find_app_routes(routes, path="/does-not-exist") == []
 
 
 def test_health_returns_existing_payload():
@@ -143,6 +328,19 @@ def test_health_returns_existing_payload():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "FreelancerStudio", "port": 8080}
+
+
+def test_owner_health_requires_challenge_and_returns_no_token():
+    missing = client.get("/health/owner")
+    challenge = "system-route-owner-challenge-at-least-32"
+    response = client.get("/health/owner", headers={"X-FreelancerStudio-Challenge": challenge})
+
+    assert missing.status_code == 400
+    assert response.status_code == 200
+    assert response.json()["service"] == "FreelancerStudio"
+    assert response.json()["launch_id"]
+    assert response.json()["proof"]
+    assert "test-only-local-token" not in response.text
 
 
 def test_system_requirements_uses_router_dependency(monkeypatch):
@@ -188,8 +386,7 @@ def test_system_install_endpoint_rejects_automatic_installation():
 def test_system_open_path_requires_path():
     response = client.post("/api/system/open-path", json={})
 
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Path is required"}
+    assert response.status_code == 422
 
 
 def test_system_open_path_opens_existing_path(monkeypatch, tmp_path):
@@ -201,20 +398,39 @@ def test_system_open_path_opens_existing_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(system_routes.subprocess, "Popen", fake_popen)
 
-    response = client.get("/api/system/open-path", params={"path": str(tmp_path)})
+    response = client.post("/api/system/open-path", json={"path": str(tmp_path)})
 
     assert response.status_code == 200
     assert response.json() == {"status": "opened", "path": str(tmp_path.resolve())}
     assert str(tmp_path.resolve()) in captured["args"]
 
 
+def test_system_open_path_get_no_longer_performs_action(monkeypatch, tmp_path):
+    called = False
+
+    def fake_popen(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(system_routes.subprocess, "Popen", fake_popen)
+    response = client.get("/api/system/open-path", params={"path": str(tmp_path)})
+
+    assert response.status_code == 404
+    assert called is False
+
+
 def test_system_open_path_returns_404_for_missing_path(tmp_path):
     missing_path = tmp_path / "missing"
 
-    response = client.get("/api/system/open-path", params={"path": str(missing_path)})
+    response = client.post("/api/system/open-path", json={"path": str(missing_path)})
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Path not found"}
+
+
+def test_system_open_path_rejects_extra_fields(tmp_path):
+    response = client.post("/api/system/open-path", json={"path": str(tmp_path), "command": "not-allowed"})
+    assert response.status_code == 422
 
 
 def test_system_open_editor_uses_resolved_executable(monkeypatch, tmp_path):
@@ -250,3 +466,30 @@ def test_system_open_editor_returns_404_when_editor_missing(monkeypatch, tmp_pat
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Editor 'missing' not found. Checked: missing-editor"}
+
+
+def test_system_open_editor_launches_claude_workspace_terminal(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(
+        system_routes.claude_bridge,
+        "start_claude_workspace_terminal",
+        lambda workdir: captured.update(workdir=workdir) or {"status": "started", "manual_command": "claude"},
+    )
+
+    response = client.post("/api/system/open-editor", json={"editor": "claude", "path": str(tmp_path)})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "opened", "editor": "claude", "executable": "claude", "path": str(tmp_path.resolve())}
+    assert captured["workdir"] == str(tmp_path.resolve())
+
+
+def test_system_open_editor_claude_missing_returns_404(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        system_routes.claude_bridge,
+        "start_claude_workspace_terminal",
+        lambda workdir: {"status": "error", "error_code": "executable_missing", "message": "Claude Code executable was not found. Install the Claude Code CLI first."},
+    )
+
+    response = client.post("/api/system/open-editor", json={"editor": "claude", "path": str(tmp_path)})
+
+    assert response.status_code == 404

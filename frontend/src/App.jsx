@@ -401,7 +401,7 @@ function App() {
 
     const handleExport = (port, project) => {
         if (!project || !project.project_id) { addLog('[Export]: No active project.'); return; }
-        const url = `http://localhost:${port}/api/projects/${project.project_id}/export?fmt=markdown`;
+        const url = `${window.location.origin}/api/projects/${project.project_id}/export?fmt=markdown`;
         window.open(url, '_blank');
         addLog(`[Export]: Download started for ${project.title}.`);
     };
@@ -412,6 +412,14 @@ function App() {
             .then(r => r.json())
             .then(data => addLog(`[QA]: ${data.message || data.status}`))
             .catch(err => addLog(`[QA]: Error - ${err.message}`));
+    };
+
+    const normalizeStatus = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+
+    const handleProjectRetry = (project) => {
+        if (!project) return;
+        if (activeProject?.project_id === project.project_id) setActiveProject(p => p ? { ...p, status: 'verifying' } : p);
+        handleQARetry(activePort, project);
     };
 
     const handleOpenEditor = async (port, project, editor) => {
@@ -454,13 +462,6 @@ function App() {
                 body: JSON.stringify({ path: dirData.path })
             });
             if (!openRes.ok) {
-                if (openRes.status === 405) {
-                    const fallbackRes = await fetch(`http://localhost:${port}/api/system/open-path?path=${encodeURIComponent(dirData.path)}`);
-                    if (fallbackRes.ok) {
-                        addLog('[Explorer]: Opened folder.');
-                        return;
-                    }
-                }
                 const errData = await openRes.json().catch(() => ({}));
                 throw new Error(errData.detail || 'Backend could not open folder');
             }
@@ -573,7 +574,8 @@ function App() {
 
     const activeStageInfo = getActiveStageInfo();
     const displayedAgents = Object.values(agentList).length ? Object.values(agentList) : Object.values(fallbackAgents);
-    const isGenerating = activeProject && !['created', 'completed', 'failed', 'failed_qa', 'blocked', 'needs_credentials', 'cancelled', 'awaiting_input', 'needs_user_input'].includes(activeProject.status);
+    const activeStatus = normalizeStatus(activeProject?.status);
+    const isGenerating = activeProject && !['created', 'completed', 'failed', 'failed_qa', 'failed_final_audit', 'blocked', 'needs_credentials', 'cancelled', 'awaiting_input', 'needs_user_input'].includes(activeStatus);
     const t = (key) => tr(language, key);
 
     // The dashboard is the primary workspace; existing dialogs below remain mounted by state.
@@ -592,6 +594,7 @@ function App() {
                 infoContent={<InfoModal activePort={activePort} embedded addLog={addLog} appVersion={appVersion} />}
                 projects={allProjects}
                 onProjects={loadAllProjects}
+                onRetryProject={handleProjectRetry}
                 onDeleteProject={handleDeleteProjectFromComputer}
                 onRemoveProjectFromList={handleRemoveProjectFromList}
                 onFiles={() => activeProject ? setIsFileBrowserOpen(true) : addLog('[Files]: No active project.')}
@@ -604,7 +607,7 @@ function App() {
                 onPipeline={() => activeProject ? null : addLog('[Pipeline]: No active project.')}
                 onOpenBriefing={() => activeProject ? setIsChatOpen(true) : addLog('[Chat]: No active project.')}
                 onStopGeneration={handleStopGeneration}
-                onRetry={() => activeProject ? (activeProject.status === 'blocked' ? handleQARetry(activePort, activeProject) : handleRestart()) : addLog('[System]: No active project.')}
+                onRetry={() => activeProject ? (['blocked', 'failed_qa', 'failed_final_audit', 'needs_credentials', 'needs_user_input'].includes(normalizeStatus(activeProject.status)) ? handleQARetry(activePort, activeProject) : handleRestart()) : addLog('[System]: No active project.')}
                 onResume={() => activeProject ? handleResume(activeProject) : addLog('[System]: No active project.')}
                 onContinueDone={() => handleQARetry(activePort, activeProject)}
                 onKeyManager={() => setIsKeyManagerOpen(true)}

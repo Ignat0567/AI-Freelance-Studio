@@ -1,4 +1,5 @@
 import pytest
+from fastapi.testclient import TestClient
 
 import main
 
@@ -47,13 +48,41 @@ def test_app_cors_does_not_combine_wildcard_origins_with_credentials():
 
     assert cors_layers
     options = cors_layers[0].kwargs
-    assert options["allow_credentials"] is True
+    assert options["allow_credentials"] is False
     assert options["allow_origins"]
     assert "*" not in options["allow_origins"]
+    assert options["allow_methods"] == ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    assert options["allow_headers"] == [
+        "Content-Type",
+        "Idempotency-Key",
+        "X-FreelancerStudio-Token",
+    ]
+    assert "808[0-9]" in options["allow_origin_regex"]
+
+
+def test_cors_preflight_allows_declared_header_but_not_unrelated_origin():
+    client = TestClient(main.app, base_url="http://127.0.0.1:8080")
+    headers = {
+        "Origin": "http://127.0.0.1:8080",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "Content-Type,X-FreelancerStudio-Token",
+    }
+    allowed = client.options("/api/config/system", headers=headers)
+    denied = client.options("/api/config/system", headers={**headers, "Origin": "https://evil.example"})
+
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == "http://127.0.0.1:8080"
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers
 
 
 def test_backend_bind_host_defaults_to_loopback():
     assert main.get_backend_bind_host({}) == "127.0.0.1"
+
+
+def test_backend_bind_host_normalizes_localhost_and_preserves_ipv6_loopback():
+    assert main.get_backend_bind_host({"BACKEND_HOST": "localhost"}) == "127.0.0.1"
+    assert main.get_backend_bind_host({"BACKEND_HOST": "::1"}) == "::1"
 
 
 def test_backend_bind_host_rejects_wildcard_without_explicit_allow():

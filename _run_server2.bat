@@ -1,4 +1,4 @@
 @echo off
-cd /d "E:\Python\OpenCode\FreelancerStudio"
+cd /d "%~dp0"
 call .venv\Scripts\activate.bat
-python main.py > "E:\Python\OpenCode\FreelancerStudio\server_out3.log" 2> "E:\Python\OpenCode\FreelancerStudio\server_err3.log"
+python main.py > "%~dp0server_out3.log" 2> "%~dp0server_err3.log"

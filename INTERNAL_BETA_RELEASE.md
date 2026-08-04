@@ -35,6 +35,18 @@ Signing is opt-in and uses the standard electron-builder signing flow. Keep all 
 - Set one complete pair only. A partial pair fails before packaging.
 - With no signing variables, `npm run package:win` produces the supported unsigned local build.
 
+## Planned Beta Stage: Liquid Glass Visual Polish Sprint
+
+This stage starts only after the functional Interactive Sandbox Test Lab integration is complete. It must establish an original visual language inspired by, but not copied from, Apple Liquid Glass.
+
+- Define glass surfaces with deliberate blur, translucency, highlights, and depth.
+- Adopt one consistent modern icon system without borrowed Apple assets.
+- Use semantic light and dark tokens rather than component-specific colors.
+- Respect reduced-transparency and reduced-motion preferences.
+- Provide a performance fallback when blur or compositing is unsupported or too costly.
+- Add visual regression coverage for representative light, dark, reduced-effects, and fallback states.
+- Keep all artwork, icons, and implementation assets original or appropriately licensed.
+
 ## Clean-Machine Checklist
 
 - [ ] Use a Windows system without Python, Node.js, or a source checkout.

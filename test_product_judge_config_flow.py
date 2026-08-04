@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import config_storage
 import main
+from test_security_support import authorized_test_client
 
 
 def _write_config(path: Path, data: dict):
@@ -43,7 +44,7 @@ def _client(monkeypatch, tmp_path, config):
     monkeypatch.setitem(main.SYSTEM_SETTINGS, "global_provider", config.get("_system", {}).get("global_provider", "openai"))
     monkeypatch.setitem(main.SYSTEM_SETTINGS, "global_model", config.get("_system", {}).get("global_model", "gpt-4o"))
     main.agent_configs = main.load_agent_configs()
-    return TestClient(main.app), config_path
+    return authorized_test_client(main.app), config_path
 
 
 def test_no_saved_connection_has_useful_empty_state(monkeypatch, tmp_path):

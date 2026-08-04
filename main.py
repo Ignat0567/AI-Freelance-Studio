@@ -15,22 +15,82 @@ import glob
 import subprocess
 import urllib.request
 import urllib.error
+import hmac
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, UploadFile, File as FastAPIFile, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, FileResponse, HTMLResponse
-from pydantic import BaseModel
+from pydantic import ConfigDict
 from typing import List, Dict, Any, Optional
 import threading as _threading
+from backend_security import (
+    LocalSecurityContext,
+    LocalSecurityMiddleware,
+    StrictRequestModel as BaseModel,
+    authorize_websocket,
+    set_app_security_context,
+)
 import config_storage
 import project_state
 import secret_store
 from repair_scope import SUPPORTED_LOCK_FILES, walk_repairable_files
 from opencode_provider import OpenCodeBridgeConnection, PROVIDER_REGISTRY, bridge_effective_capabilities
+from execution_config import (
+    build_effective_execution_config,
+    is_opencode_connection_type,
+    migrate_legacy_execution_config,
+    normalize_model_id as normalize_execution_model_id,
+    provider_connection_id as execution_provider_connection_id,
+    validate_native_model_id,
+)
+from workflow_contracts import ExecutionBrief, WorkflowState, validate_transition
+import provider_adapters  # registers provider adapters
+from provider_contracts import AgentEventType, AgentProviderPolicy, AuthMethod, ConnectionType, ProviderConnection
+from provider_credentials import ProviderCredentialStore, credential_reference, default_backend
+from provider_migration import migrate_provider_connections
+from provider_registry import provider_registry
 from api.accounts import router as accounts_router
 from api.android import router as android_router
+from api.sandbox_test_lab import install_sandbox_test_lab_api, router as sandbox_test_lab_router
 from api.system import router as system_router
+from api.tasks import build_tasks_router
+from api.github_integration import build_github_router
+from api.goldie import build_goldie_router
+from api.proposals import build_proposals_router
+from api.discovery import build_discovery_router
+from api.opencode_routes import build_opencode_status_router
+from api.claude_routes import build_claude_status_router
+from pipeline_stage_metadata import _STATE_DISPLAY, AGENT_STAGE_METADATA
+from project_task_store import PROJECT_TASKS
+from api.request_models import (
+    AISettingsPayload,
+    AgentAIConfigPayload,
+    AgentChatPayload,
+    ChatPayload,
+    GlobalAIConfigPayload,
+    KeysUpdatePayload,
+    ManualProjectPayload,
+    OpenCodeConnectionPayload,
+    ProductJudgeConfigPayload,
+    ProjectApprovePayload,
+    ProjectClaimPayload,
+    ProposalGeneratePayload,
+    ProposalRefinePayload,
+    ProviderCredentialPayload,
+    ProviderDeletePayload,
+    ProviderTestPayload,
+    TaskCommentPayload,
+    TaskModel,
+    TaskUpdateModel,
+    UniversalProviderConnectionPatch,
+    UniversalProviderConnectionPayload,
+)
+from sandbox_test_lab.production_bridge import (
+    PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS,
+    create_production_sandbox_runtime,
+)
 from system_settings import (
     ALLOWED_SYSTEM_KEYS,
     DEFAULT_SYSTEM_SETTINGS,
@@ -42,14 +102,16 @@ from system_settings import (
 
 # OpenCode bridge (optional — for real AI-assisted code generation)
 try:
-    from opencode_bridge import ensure_opencode, stop_opencode, sync_opencode_config, get_opencode_status, get_opencode_onboarding_dependencies, start_opencode_web, start_opencode_auth_terminal, test_opencode_readiness, get_bridge as _get_oc_bridge
+    from opencode_bridge import ensure_opencode, stop_opencode, sync_opencode_config, get_opencode_status, get_opencode_onboarding_dependencies, start_opencode_web, start_opencode_auth_terminal, test_opencode_readiness, normalize_opencode_model_id, get_bridge as _get_oc_bridge
     _HAS_OPENCODE = True
 except ImportError:
     _HAS_OPENCODE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or BASE_DIR
+DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.environ.get("FREELANCERSTUDIO_HOME") or BASE_DIR
 RUNTIME_DIR = os.environ.get("FREELANCERSTUDIO_RUNTIME_DIR") or DATA_DIR
+FFMPEG_PATH = os.environ.get("FREELANCERSTUDIO_FFMPEG_PATH")
+GENERATED_PROJECTS_ROOT = os.path.join(DATA_DIR, "generated_projects")
 
 # ─── Shared critical rules injected into ALL agent prompts ─────────────────
 # Все тонкости, нюансы и грабли, выявленные в процессе разработки.
@@ -103,6 +165,7 @@ detect_project_profiles = project_spec_module.detect_project_profiles
 record_acceptance_evidence = project_spec_module.record_acceptance_evidence
 ensure_acceptance_evidence_history = project_spec_module.ensure_acceptance_evidence_history
 append_agent_review_issues = project_spec_module.append_agent_review_issues
+close_resolved_review_issues = project_spec_module.close_resolved_review_issues
 build_product_judge_input = project_spec_module.build_product_judge_input
 normalize_project_mode = project_spec_module.normalize_project_mode
 normalize_project_quality_profile = project_spec_module.normalize_project_quality_profile
@@ -148,6 +211,8 @@ def get_cors_origins(settings: dict | None = None) -> list[str]:
 def get_backend_bind_host(settings: dict | None = None) -> str:
     source = settings if settings is not None else os.environ
     requested = str(source.get("BACKEND_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    if requested.lower().rstrip(".") == "localhost":
+        requested = "127.0.0.1"
     allow_network = str(source.get("BACKEND_ALLOW_NETWORK") or source.get("FREELANCERSTUDIO_ALLOW_NETWORK_BIND") or "").strip().lower() in {"1", "true", "yes", "on"}
     if requested in {"0.0.0.0", "::"} and not allow_network:
         return "127.0.0.1"
@@ -159,76 +224,102 @@ app = FastAPI(title="FreelancerStudio")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origin_regex=r"^http://(?:127\.0\.0\.1|localhost):(?:3000|5173|808[0-9]|809[0-9])$",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Idempotency-Key", "X-FreelancerStudio-Token"],
+)
+app.add_middleware(LocalSecurityMiddleware)
+_sandbox_runtime = create_production_sandbox_runtime(
+    Path(RUNTIME_DIR),
+    ffmpeg_path=Path(FFMPEG_PATH) if FFMPEG_PATH else None,
+    generated_projects_root=Path(GENERATED_PROJECTS_ROOT),
+)
+install_sandbox_test_lab_api(
+    app,
+    service=_sandbox_runtime.service,
+    availability_provider=_sandbox_runtime.availability_provider,
+    shutdown_timeout=PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS,
 )
 
 app.include_router(accounts_router)
 app.include_router(android_router)
+app.include_router(sandbox_test_lab_router)
 app.include_router(system_router)
 
 
 def _backend_health_available() -> tuple[bool, str]:
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8080/health", timeout=3) as resp:
-            if resp.status == 200:
+        from backend_security import get_app_security_context
+
+        context = get_app_security_context(app)
+        challenge = secrets.token_urlsafe(32)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{context.port}/health/owner",
+            headers={
+                "X-FreelancerStudio-Challenge": challenge,
+            },
+        )
+        with urllib.request.urlopen(request, timeout=3) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            expected = context.owner_challenge_response(challenge)
+            if (
+                resp.status == 200
+                and payload.get("instance_id") == context.instance_id
+                and isinstance(payload.get("proof"), str)
+                and hmac.compare_digest(payload["proof"], expected["proof"])
+            ):
                 return True, "ok"
             return False, f"HTTP {resp.status}"
     except Exception as e:
         return False, str(e)
 
 
-AI_PROVIDER_MODELS = {
-    "openai": ["gpt-4o", "gpt-4.1", "gpt-5", "gpt-5.5"],
-    "nvidia": ["meta/llama-3.3-70b-instruct"],
-    "anthropic": ["claude-sonnet-4-20250514"],
-    "google": ["gemini-2.0-flash-001"],
-    "groq": ["llama-3.1-70b-versatile"],
-    "mistral": ["mistral-large-latest"],
-    "deepseek": ["deepseek-chat"],
-    "together": ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"],
-    "ollama": ["codellama", "llama3.1", "mistral"],
-}
-
-MODEL_CAPABILITY_OVERRIDES = {
-    "openai": {
-        "gpt-4o": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
-        "gpt-4.1": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
-        "gpt-5": {"text_input": True, "image_input": None, "structured_output": True, "streaming": True, "tool_use": True},
-        "gpt-5.5": {"text_input": True, "image_input": None, "structured_output": True, "streaming": True, "tool_use": True},
-    },
-    "anthropic": {
-        "claude-sonnet-4-20250514": {"text_input": True, "image_input": True, "structured_output": False, "streaming": True, "tool_use": True},
-    },
-}
-
-PRODUCT_JUDGE_STATUS_REASONS = {
-    "not_configured": "no provider connection selected",
-    "provider_not_tested": "selected provider connection has not passed a test",
-    "no_vision_model": "selected model does not support images",
-    "credential_missing": "credential is missing",
-    "connection_failed": "selected provider connection test failed",
-    "configured": "configured but not enabled",
-    "available": "ready",
-    "temporarily_unavailable": "provider is temporarily unavailable",
-}
-
-
-def _mask_secret(value: str) -> str:
-    return secret_store.mask_secret(value)
-
-
-def _provider_key_name(provider: str) -> str:
-    return f"{provider}_key"
-
-
-def _provider_api_key(provider: str, data: dict | None = None) -> str:
-    return secret_store.get_secret(_provider_key_name(provider), data if data is not None else load_studio_keys())
-
-
-def _legacy_secret_warnings(data: dict | None = None) -> list[dict]:
-    return secret_store.collect_legacy_secret_warnings(data if data is not None else load_studio_keys())
+from provider_config import (
+    AI_PROVIDER_MODELS,
+    MODEL_CAPABILITY_OVERRIDES,
+    PRODUCT_JUDGE_STATUS_REASONS,
+    _PROVIDER_CONNECTION_CREDENTIAL_FIELDS,
+    _canonical_connection_type,
+    _cleanup_connection_assignments,
+    _connection_cost_mode,
+    _connection_for_id,
+    _connection_used_by_agents,
+    _connection_uses_opencode_transport,
+    _default_global_ai_config,
+    _ensure_provider_connection_records,
+    _filter_supported_generation,
+    _frontend_provider_connections,
+    _general_provider_connection,
+    _is_provider_connection_credential_field,
+    _legacy_secret_warnings,
+    _load_global_ai_config,
+    _load_provider_connections,
+    _mask_secret,
+    _migrate_legacy_opencode_model_references,
+    _model_capabilities,
+    _models_with_capabilities,
+    _normalize_model_for_connection,
+    _opencode_connection_ids,
+    _opencode_model_registry,
+    _parameter_support,
+    _provider_api_key,
+    _provider_connection_id,
+    _provider_connection_state,
+    _provider_credential_exists,
+    _provider_key_name,
+    _remove_credential_fields,
+    _sanitize_provider_connection,
+    _sanitize_provider_connection_for_storage,
+    _save_global_ai_config,
+    _save_universal_provider_connections,
+    _store_provider_connections,
+    _test_provider_key,
+    _universal_connection_index,
+    _universal_provider_connections,
+    _upsert_provider_connection,
+    _vision_models_for_connection,
+)
 
 
 CONFIG_FILE = config_storage.CONFIG_FILE  # Compatibility alias; production storage reads config_storage.CONFIG_FILE.
@@ -253,7 +344,26 @@ def _load_projects_state():
     state, error = project_state.read_json(PROJECTS_STATE_FILE)
     if not state:
         return {}, {}
-    return state.get("projects", {}), state.get("tasks", {})
+    projects = state.get("projects", {}) if isinstance(state.get("projects"), dict) else {}
+    for project in projects.values():
+        if isinstance(project, dict):
+            project["target_path"] = _relocate_generated_project_path(project.get("target_path", ""))
+    return projects, state.get("tasks", {})
+
+
+def _relocate_generated_project_path(value: str) -> str:
+    """Map copied legacy generated-project paths to the current portable data root."""
+    raw = str(value or "")
+    if not raw:
+        return raw
+    normalized = raw.replace("\\", "/")
+    marker = "/generated_projects/"
+    if marker not in normalized:
+        return raw
+    suffix = normalized.split(marker, 1)[1].strip("/")
+    if not suffix:
+        return raw
+    return os.path.join(DATA_DIR, "generated_projects", *suffix.split("/"))
 
 
 def _save_projects_state(preserve_missing: bool = True):
@@ -281,132 +391,23 @@ def _save_projects_state(preserve_missing: bool = True):
             project.setdefault("persistence_errors", []).append(f"projects_state:{exc}")
 
 
-class KeysUpdatePayload(BaseModel):
-    keys: Dict[str, str] = {}
-    model_config = {"extra": "allow"}
-
-
-class AISettingsPayload(BaseModel):
-    provider: str
-    model: str = ""
-    api_key: str = ""
-
-
-class GlobalAIConfigPayload(BaseModel):
-    connection_id: str = ""
-    connection_type: str = ""
-    provider: str = ""
-    model: str = ""
-    temperature: float = 0.2
-    top_p: float | None = None
-    top_k: int | None = None
-    max_tokens: int | None = None
-    enabled: bool = True
-
-
-class AgentAIConfigPayload(BaseModel):
-    use_global_connection: bool | None = None
-    use_global_model: bool | None = None
-    use_global_generation_parameters: bool | None = None
-    connection_id: str | None = None
-    connection_type: str | None = None
-    provider: str | None = None
-    model: str | None = None
-    temperature: float | None = None
-    top_p: float | None = None
-    top_k: int | None = None
-    max_tokens: int | None = None
-
-
-class ProviderTestPayload(BaseModel):
-    provider: str = ""
-    api_key: str = ""
-
-
-class ProductJudgeConfigPayload(BaseModel):
-    enabled: bool = True
-    connection_id: str = ""
-    model: str = ""
-    use_global: bool = False
-    temperature: float = 0.3
-    top_p: float | None = 0.9
-    top_k: int | None = None
-
-
-class OpenCodeConnectionPayload(BaseModel):
-    name: str = "My OpenCode"
-    configured_model: str = ""
-    transport_type: str = "cli"
-    local_endpoint: str = ""
-    executable_path: str = ""
-    enabled: bool = True
-    capabilities: Dict[str, Any] = {}
-    last_checked_at: str = ""
-
-
-class ChatPayload(BaseModel):
-    model_config = {"protected_namespaces": ()}
-    message: str
-    chat_history: List[Dict[str, str]] = []
-    provider: str = "nvidia"
-    model_name: str = "nvidia/nemotron-4-340b-instruct"
-
-
-class AgentChatPayload(BaseModel):
-    model_config = {"protected_namespaces": ()}
-    message: str
-    chat_history: List[Dict[str, str]] = []
-    provider: str = ""
-    model_name: str = ""
-    project_id: str = ""
-    fast_mode: bool = True
-    use_project_context: bool = False
-    history_limit: int = 6
-
-
-class ManualProjectPayload(BaseModel):
-    model_config = {"extra": "allow"}
-    platform: str = "manual"
-    jobTitle: str = ""
-    title: str = ""
-    description: str = ""
-    initial_description: str = ""
-    budget: str = "?"
-    project_mode: str = "strict_mvp"
-    quality_profile: str = ""
-    required_targets: List[str] = []
-    optional_targets: List[str] = []
-    strict_completion_toggles: Dict[str, Any] = {}
-
-
-class ProjectApprovePayload(BaseModel):
-    model_config = {"extra": "allow"}
-    approved: bool = True
-    autonomous_mode: bool = True
-
-
-class ProjectClaimPayload(BaseModel):
-    model_config = {"extra": "allow"}
-    platform: str = "unknown"
-    job_id: str = ""
-    title: str = ""
-    description: str = ""
-    budget: str = "?"
-    url: str = ""
-    project_mode: str = "strict_mvp"
-    quality_profile: str = ""
-    required_targets: List[str] = []
-    optional_targets: List[str] = []
-
-
 active_projects: Dict[str, Dict[str, Any]] = {}
-# Task tracking system - stores tasks per project
-PROJECT_TASKS: Dict[str, list] = {}  # project_id -> list of tasks
 
 # Load persisted state from disk (survives server restarts)
 _persisted_projects, _persisted_tasks = _load_projects_state()
 active_projects.update(_persisted_projects)
 PROJECT_TASKS.update(_persisted_tasks)
+app.include_router(build_tasks_router(active_projects, _save_projects_state))
+app.include_router(build_github_router(active_projects))
+app.include_router(build_discovery_router(search_freelance_jobs, AVAILABLE_PLATFORMS))
+app.include_router(build_opencode_status_router(
+    _HAS_OPENCODE,
+    get_opencode_status if _HAS_OPENCODE else None,
+    start_opencode_web if _HAS_OPENCODE else None,
+    start_opencode_auth_terminal if _HAS_OPENCODE else None,
+    BASE_DIR,
+))
+app.include_router(build_claude_status_router(BASE_DIR))
 
 
 def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -469,112 +470,6 @@ def _discover_durable_projects() -> None:
 
 
 _discover_durable_projects()
-
-
-class TaskModel(BaseModel):
-    title: str
-    description: str = ""
-    status: str = "todo"  # todo, in_progress, review, done
-    assignee: str = ""  # agent_id
-    priority: str = "medium"  # low, medium, high, critical
-    due_date: str = ""
-
-
-class TaskUpdateModel(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    assignee: Optional[str] = None
-    priority: Optional[str] = None
-    due_date: Optional[str] = None
-
-
-def get_next_task_id(project_id: str) -> str:
-    return f"task_{uuid.uuid4().hex[:8]}"
-
-
-@app.get("/api/projects/{project_id}/tasks")
-def get_project_tasks(project_id: str):
-    """Get all tasks for a project."""
-    tasks = PROJECT_TASKS.get(project_id, [])
-    return {"tasks": tasks}
-
-
-@app.post("/api/projects/{project_id}/tasks")
-def create_task(project_id: str, task: TaskModel):
-    """Create a new task in a project."""
-    if project_id not in active_projects:
-        raise HTTPException(status_code=404, detail="Project not found")
-    task_id = get_next_task_id(project_id)
-    new_task = {
-        "id": task_id,
-        "title": task.title,
-        "description": task.description,
-        "status": task.status,
-        "assignee": task.assignee,
-        "priority": task.priority,
-        "due_date": task.due_date,
-        "created_at": datetime.now().isoformat(),
-        "comments": [],
-    }
-    if project_id not in PROJECT_TASKS:
-        PROJECT_TASKS[project_id] = []
-    PROJECT_TASKS[project_id].append(new_task)
-    _save_projects_state()
-    return new_task
-
-
-@app.put("/api/projects/{project_id}/tasks/{task_id}")
-def update_task(project_id: str, task_id: str, updates: TaskUpdateModel):
-    """Update a task."""
-    tasks = PROJECT_TASKS.get(project_id, [])
-    for task in tasks:
-        if task["id"] == task_id:
-            if updates.title is not None:
-                task["title"] = updates.title
-            if updates.description is not None:
-                task["description"] = updates.description
-            if updates.status is not None:
-                task["status"] = updates.status
-            if updates.assignee is not None:
-                task["assignee"] = updates.assignee
-            if updates.priority is not None:
-                task["priority"] = updates.priority
-            if updates.due_date is not None:
-                task["due_date"] = updates.due_date
-            task["updated_at"] = datetime.now().isoformat()
-            _save_projects_state()
-            return task
-    raise HTTPException(status_code=404, detail="Task not found")
-
-
-@app.delete("/api/projects/{project_id}/tasks/{task_id}")
-def delete_task(project_id: str, task_id: str):
-    """Delete a task."""
-    tasks = PROJECT_TASKS.get(project_id, [])
-    for i, task in enumerate(tasks):
-        if task["id"] == task_id:
-            tasks.pop(i)
-            _save_projects_state()
-            return {"status": "deleted", "task_id": task_id}
-    raise HTTPException(status_code=404, detail="Task not found")
-
-
-@app.post("/api/projects/{project_id}/tasks/{task_id}/comments")
-def add_task_comment(project_id: str, task_id: str, payload: dict):
-    """Add a comment to a task."""
-    tasks = PROJECT_TASKS.get(project_id, [])
-    for task in tasks:
-        if task["id"] == task_id:
-            comment = {
-                "id": f"comment_{len(task['comments']) + 1}",
-                "text": payload.get("text", ""),
-                "author": payload.get("author", ""),
-                "created_at": datetime.now().isoformat(),
-            }
-            task["comments"].append(comment)
-            return comment
-    raise HTTPException(status_code=404, detail="Task not found")
 
 
 @app.get("/api/config/keys")
@@ -701,13 +596,14 @@ def get_ai_settings():
     response = _ai_settings_response(data)
     response["global_ai"] = _load_global_ai_config(data)
     response["provider_connections"] = _frontend_provider_connections(data)
+    response["effective_execution_config"] = build_effective_execution_config(data).to_dict()
     return response
 
 
 @app.get("/api/config/ai/global")
 def get_global_ai_config():
     data = load_studio_keys()
-    return {"global_ai": _load_global_ai_config(data), "connections": _frontend_provider_connections(data)}
+    return {"global_ai": _load_global_ai_config(data), "connections": _frontend_provider_connections(data), "effective_execution_config": build_effective_execution_config(data).to_dict()}
 
 
 @app.post("/api/config/ai/global")
@@ -721,6 +617,10 @@ def save_global_ai_config(payload: GlobalAIConfigPayload):
     model = (payload.model or "").strip()
     if not model:
         raise HTTPException(400, "Model is required")
+    normalized = _normalize_model_for_connection(model, payload.connection_id, load_studio_keys())
+    model = str(normalized.get("model_id") or model)
+    if normalized.get("migrated") and not payload.connection_id:
+        payload.connection_id = str(normalized.get("connection_id") or "")
     config = _save_global_ai_config({
         "connection_id": payload.connection_id or _provider_connection_id(provider),
         "connection_type": payload.connection_type or connection.get("connection_type") or _canonical_connection_type("api_provider", provider),
@@ -761,7 +661,7 @@ def apply_global_inheritance_to_agents():
         current = agent_configs.get(agent_id, {})
         current["use_global_connection"] = True
         current["use_global_model"] = True
-        current["use_global_generation_parameters"] = False
+        current["use_global_generation_parameters"] = True
         current["use_global"] = True
         agent_configs[agent_id] = current
         updated.append(agent_id)
@@ -769,366 +669,244 @@ def apply_global_inheritance_to_agents():
     return {"status": "success", "updated": updated, "skipped": skipped, "effective": {agent_id: resolve_effective_agent_ai_config(agent_id) for agent_id in _all_agent_ids()}}
 
 
-def _load_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
-    source = data if data is not None else load_studio_keys()
-    connections = source.get("_provider_connections", [])
-    return [item for item in connections if isinstance(item, dict)] if isinstance(connections, list) else []
+from provider_agent_config import (
+    AGENT_MODELS,
+    DEFAULT_AGENTS,
+    OPENCODE_MODEL_ALIASES,
+    _CODING_CAPABLE_CONNECTION_TYPES,
+    _agent_config_error,
+    _agent_required_capabilities,
+    _compatible_opencode_models_for_agent,
+    _identity_for_product_judge,
+    _parse_optional_float,
+    _parse_optional_positive_int,
+    _reset_agent_ai_config,
+    _run_provider_adapter_coding_task,
+    _select_opencode_fallback_model,
+    _validate_agent_capabilities,
+    _validated_agent_ai_patch,
+    build_agent_ai_resolution,
+    load_agent_configs,
+    save_agent_configs,
+)
 
 
-_PROVIDER_CONNECTION_CREDENTIAL_FIELDS = {
-    "apikey",
-    "token",
-    "accesstoken",
-    "refreshtoken",
-    "secret",
-    "clientsecret",
-    "password",
-    "passwd",
-    "cookie",
-    "cookies",
-    "authorization",
-    "credential",
-    "credentials",
-    "devicecode",
-    "privatekey",
-}
 
 
-def _is_provider_connection_credential_field(key: Any) -> bool:
-    normalized = "".join(char for char in str(key).lower() if char not in {"_", "-", " "})
-    return normalized in _PROVIDER_CONNECTION_CREDENTIAL_FIELDS
 
 
-def _sanitize_provider_connection_for_storage(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _sanitize_provider_connection_for_storage(item)
-            for key, item in value.items()
-            if not _is_provider_connection_credential_field(key)
-        }
-    if isinstance(value, list):
-        return [_sanitize_provider_connection_for_storage(item) for item in value]
-    return value
 
 
-def _remove_credential_fields(value: Any) -> tuple[Any, int]:
-    if isinstance(value, dict):
-        cleaned = {}
-        removed = 0
-        for key, item in value.items():
-            if _is_provider_connection_credential_field(key):
-                removed += 1
-                continue
-            cleaned[key], nested_removed = _remove_credential_fields(item)
-            removed += nested_removed
-        return cleaned, removed
-    if isinstance(value, list):
-        cleaned = []
-        removed = 0
-        for item in value:
-            nested, nested_removed = _remove_credential_fields(item)
-            cleaned.append(nested)
-            removed += nested_removed
-        return cleaned, removed
-    return value, 0
 
 
-def _store_provider_connections(data: dict, connections: list[dict[str, Any]]) -> None:
-    data["_provider_connections"] = _sanitize_provider_connection_for_storage(connections)
 
 
-def _model_capabilities(provider: str, model: str) -> dict[str, Any]:
-    caps = MODEL_CAPABILITY_OVERRIDES.get((provider or "").lower(), {}).get(model)
-    if caps is None:
-        provider_caps = ai_utils.provider_capabilities(provider or "")
-        image_input = True if provider_caps.get("image_input") and model in MODEL_CAPABILITY_OVERRIDES.get((provider or "").lower(), {}) else None
-        caps = {"text_input": True, "image_input": image_input, "structured_output": None, "streaming": None, "tool_use": None}
-    return dict(caps)
-
-
-def _models_with_capabilities(provider: str, models: list[str] | None = None) -> list[dict[str, Any]]:
-    return [{"id": model, "capabilities": _model_capabilities(provider, model)} for model in (models or AI_PROVIDER_MODELS.get(provider, []))]
-
-
-def _parameter_support(provider: str, model: str = "") -> dict[str, bool]:
-    provider_caps = ai_utils.provider_capabilities(provider or "")
-    return {
-        "temperature": True,
-        "top_p": bool(provider_caps.get("top_p")),
-        "top_k": bool(provider_caps.get("top_k")),
-        "max_tokens": True,
-    }
-
-
-def _filter_supported_generation(provider: str, model: str, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
-    support = _parameter_support(provider, model)
-    sendable = {}
-    unsupported = {}
-    for key, value in params.items():
-        if value is None:
-            continue
-        if support.get(key, False):
-            sendable[key] = value
-        else:
-            unsupported[key] = "Not supported by this model/provider"
-    return sendable, unsupported
-
-
-def _provider_credential_exists(data: dict, provider: str) -> bool:
-    return provider == "ollama" or bool(_provider_api_key(provider, data))
-
-
-def _provider_connection_id(provider: str) -> str:
-    return f"provider-{provider}"
-
-
-def _canonical_connection_type(value: str, provider: str = "") -> str:
-    raw = str(value or "").strip().lower()
-    provider = str(provider or "").strip().lower()
-    if raw in {"opencode_bridge", "opencode_oauth_bridge"}:
-        return "opencode_oauth_bridge"
-    if raw in {"openai_api", "api_provider"} and provider == "openai":
-        return "openai_api"
-    if raw in {"api_provider", "other_provider_api"}:
-        return "other_provider_api"
-    if raw == "local_model" or provider == "ollama":
-        return "local_model"
-    return raw or ("openai_api" if provider == "openai" else "other_provider_api")
-
-
-def _general_provider_connection(data: dict, provider: str, model: str = "", tested: bool | None = None, test_result: dict | None = None) -> dict[str, Any]:
-    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    available_models = _models_with_capabilities(provider)
-    has_credential = _provider_credential_exists(data, provider)
-    status = "configured" if has_credential else "credential_missing"
-    if tested is True:
-        status = "tested" if has_credential else "credential_missing"
-    elif tested is False:
-        status = "test_failed" if has_credential else "credential_missing"
-    connection_type = _canonical_connection_type("api_provider", provider)
-    return {
-        "connection_id": _provider_connection_id(provider),
-        "display_name": f"{provider.upper()} API key",
-        "name": f"{provider.upper()} API key",
-        "provider": provider,
-        "connection_type": connection_type,
-        "credential_reference": _provider_key_name(provider),
-        "configured_status": status,
-        "tested_status": "passed" if tested is True else "failed" if tested is False else "not_tested",
-        "last_test_result": test_result or {},
-        "available_models": available_models,
-        "capability_metadata": {item["id"]: item["capabilities"] for item in available_models},
-        "configured_model": model or (AI_PROVIDER_MODELS.get(provider, [""])[0] if AI_PROVIDER_MODELS.get(provider) else ""),
-        "updated_at": now,
-        "stores_authentication": False,
-        "configured": has_credential,
-        "authenticated": has_credential,
-        "tested": tested is True,
-        "last_test_status": "passed" if tested is True else "failed" if tested is False else "not_tested",
-    }
-
-
-def _upsert_provider_connection(data: dict, connection: dict[str, Any]) -> None:
-    connections = _load_provider_connections(data)
-    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection.get("connection_id")), None)
-    if existing is None:
-        connections.append(connection)
-    else:
-        merged = {**connections[existing], **connection}
-        connections[existing] = merged
-    _store_provider_connections(data, connections)
-
-
-def _ensure_provider_connection_records(data: dict) -> bool:
-    changed = False
-    connections = _load_provider_connections(data)
-    for item in connections:
-        if not isinstance(item, dict):
-            continue
-        canonical = _canonical_connection_type(str(item.get("connection_type") or ""), str(item.get("provider") or ""))
-        if item.get("connection_type") != canonical:
-            item["connection_type"] = canonical
-            changed = True
-    existing_ids = {item.get("connection_id") for item in connections}
-    system = _get_saved_system_settings(data)
-    candidate_providers = {str(system.get("global_provider") or "").lower()}
-    for provider in AI_PROVIDER_MODELS:
-        if provider == "ollama" and system.get("global_provider") != "ollama":
-            continue
-        if provider != "ollama" and _provider_credential_exists(data, provider):
-            candidate_providers.add(provider)
-    for provider in sorted(item for item in candidate_providers if item in AI_PROVIDER_MODELS):
-        connection_id = _provider_connection_id(provider)
-        if connection_id in existing_ids:
-            continue
-        model = system.get("global_model", "") if system.get("global_provider") == provider else ""
-        connections.append(_general_provider_connection(data, provider, model))
-        existing_ids.add(connection_id)
-        changed = True
-    if changed:
-        _store_provider_connections(data, connections)
-    return changed
-
-
-def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
-    safe = _sanitize_provider_connection_for_storage(connection)
-    safe["connection_type"] = _canonical_connection_type(str(safe.get("connection_type") or ""), str(safe.get("provider") or ""))
-    if safe.get("connection_type") == "opencode_oauth_bridge":
-        configured = safe.get("configured_model") or ""
-        raw_models = safe.get("available_models") if isinstance(safe.get("available_models"), list) else []
-        bridge_capabilities = safe.get("capabilities", {}) if isinstance(safe.get("capabilities"), dict) else {}
-        readiness_passed = safe.get("readiness_status") == "ready"
-        model_capabilities = {
-            "text_input": readiness_passed or bridge_capabilities.get("text_input", {}).get("status") == "supported",
-            "image_input": bridge_capabilities.get("image_input", {}).get("status") == "supported",
-            "structured_output": None,
-            "streaming": False,
-            "tool_use": None,
-        }
-        models = []
-        for item in raw_models:
-            if isinstance(item, dict):
-                item_id = str(item.get("id") or "")
-                capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else model_capabilities
-                if item_id:
-                    models.append({**item, "id": item_id, "capabilities": {**model_capabilities, **capabilities}})
-            elif item:
-                item_id = str(item)
-                models.append({"id": item_id, "capabilities": model_capabilities, "provider": item_id.split("/", 1)[0] if "/" in item_id else "opencode", "source_connection": safe.get("connection_id", "")})
-        if not models and configured:
-            models = [{"id": configured, "capabilities": model_capabilities, "provider": configured.split("/", 1)[0] if "/" in configured else "opencode", "source_connection": safe.get("connection_id", "")}]
-        safe["provider"] = "opencode_bridge"
-        safe["display_name"] = safe.get("display_name") or safe.get("name") or "OpenCode"
-        safe["tested_status"] = "passed" if model_capabilities["text_input"] else "not_tested"
-        safe["configured_status"] = "tested" if safe["tested_status"] == "passed" else "configured"
-        safe["available_models"] = models
-        safe["capability_metadata"] = {item["id"]: item["capabilities"] for item in safe["available_models"]}
-        safe["last_test_result"] = {"status": "ok" if safe["tested_status"] == "passed" else "not_tested", "message": safe.get("last_checked_at", "")}
-        safe["updated_at"] = safe.get("last_checked_at", "")
-        safe["stores_authentication"] = False
-        safe["authentication_owner"] = "OpenCode"
-        safe["configured"] = True
-        safe["authenticated"] = safe["tested_status"] == "passed"
-        safe["tested"] = safe["tested_status"] == "passed"
-        safe["last_test_status"] = safe["tested_status"]
-        if readiness_passed:
-            safe["capabilities"] = {"text_input": {"status": "supported", "evidence": "Backend readiness gate verified executable, server, provider authentication, and selected model."}}
-    return safe
-
-
-def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
-    source = data if data is not None else load_studio_keys()
-    changed = _ensure_provider_connection_records(source)
-    if data is None and changed:
-        save_studio_keys(source)
-    return [_sanitize_provider_connection(item) for item in _load_provider_connections(source)]
-
-
-def _default_global_ai_config(data: dict | None = None) -> dict[str, Any]:
-    source = data if data is not None else load_studio_keys()
-    system = _get_saved_system_settings(source)
-    provider = str(system.get("global_provider") or "nvidia").lower()
-    model = str(system.get("global_model") or (AI_PROVIDER_MODELS.get(provider, [""])[0] if AI_PROVIDER_MODELS.get(provider) else ""))
-    return {
-        "connection_id": _provider_connection_id(provider),
-        "connection_type": _canonical_connection_type("api_provider", provider),
-        "provider": provider,
-        "model": model,
-        "temperature": 0.2,
-        "top_p": None,
-        "top_k": None,
-        "max_tokens": None,
-        "enabled": True,
-        "updated_at": "",
-    }
-
-
-def _load_global_ai_config(data: dict | None = None) -> dict[str, Any]:
-    source = data if data is not None else load_studio_keys()
-    saved = source.get("_global_ai", {}) if isinstance(source.get("_global_ai"), dict) else {}
-    return {**_default_global_ai_config(source), **saved}
-
-
-def _save_global_ai_config(config: dict[str, Any]) -> dict[str, Any]:
-    data = load_studio_keys()
-    current = _load_global_ai_config(data)
-    current.update({key: value for key, value in config.items() if key in {"connection_id", "connection_type", "provider", "model", "temperature", "top_p", "top_k", "max_tokens", "enabled"}})
-    current["updated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    data["_global_ai"] = current
-    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
-    system["global_provider"] = current["provider"]
-    system["global_model"] = current["model"]
-    data["_system"] = system
-    SYSTEM_SETTINGS["global_provider"] = current["provider"]
-    SYSTEM_SETTINGS["global_model"] = current["model"]
-    if current.get("connection_type") != "opencode_oauth_bridge":
-        _upsert_provider_connection(data, _general_provider_connection(data, current["provider"], current["model"]))
-    save_studio_keys(data)
-    return current
-
-
-def _vision_models_for_connection(connection: dict[str, Any]) -> list[dict[str, Any]]:
-    return [item for item in connection.get("available_models", []) if isinstance(item, dict) and item.get("capabilities", {}).get("image_input") is True]
-
-
-def _connection_for_id(connection_id: str, data: dict | None = None) -> dict[str, Any]:
-    return next((item for item in _frontend_provider_connections(data) if item.get("connection_id") == connection_id), {})
-
-
-def _identity_for_product_judge(connection: dict[str, Any], model: str, use_global: bool = False) -> tuple[str, str]:
-    if use_global:
-        return SYSTEM_SETTINGS["global_provider"], SYSTEM_SETTINGS["global_model"]
-    provider = str(connection.get("provider") or "")
-    if provider == "opencode_bridge" and "/" in model:
-        return model.split("/", 1)[0], model
-    return provider, model
-
-
-def _product_judge_independence(provider: str, model: str) -> str:
-    implementation_provider, implementation_model = get_agent_provider_model("elena")
-    if not provider or not model:
-        return "unavailable"
-    if provider != implementation_provider:
-        return "different_provider"
-    if model != implementation_model:
-        return "same_provider_different_model"
-    return "same_model_separate_role"
-
-
-def _product_judge_status(config: dict[str, Any] | None = None, data: dict | None = None) -> dict[str, Any]:
-    source = data if data is not None else load_studio_keys()
-    cfg = config if config is not None else {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
-    if not cfg.get("enabled", True):
-        return {"status": "configured", "available": False, "reason": "Product Judge is disabled", "independence_level": "unavailable"}
-    connection = {}
-    model = str(cfg.get("model") or "")
-    if cfg.get("use_global"):
-        global_cfg = _load_global_ai_config(source)
-        provider = str(global_cfg.get("provider") or SYSTEM_SETTINGS["global_provider"])
-        connection = _connection_for_id(str(global_cfg.get("connection_id") or _provider_connection_id(provider)), source)
-        model = model or str(global_cfg.get("model") or SYSTEM_SETTINGS["global_model"])
-    else:
-        connection = _connection_for_id(str(cfg.get("connection_id") or ""), source)
-    if not connection:
-        return {"status": "not_configured", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["not_configured"], "independence_level": "unavailable"}
-    provider, identity_model = _identity_for_product_judge(connection, model, bool(cfg.get("use_global")))
-    independence = _product_judge_independence(provider, identity_model)
-    if connection.get("configured_status") == "credential_missing":
-        return {"status": "credential_missing", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["credential_missing"], "connection": connection, "independence_level": independence}
-    if connection.get("tested_status") == "failed":
-        return {"status": "connection_failed", "available": False, "reason": connection.get("last_test_result", {}).get("message") or PRODUCT_JUDGE_STATUS_REASONS["connection_failed"], "connection": connection, "independence_level": independence}
-    if connection.get("tested_status") != "passed":
-        return {"status": "provider_not_tested", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["provider_not_tested"], "connection": connection, "independence_level": independence}
-    capability = connection.get("capability_metadata", {}).get(model, {})
-    if capability.get("image_input") is not True:
-        return {"status": "no_vision_model", "available": False, "reason": PRODUCT_JUDGE_STATUS_REASONS["no_vision_model"], "connection": connection, "independence_level": independence}
-    return {"status": "available", "available": True, "reason": f"Available - {provider} / {model}", "connection": connection, "model": model, "provider": provider, "independence_level": independence}
 
 
 @app.get("/api/provider-connections")
 def list_provider_connections():
     """Connection settings intentionally exclude raw credentials and browser state."""
-    return {"providers": PROVIDER_REGISTRY, "connections": _frontend_provider_connections()}
+    data = load_studio_keys()
+    return {"providers": PROVIDER_REGISTRY, "connections": _frontend_provider_connections(data), "universal_connections": _universal_provider_connections(data), "credential_backend": ProviderCredentialStore(default_backend()).diagnostics()}
+
+
+@app.get("/api/provider-layer")
+def get_provider_layer_status():
+    data = load_studio_keys()
+    credential_store = ProviderCredentialStore(default_backend())
+    return {
+        "adapter_contract": "ExecutionBrief -> ProviderAdapter -> AgentEvent",
+        "registered_connection_types": provider_registry.registered_types(),
+        "connections": _universal_provider_connections(data),
+        "agent_assignments": data.get("_agent_configs", {}) if isinstance(data.get("_agent_configs"), dict) else {},
+        "credential_backend": credential_store.diagnostics(),
+        "api_fallback_default": "disabled",
+        "subscription_auth_owner": "official_cli",
+    }
+
+
+@app.post("/api/provider-layer/{connection_id}/test")
+async def test_universal_provider_connection(connection_id: str):
+    data = load_studio_keys()
+    connections = _universal_provider_connections(data)
+    index = _universal_connection_index(connections, connection_id)
+    connection_data = connections[index] if index is not None else None
+    if not connection_data:
+        raise HTTPException(404, "Provider connection not found")
+    try:
+        connection = ProviderConnection(**{key: value for key, value in connection_data.items() if key in ProviderConnection.__dataclass_fields__})
+        adapter = provider_registry.create(connection)
+        result = await adapter.test_connection()
+        capabilities = await adapter.get_capabilities()
+        cost_mode = "local_compute" if connection.auth_method == "local" or "local" in connection.connection_type else "separately_billed_api" if "api_key" in connection.connection_type else "subscription_limits"
+        locality = "local" if cost_mode == "local_compute" else "cloud"
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        if index is not None:
+            meta = connections[index].get("metadata") if isinstance(connections[index].get("metadata"), dict) else {}
+            connections[index]["metadata"] = {**meta, "last_validation": now, "last_validation_status": result.status, "last_validation_message": result.message}
+            _save_universal_provider_connections(data, connections)
+            save_studio_keys(data)
+        credential_state = "reference_configured" if connection.credential_reference else "none"
+        if "api_key" in connection.connection_type and result.error_code == "auth_required":
+            credential_state = "credential_missing"
+        return {"connection_id": connection_id, "result": result.to_dict(), "capabilities": capabilities.to_dict(), "cost_mode": cost_mode, "privacy_locality": locality, "credential_state": credential_state, "last_validation": now, "diagnostics": result.diagnostics}
+    except KeyError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/provider-connections")
+def create_universal_provider_connection(payload: UniversalProviderConnectionPayload):
+    data = load_studio_keys()
+    connections = _universal_provider_connections(data)
+    connection_id = (payload.connection_id or f"provider-{uuid.uuid4().hex[:8]}").strip()
+    if _universal_connection_index(connections, connection_id) is not None:
+        raise HTTPException(409, {"error_code": "duplicate_connection_id", "message": "Provider connection already exists."})
+    if payload.connection_type not in provider_registry.registered_types():
+        raise HTTPException(400, {"error_code": "unsupported_connection_type", "message": "Connection type is not registered."})
+    ref = payload.credential_reference or (credential_reference(payload.provider_id or "provider", connection_id) if "api_key" in payload.connection_type else "")
+    connection = ProviderConnection(
+        connection_id=connection_id,
+        provider_id=payload.provider_id,
+        connection_type=payload.connection_type,
+        auth_method=payload.auth_method or (AuthMethod.API_KEY.value if "api_key" in payload.connection_type else AuthMethod.LOCAL.value if "local" in payload.connection_type else AuthMethod.DELEGATED_CLI_LOGIN.value),
+        display_name=payload.display_name or connection_id,
+        model_id=payload.model_id,
+        credential_reference=ref,
+        endpoint=payload.endpoint,
+        executable_path=payload.executable_path,
+        enabled=payload.enabled,
+        priority=payload.priority,
+        metadata=payload.metadata,
+    )
+    connections.append(connection.to_dict())
+    connections.sort(key=lambda item: int(item.get("priority", 100)))
+    _save_universal_provider_connections(data, connections)
+    save_studio_keys(data)
+    return {"status": "created", "connection": connection.to_dict()}
+
+
+@app.get("/api/provider-connections/{connection_id}")
+async def get_universal_provider_connection(connection_id: str):
+    if connection_id == "vision":
+        return list_vision_provider_connections()
+    connection_data = next((item for item in _universal_provider_connections() if item.get("connection_id") == connection_id), None)
+    if not connection_data:
+        raise HTTPException(404, {"error_code": "connection_not_found", "message": "Provider connection not found."})
+    connection = ProviderConnection(**{key: value for key, value in connection_data.items() if key in ProviderConnection.__dataclass_fields__})
+    return await _provider_connection_state(connection)
+
+
+@app.patch("/api/provider-connections/{connection_id}")
+def patch_universal_provider_connection(connection_id: str, payload: UniversalProviderConnectionPatch):
+    data = load_studio_keys()
+    connections = _universal_provider_connections(data)
+    index = _universal_connection_index(connections, connection_id)
+    if index is None:
+        raise HTTPException(404, {"error_code": "connection_not_found", "message": "Provider connection not found."})
+    current = dict(connections[index])
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if key == "model_id" and "/" in str(value) and str(value).startswith(f"{connection_id}/"):
+            value = str(value).split("/", 1)[1]
+        current[key] = value
+    if current.get("connection_type") not in provider_registry.registered_types():
+        raise HTTPException(400, {"error_code": "unsupported_connection_type", "message": "Connection type is not registered."})
+    connections[index] = _sanitize_provider_connection_for_storage(current)
+    connections.sort(key=lambda item: int(item.get("priority", 100)))
+    _save_universal_provider_connections(data, connections)
+    save_studio_keys(data)
+    return {"status": "updated", "connection": connections[_universal_connection_index(connections, connection_id)]}
+
+
+@app.delete("/api/provider-connections/{connection_id}")
+def delete_universal_provider_connection(connection_id: str, payload: ProviderDeletePayload | None = None):
+    payload = payload or ProviderDeletePayload()
+    data = load_studio_keys()
+    connections = _universal_provider_connections(data)
+    index = _universal_connection_index(connections, connection_id)
+    if index is None:
+        raise HTTPException(404, {"error_code": "connection_not_found", "message": "Provider connection not found."})
+    connection = ProviderConnection(**{key: value for key, value in connections[index].items() if key in ProviderConnection.__dataclass_fields__})
+    used_by = _connection_used_by_agents(data, connection_id)
+    if used_by and not payload.confirmed:
+        raise HTTPException(409, {"error_code": "connection_in_use", "message": "Connection is assigned to agents.", "agents": used_by})
+    removed = connections.pop(index)
+    _cleanup_connection_assignments(data, connection_id)
+    if payload.delete_credential and connection.credential_reference:
+        ProviderCredentialStore(default_backend()).delete_api_key(connection.credential_reference)
+    _save_universal_provider_connections(data, connections)
+    save_studio_keys(data)
+    return {"status": "deleted", "connection_id": connection_id, "credential_deleted": bool(payload.delete_credential and connection.credential_reference), "used_by_agents": used_by, "removed": _sanitize_provider_connection_for_storage(removed)}
+
+
+@app.post("/api/provider-connections/{connection_id}/credential")
+def save_universal_provider_credential(connection_id: str, payload: ProviderCredentialPayload):
+    data = load_studio_keys()
+    connections = _universal_provider_connections(data)
+    index = _universal_connection_index(connections, connection_id)
+    if index is None:
+        raise HTTPException(404, {"error_code": "connection_not_found", "message": "Provider connection not found."})
+    current = dict(connections[index])
+    if "api_key" not in str(current.get("connection_type") or ""):
+        raise HTTPException(409, {"error_code": "unsupported_action", "message": "This connection does not use API key credentials."})
+    ref = str(current.get("credential_reference") or credential_reference(str(current.get("provider_id") or "provider"), connection_id))
+    store = ProviderCredentialStore(default_backend())
+    try:
+        saved = store.save_api_key(ref, payload.api_key)
+    except Exception as exc:
+        raise HTTPException(409, {"error_code": "credential_backend_unavailable", "message": str(exc), "credential_backend": store.diagnostics()})
+    current["credential_reference"] = ref
+    current["metadata"] = {**(current.get("metadata") if isinstance(current.get("metadata"), dict) else {}), "credential_updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"), "masked_key": saved.get("masked")}
+    connections[index] = current
+    _save_universal_provider_connections(data, connections)
+    save_studio_keys(data)
+    return {"status": "saved", "credential_reference": ref, "masked": saved.get("masked"), "credential_backend": store.diagnostics()}
+
+
+@app.delete("/api/provider-connections/{connection_id}/credential")
+def delete_universal_provider_credential(connection_id: str):
+    data = load_studio_keys()
+    connections = _universal_provider_connections(data)
+    index = _universal_connection_index(connections, connection_id)
+    if index is None:
+        raise HTTPException(404, {"error_code": "connection_not_found", "message": "Provider connection not found."})
+    ref = str(connections[index].get("credential_reference") or "")
+    if ref:
+        ProviderCredentialStore(default_backend()).delete_api_key(ref)
+    connections[index]["metadata"] = {**(connections[index].get("metadata") if isinstance(connections[index].get("metadata"), dict) else {}), "credential_deleted_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}
+    _save_universal_provider_connections(data, connections)
+    save_studio_keys(data)
+    return {"status": "deleted", "credential_reference": ref}
+
+
+@app.post("/api/provider-connections/{connection_id}/login")
+async def login_universal_provider_connection(connection_id: str):
+    connection_data = next((item for item in _universal_provider_connections() if item.get("connection_id") == connection_id), None)
+    if not connection_data:
+        raise HTTPException(404, {"error_code": "connection_not_found", "message": "Provider connection not found."})
+    connection = ProviderConnection(**{key: value for key, value in connection_data.items() if key in ProviderConnection.__dataclass_fields__})
+    if connection.auth_method != AuthMethod.DELEGATED_CLI_LOGIN.value:
+        raise HTTPException(409, {"error_code": "unsupported_action", "message": "Login is only available for delegated CLI connections."})
+    result = await provider_registry.create(connection).authenticate()
+    return {"connection_id": connection_id, "result": result.to_dict()}
+
+
+@app.post("/api/provider-connections/{connection_id}/logout")
+async def logout_universal_provider_connection(connection_id: str):
+    connection_data = next((item for item in _universal_provider_connections() if item.get("connection_id") == connection_id), None)
+    if not connection_data:
+        raise HTTPException(404, {"error_code": "connection_not_found", "message": "Provider connection not found."})
+    connection = ProviderConnection(**{key: value for key, value in connection_data.items() if key in ProviderConnection.__dataclass_fields__})
+    if connection.auth_method == AuthMethod.API_KEY.value:
+        raise HTTPException(409, {"error_code": "unsupported_action", "message": "API key connections do not support logout; remove the credential instead."})
+    await provider_registry.create(connection).logout()
+    return {"status": "logged_out", "connection_id": connection_id}
+
+
+@app.post("/api/provider-connections/{connection_id}/test")
+async def test_universal_provider_connection_action(connection_id: str):
+    if any(item.get("connection_id") == connection_id for item in _universal_provider_connections()):
+        return await test_universal_provider_connection(connection_id)
+    return test_provider_connection(connection_id)
 
 
 @app.get("/api/provider-connections/vision")
@@ -1138,7 +916,17 @@ def list_vision_provider_connections():
 
 
 @app.get("/api/provider-connections/{connection_id}/models")
-def list_provider_connection_models(connection_id: str, image_input: bool = False):
+async def list_provider_connection_models(connection_id: str, image_input: bool = False):
+    universal = next((item for item in _universal_provider_connections() if item.get("connection_id") == connection_id), None)
+    if universal:
+        connection = ProviderConnection(**{key: value for key, value in universal.items() if key in ProviderConnection.__dataclass_fields__})
+        adapter = provider_registry.create(connection)
+        capabilities = await adapter.get_capabilities()
+        if not capabilities.model_listing:
+            return {"connection_id": connection_id, "models": [], "supported": False, "message": "Model listing is not supported; enter a model ID manually."}
+        models = [item.to_dict() for item in await adapter.list_models()]
+        selected_available = not connection.model_id or any(item.get("id") == connection.model_id for item in models)
+        return {"connection_id": connection_id, "models": models, "supported": True, "selected_model_id": connection.model_id, "selected_available": selected_available}
     connection = _connection_for_id(connection_id)
     if not connection:
         raise HTTPException(404, "Provider connection not found")
@@ -1155,11 +943,12 @@ def refresh_provider_connection_models(connection_id: str):
         raise HTTPException(404, "Provider connection not found")
     connection = connections[index]
     ctype = _canonical_connection_type(str(connection.get("connection_type") or ""), str(connection.get("provider") or ""))
-    if ctype == "opencode_oauth_bridge":
+    if _connection_uses_opencode_transport(connection):
+        ctype = "opencode_oauth_bridge"
         oc = OpenCodeBridgeConnection.from_dict(connection)
         models = oc.available_models()
         connection["available_models"] = models
-        connection["capability_metadata"] = {item["id"]: item.get("capabilities", {}) for item in models if isinstance(item, dict) and item.get("id")}
+        connection["capability_metadata"] = {str(item.get("id") if isinstance(item, dict) else item): {} for item in models if item}
     else:
         provider = str(connection.get("provider") or "").lower()
         connection.update(_general_provider_connection(data, provider, connection.get("configured_model", "")))
@@ -1175,21 +964,25 @@ def refresh_provider_connection_models(connection_id: str):
 def save_opencode_connection(payload: OpenCodeConnectionPayload):
     if payload.transport_type not in {"auto", "cli", "local_service"}:
         raise HTTPException(400, "Unsupported OpenCode transport")
-    result = test_opencode_readiness(payload.executable_path.strip(), payload.configured_model.strip(), payload.local_endpoint.strip())
+    selected_model = str(_normalize_model_for_connection(payload.configured_model.strip(), payload.connection_id).get("model_id") or payload.configured_model.strip())
+    valid_model, invalid_reason = validate_native_model_id(selected_model, "opencode")
+    if not valid_model:
+        raise HTTPException(400, {"error_code": invalid_reason, "message": "OpenCode model must use native provider/model format."})
+    result = test_opencode_readiness(payload.executable_path.strip(), selected_model, payload.local_endpoint.strip())
     if result.get("ready") is not True:
         raise HTTPException(409, {"error_code": result.get("error_code", "readiness_failed"), "message": result.get("message", "OpenCode readiness check failed"), "checks": result.get("checks", {})})
 
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     selection = result["checks"]["selection"]
-    server_url = result["server_url"]
+    server_url = result.get("server_url", "")
     connection = {
-        "connection_id": f"opencode-{uuid.uuid4().hex[:12]}",
+        "connection_id": payload.connection_id.strip() or f"opencode-{uuid.uuid4().hex[:12]}",
         "connection_type": "opencode_oauth_bridge",
         "name": payload.name.strip() or "My OpenCode",
         "enabled": bool(payload.enabled),
         "executable_path": result["executable_path"],
         "local_endpoint": server_url,
-        "server_port": int(server_url.rsplit(":", 1)[1]),
+        "server_port": int(server_url.rsplit(":", 1)[1]) if server_url else None,
         "configured_provider": selection["provider"],
         "configured_model": selection["model"],
         "auth_type": (result.get("selected_auth_types") or ["configured"])[0],
@@ -1201,10 +994,28 @@ def save_opencode_connection(payload: OpenCodeConnectionPayload):
     }
     data = load_studio_keys()
     connections = _load_provider_connections(data)
-    connections.append(connection)
+    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection["connection_id"]), None)
+    if existing is None:
+        connections.append(connection)
+    else:
+        connections[existing] = {**connections[existing], **connection}
     _store_provider_connections(data, connections)
+    data["_global_ai"] = {
+        "connection_id": connection["connection_id"],
+        "connection_type": "opencode_oauth_bridge",
+        "provider": "opencode_bridge",
+        "model": connection["configured_model"],
+        "enabled": bool(payload.enabled),
+        "updated_at": now,
+    }
+    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
+    system["global_provider"] = "opencode_bridge"
+    system["global_model"] = connection["configured_model"]
+    data["_system"] = system
+    SYSTEM_SETTINGS["global_provider"] = "opencode_bridge"
+    SYSTEM_SETTINGS["global_model"] = connection["configured_model"]
     save_studio_keys(data)
-    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "message": "OpenCode authentication remains owned by OpenCode; only verified connection metadata was stored."}
+    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "effective_execution_config": build_effective_execution_config(data).to_dict(), "message": "OpenCode authentication remains owned by OpenCode; only verified connection metadata was stored."}
 
 
 @app.post("/api/provider-connections/opencode/detect")
@@ -1213,8 +1024,8 @@ def detect_opencode_connection(payload: OpenCodeConnectionPayload):
     dependencies = get_opencode_onboarding_dependencies()
     opencode_dependency = dependencies["components"]["opencode"]
     connection = OpenCodeBridgeConnection(
-        connection_id="transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
-        configured_model=payload.configured_model.strip(), enabled=payload.enabled,
+        connection_id=payload.connection_id.strip() or "transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
+        configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
         transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
         local_endpoint=payload.local_endpoint.strip(), executable_path=opencode_dependency["path"],
     )
@@ -1235,8 +1046,8 @@ def detect_opencode_connection(payload: OpenCodeConnectionPayload):
 def test_transient_opencode_connection(payload: OpenCodeConnectionPayload):
     """Verify local OpenCode readiness without invoking a paid model request."""
     connection = OpenCodeBridgeConnection(
-        connection_id="transient-opencode-test", name=payload.name.strip() or "My OpenCode",
-        configured_model=payload.configured_model.strip(), enabled=payload.enabled,
+        connection_id=payload.connection_id.strip() or "transient-opencode-test", name=payload.name.strip() or "My OpenCode",
+        configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
         transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
         local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
     )
@@ -1248,14 +1059,14 @@ def test_transient_opencode_connection(payload: OpenCodeConnectionPayload):
     return {**result, "connection": connection.to_dict()}
 
 
-@app.post("/api/provider-connections/{connection_id}/test")
+@app.post("/api/provider-connections/{connection_id}/legacy-test")
 def test_provider_connection(connection_id: str):
     data = load_studio_keys()
     connections = _load_provider_connections(data)
     index = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection_id), None)
     if index is None:
         raise HTTPException(404, "Provider connection not found")
-    if connections[index].get("connection_type") == "api_provider":
+    if not _connection_uses_opencode_transport(connections[index]):
         provider = str(connections[index].get("provider") or "").lower()
         key = _provider_api_key(provider, data)
         ok, message = _test_provider_key(provider, key)
@@ -1265,6 +1076,7 @@ def test_provider_connection(connection_id: str):
         save_studio_keys(data)
         return {"status": "ok" if ok else "error", "connection": _sanitize_provider_connection(connection), "message": message}
     connection = OpenCodeBridgeConnection.from_dict(connections[index])
+    connection.configured_model = str(_normalize_model_for_connection(connection.configured_model, connection.connection_id, data).get("model_id") or connection.configured_model)
     result = test_opencode_readiness(connection.executable_path, connection.configured_model, connection.local_endpoint)
     connection.executable_path = result.get("executable_path", connection.executable_path)
     connection.local_endpoint = result.get("server_url", connection.local_endpoint)
@@ -1318,38 +1130,6 @@ def delete_ai_provider_key(provider: str):
     return {"status": "deleted", "provider": provider, "existed": existed, **_ai_settings_response(data)}
 
 
-def _test_provider_key(provider: str, key: str) -> tuple[bool, str]:
-    if provider == "ollama":
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as resp:
-                return resp.status == 200, "Ollama is reachable" if resp.status == 200 else f"HTTP {resp.status}"
-        except Exception as e:
-            return False, f"Ollama is not reachable: {e}"
-    if not key:
-        return False, f"No API key saved for {provider}"
-    endpoints = {
-        "openai": ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {key}"}),
-        "nvidia": ("https://integrate.api.nvidia.com/v1/models", {"Authorization": f"Bearer {key}"}),
-        "groq": ("https://api.groq.com/openai/v1/models", {"Authorization": f"Bearer {key}"}),
-        "mistral": ("https://api.mistral.ai/v1/models", {"Authorization": f"Bearer {key}"}),
-        "deepseek": ("https://api.deepseek.com/models", {"Authorization": f"Bearer {key}"}),
-        "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}),
-        "google": (f"https://generativelanguage.googleapis.com/v1beta/models?key={key}", {}),
-        "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}),
-    }
-    url, headers = endpoints.get(provider, ("", {}))
-    if not url:
-        return False, "Unsupported provider test"
-    try:
-        req = urllib.request.Request(url, headers={**headers, "User-Agent": "FreelancerStudio"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return 200 <= resp.status < 300, "Provider key accepted" if 200 <= resp.status < 300 else f"HTTP {resp.status}"
-    except urllib.error.HTTPError as e:
-        return False, f"Provider rejected key or request: HTTP {e.code}"
-    except Exception as e:
-        return False, f"Connection test failed: {e}"
-
-
 @app.post("/api/config/ai/test")
 def test_ai_provider(payload: ProviderTestPayload):
     data = load_studio_keys()
@@ -1378,34 +1158,7 @@ def apply_ai_settings_to_opencode():
     return {"status": "applied", "message": "OpenCode config regenerated. Restart OpenCode to use the new settings."}
 
 
-@app.get("/api/opencode/status")
-def opencode_status():
-    if not _HAS_OPENCODE:
-        return {"installed": False, "error": "OpenCode bridge is not available"}
-    return get_opencode_status()
-
-
-@app.post("/api/opencode/web")
-def opencode_web_login():
-    if not _HAS_OPENCODE:
-        raise HTTPException(500, "OpenCode bridge is not available")
-    result = start_opencode_web(workdir=BASE_DIR)
-    if result.get("status") == "error":
-        raise HTTPException(500, result.get("message", "Failed to start OpenCode web"))
-    return result
-
-
-@app.post("/api/opencode/authenticate")
-def opencode_authenticate():
-    if not _HAS_OPENCODE:
-        raise HTTPException(500, "OpenCode bridge is not available")
-    result = start_opencode_auth_terminal(workdir=BASE_DIR)
-    if result.get("status") == "error":
-        raise HTTPException(500, result.get("message", "Failed to start OpenCode authentication"))
-    return result
-
-
-@app.get("/api/config/ai/verify")
+@app.post("/api/config/ai/verify")
 def verify_ai_settings():
     data = load_studio_keys()
     system = _get_saved_system_settings(data)
@@ -1432,46 +1185,6 @@ def verify_ai_settings():
     }
 
 
-@app.post("/api/proposals/generate")
-def create_proposal(payload: Dict[str, Any]):
-    job_desc = payload.get("job_description", "").strip()
-    if not job_desc:
-        raise HTTPException(400, "job_description is required")
-    agent_data = agent_configs.get("goldie", {})
-    provider, model = get_agent_provider_model("goldie")
-    result = generate_proposal(
-        job_description=job_desc,
-        provider=provider,
-        model=model,
-        temperature=agent_data.get("temperature", 0.3),
-    )
-    return result
-
-
-@app.post("/api/proposals/refine")
-def refine_project_spec(payload: Dict[str, Any]):
-    original = payload.get("original_job", "").strip()
-    answers = payload.get("client_answers", "").strip()
-    if not original or not answers:
-        raise HTTPException(400, "original_job and client_answers are required")
-    agent_data = agent_configs.get("maya", {})
-    provider, model = get_agent_provider_model("maya")
-    result = refine_spec(
-        original_job=original,
-        client_answers=answers,
-        provider=provider,
-        model=model,
-        temperature=agent_data.get("temperature", 0.2),
-    )
-    return result
-
-
-AGENT_MODELS = {
-    "nvidia": "meta/llama-3.3-70b-instruct",
-    "openai": "gpt-4",
-    "ollama": "dolphin-mistral:7b",
-    "anthropic": "claude-sonnet-4-20250514",
-}
 
 # ── Resume / Phase tracking ──────────────────────────────────────────────────
 _PHASE_ORDER = ["planning", "designing", "testing", "coding", "review", "qa", "product_judge"]
@@ -1486,55 +1199,6 @@ _TERMINAL_PROJECT_STATES = {
     "cancelled",
 }
 
-_STATE_DISPLAY = {
-    "created": "Created",
-    "meeting": "Analyzing",
-    "planning": "Planning",
-    "designing": "Designing",
-    "testing": "Testing",
-    "coding": "Generating",
-    "review": "Reviewing",
-    "verifying": "Verifying",
-    "repairing": "Repairing",
-    "final_audit": "Final audit",
-    "product_judge": "Product judge",
-    "completed": "Completed",
-    "failed": "Failed",
-    "failed_qa": "Failed QA",
-    "failed_final_audit": "Failed final audit",
-    "blocked": "Blocked",
-    "needs_credentials": "Needs credentials",
-    "needs_user_input": "Needs human input",
-    "needs_human_input": "Needs human input",
-    "awaiting_input": "Awaiting input",
-    "cancelled": "Cancelled",
-}
-
-AGENT_STAGE_METADATA = {
-    "alex": {"stage": "planning", "display_role": "Project Manager"},
-    "maya": {"stage": "planning", "display_role": "Business Analyst"},
-    "elena": {"stage": "designing", "display_role": "UI/UX Designer"},
-    "bugcatcher": {"stage": "testing", "display_role": "QA Engineer"},
-    "codex": {"stage": "coding", "display_role": "Software Architect"},
-    "sentinel": {"stage": "review", "display_role": "Security Auditor"},
-    "lupa": {"stage": "review", "display_role": "Code Reviewer"},
-    "goldie": {"stage": "finance", "display_role": "Financial Advisor"},
-    "product_judge": {"stage": "product_judge", "display_role": "Independent Product Judge"},
-}
-
-PIPELINE_STAGE_METADATA = {
-    "planning": {"label": "Planning"},
-    "designing": {"label": "Design"},
-    "testing": {"label": "QA (TDD)"},
-    "coding": {"label": "Generating"},
-    "review": {"label": "Review"},
-    "qa": {"label": "QA"},
-    "verifying": {"label": "Verifying"},
-    "repairing": {"label": "Repairing"},
-    "final_audit": {"label": "Final Audit"},
-    "product_judge": {"label": "Product Judge"},
-}
-PIPELINE_UI_STAGE_ORDER = ["planning", "designing", "testing", "coding", "review", "verifying", "repairing", "final_audit", "product_judge"]
 
 _ALLOWED_STATE_TRANSITIONS = {
     "created": {"meeting", "planning", "cancelled", "needs_human_input", "needs_credentials"},
@@ -1546,7 +1210,7 @@ _ALLOWED_STATE_TRANSITIONS = {
     "coding": {"review", "verifying", "cancelled", "failed", "blocked", "needs_credentials"},
     "review": {"review", "verifying", "repairing", "cancelled", "failed", "blocked"},
     "verifying": {"repairing", "final_audit", "needs_user_input", "needs_human_input", "needs_credentials", "failed_qa", "cancelled", "failed", "blocked"},
-    "repairing": {"review", "verifying", "failed_qa", "cancelled", "failed", "blocked"},
+    "repairing": {"review", "verifying", "final_audit", "failed_qa", "cancelled", "failed", "blocked"},
     "final_audit": {"product_judge", "completed", "repairing", "failed_final_audit", "cancelled", "failed", "blocked"},
     "product_judge": {"completed", "repairing", "failed_qa", "cancelled", "failed", "blocked"},
     "needs_user_input": {"verifying", "cancelled", "failed_qa", "failed"},
@@ -1564,6 +1228,7 @@ _ALLOWED_STATE_TRANSITIONS = {
 def _normalize_state(state: str) -> str:
     if not state:
         return "created"
+    state = str(state).strip().lower().replace(" ", "_")
     if state.startswith("review_iteration_"):
         return "review"
     return state
@@ -1912,17 +1577,6 @@ def _save_phase(project: dict, phase_name: str):
     _save_projects_state()
 
 
-DEFAULT_AGENTS = {
-    "alex": {"name": "Alex", "role": "project_manager", "emoji": "👔", "color": "#6366f1", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("alex")},
-    "maya": {"name": "Maya", "role": "analyst", "emoji": "🎯", "color": "#a855f7", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("maya")},
-    "elena": {"name": "Elena", "role": "designer", "emoji": "🎨", "color": "#ec4899", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("elena")},
-    "codex": {"name": "Codex", "role": "developer", "emoji": "💻", "color": "#0ea5e9", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("codex")},
-    "bugcatcher": {"name": "BugCatcher", "role": "tester", "emoji": "🐛", "color": "#10b981", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("bugcatcher")},
-    "sentinel": {"name": "Sentinel", "role": "security", "emoji": "🛡️", "color": "#ef4444", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("sentinel")},
-    "lupa": {"name": "Lupa", "role": "code_reviewer", "emoji": "🔍", "color": "#8b5cf6", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("lupa")},
-    "goldie": {"name": "Goldie", "role": "sales", "emoji": "💰", "color": "#f59e0b", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("goldie")},
-    "product_judge": {"name": "Product Judge", "role": "product_judge", "emoji": "⚖", "color": "#f97316", "enabled": True, "builtin": True, "status": "idle", "provider": "", "model": "", "use_global": False, **recommended_defaults_for("product_judge"), "top_k": None, "auto_select_independent": True},
-}
 
 _AI_SPEED_HINT = (
     "IMPORTANT: You are an AI assistant, not a human. Projects are completed in minutes, not days or weeks. "
@@ -1933,17 +1587,30 @@ _AI_SPEED_HINT = (
 _AGENT_ROSTER_TEXT = (
     "Authoritative team roster: Alex (project manager/dispatcher), Maya (requirements analyst), "
     "Elena (UI/UX designer), Codex (developer/software architect), BugCatcher (QA engineer), "
-    "Sentinel (security auditor), Lupa (code reviewer), Goldie (finance advisor). "
+    "Sentinel (security auditor), Lupa (code reviewer), Goldie (finance advisor), "
+    "Product Judge (independent delivery evaluator). "
     "Do not invent any other employees, people, names, departments, or specialists. "
     "If the user mentions an unknown person, say that this person is not in the current roster. "
 )
 
 _TRUTHFUL_CHAT_GUARD = (
     "Truthfulness rules for chat: rely only on the user message, provided chat history, provided project context, and the authoritative roster. "
+    "In direct chat, answer the user as the selected agent. Do not address the user as Alex unless the user explicitly says their name is Alex. "
+    "Do not say you are another teammate; keep your own selected agent identity. "
     "Do not claim a project exists, is active, or is being worked on unless project context explicitly says so. "
     "If no project context is provided, say that you do not currently have an active project context. "
     "Do not invent team members, task owners, client names, project names, statuses, files, or completed work. "
     "If you made a mistaken claim, acknowledge it briefly and correct it using only known facts. "
+)
+
+_ALEX_PROMPT_INTAKE_PROTOCOL = (
+    " Before assigning Codex, run prompt intake. Check whether the request specifies: target platform, application type, stack/runtime, "
+    "desktop packaging if desktop is requested, data storage/persistence, authentication, AI/RAG requirements, document/PDF/OCR needs, "
+    "voice input/output needs, integrations, deployment/installer target, security/privacy constraints, tests, and acceptance criteria. "
+    "If critical details are missing, do not route to Codex yet; ask concise clarification questions. "
+    "If the user wants help writing a prompt, switch to prompt completion mode: propose the missing sections, sensible defaults, risks, and a ready-to-send Codex brief. "
+    "Use project-type templates when relevant: web app, desktop app, AI assistant, RAG/PDF app, voice app, or support workflow. "
+    "Codex may receive implementation only after the specification is clear enough or the user explicitly accepts your assumptions."
 )
 
 AGENT_SYSTEM_PROMPTS = {
@@ -1957,6 +1624,7 @@ AGENT_SYSTEM_PROMPTS = {
         "Never let work remain vague. If requirements are unclear, assign Maya to clarify. If UI is unclear, assign Elena. If implementation is needed, assign Codex. "
         "If verification is needed, assign BugCatcher. If security risk exists, assign Sentinel. If quality review is needed, assign Lupa. "
         "Speak with authority and professionalism. Use concise structured task breakdowns, status reports, and actionable next steps."
+        + _ALEX_PROMPT_INTAKE_PROTOCOL
     ),
     "maya": _AI_SPEED_HINT + (
         " You are Maya, an expert business analyst and requirements specialist. "
@@ -2024,17 +1692,25 @@ AGENT_SYSTEM_PROMPTS = {
         "Your report to Alex must include: overall quality score 1-10, release recommendation, must-fix issues, nice-to-have improvements, and next owner. "
         "Be constructive, specific, and pragmatic; do not request rewrites unless the risk justifies it."
     ),
+    "product_judge": _AI_SPEED_HINT + (
+        " You are Product Judge, an independent read-only delivery evaluator. "
+        "Your responsibility is to judge whether delivered work satisfies stated requirements and acceptance criteria using only available evidence. "
+        "Answer the user directly with a concise verdict, blocking concerns, missing evidence, and concrete criteria that must be satisfied before approval. "
+        "Do not claim you changed files, implemented fixes, or ran checks unless project context explicitly proves it. "
+        "Do not address the user as Alex unless they say their name is Alex."
+    ),
 }
 
 FAST_AGENT_SYSTEM_PROMPTS = {
-    "alex": _AI_SPEED_HINT + " " + _AGENT_ROSTER_TEXT + _TRUTHFUL_CHAT_GUARD + " You are Alex, the project dispatcher. Answer briefly, give a direct status or next action, and mention only real roster specialists when relevant.",
-    "maya": _AI_SPEED_HINT + " You are Maya, the requirements analyst. Answer briefly with requirements, assumptions, acceptance criteria, or clarifying questions. Report conclusions as if to Alex.",
-    "elena": _AI_SPEED_HINT + " You are Elena, the UI/UX designer. Answer briefly with concrete UX, layout, visual, accessibility, or design-system guidance. Report conclusions as if to Alex.",
-    "codex": _AI_SPEED_HINT + " You are Codex, the software architect/developer. Answer briefly with practical implementation guidance, code-level advice, risks, and next technical step. Report conclusions as if to Alex.",
-    "bugcatcher": _AI_SPEED_HINT + " You are BugCatcher, the QA engineer. Answer briefly with tests, edge cases, reproduction steps, quality risks, and verification advice. Report conclusions as if to Alex.",
-    "sentinel": _AI_SPEED_HINT + " You are Sentinel, the security auditor. Answer briefly with security risks, severity, attack vector, and concrete mitigation. Report conclusions as if to Alex.",
-    "lupa": _AI_SPEED_HINT + " You are Lupa, the code reviewer. Answer briefly with maintainability, quality, performance, and release-readiness feedback. Report conclusions as if to Alex.",
+    "alex": _AI_SPEED_HINT + " " + _AGENT_ROSTER_TEXT + _TRUTHFUL_CHAT_GUARD + " You are Alex, the project dispatcher. Answer briefly, give a direct status or next action, and mention only real roster specialists when relevant." + _ALEX_PROMPT_INTAKE_PROTOCOL,
+    "maya": _AI_SPEED_HINT + " You are Maya, the requirements analyst. Answer the user directly and briefly with requirements, assumptions, acceptance criteria, or clarifying questions. Do not address the user as Alex unless they say their name is Alex.",
+    "elena": _AI_SPEED_HINT + " You are Elena, the UI/UX designer. Answer the user directly and briefly with concrete UX, layout, visual, accessibility, or design-system guidance. Do not address the user as Alex unless they say their name is Alex.",
+    "codex": _AI_SPEED_HINT + " You are Codex, the software architect/developer. Answer the user directly and briefly with practical implementation guidance, code-level advice, risks, and next technical step. Do not address the user as Alex unless they say their name is Alex.",
+    "bugcatcher": _AI_SPEED_HINT + " You are BugCatcher, the QA engineer. Answer the user directly and briefly with tests, edge cases, reproduction steps, quality risks, and verification advice. Do not address the user as Alex unless they say their name is Alex.",
+    "sentinel": _AI_SPEED_HINT + " You are Sentinel, the security auditor. Answer the user directly and briefly with security risks, severity, attack vector, and concrete mitigation. Do not address the user as Alex unless they say their name is Alex.",
+    "lupa": _AI_SPEED_HINT + " You are Lupa, the code reviewer. Answer the user directly and briefly with maintainability, quality, performance, and release-readiness feedback. Do not address the user as Alex unless they say their name is Alex.",
     "goldie": _AI_SPEED_HINT + " You are Goldie, the finance advisor. Answer briefly with pricing, budget, ROI, and profitability guidance.",
+    "product_judge": _AI_SPEED_HINT + " You are Product Judge, the independent read-only delivery evaluator. Answer the user directly and briefly with a verdict, blocking concerns, missing evidence, and approval criteria. Do not address the user as Alex unless they say their name is Alex.",
 }
 
 def get_agent_prompt(agent_id: str) -> str:
@@ -2063,194 +1739,78 @@ def get_fast_agent_prompt(agent_id: str) -> str:
         "You are a professional AI assistant. Answer concisely and helpfully."
     )
 
-def get_agent_provider_model(agent_id: str) -> tuple:
-    effective = resolve_effective_agent_ai_config(agent_id)
-    return effective["provider"], effective["model"]
-
-def _agent_default_config(agent_id: str) -> dict[str, Any]:
-    if agent_id in DEFAULT_AGENTS:
-        return DEFAULT_AGENTS[agent_id]
-    return agent_configs.get("_custom_agents", {}).get(agent_id, {})
 
 
-def _agent_required_capabilities(agent_id: str) -> dict[str, bool]:
-    if agent_id == "product_judge":
-        return {"text_input": True, "image_input": True}
-    return {"text_input": True}
 
 
-def _validate_agent_capabilities(agent_id: str, connection: dict[str, Any], model: str) -> dict[str, Any]:
-    metadata = connection.get("capability_metadata", {}) if isinstance(connection, dict) else {}
-    available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
-    model_in_connection = not available_model_ids or model in available_model_ids
-    capabilities = metadata.get(model) if isinstance(metadata.get(model), dict) else _model_capabilities(str(connection.get("provider") or ""), model)
-    missing = []
-    unknown = []
-    for name, required in _agent_required_capabilities(agent_id).items():
-        if not required:
-            continue
-        value = capabilities.get(name)
-        if value is False:
-            missing.append(name)
-        elif value is not True:
-            unknown.append(name)
-    valid = model_in_connection and not missing and not unknown
-    reason = "compatible" if valid else f"Missing capability: {', '.join(missing)}" if missing else f"Unknown capability: {', '.join(unknown)}"
-    if not model_in_connection:
-        reason = "Model is not available on the selected connection."
-    if agent_id == "product_judge":
-        opencode_bridge_tested = connection.get("connection_type") == "opencode_oauth_bridge" and connection.get("capabilities", {}).get("text_input", {}).get("status") == "supported"
-        if connection.get("tested_status") != "passed" and not opencode_bridge_tested:
-            valid = False
-            reason = "Global model is not eligible for Product Judge."
-        elif not valid:
-            reason = "Global model is not eligible for Product Judge."
-    return {"valid": valid, "required": _agent_required_capabilities(agent_id), "capabilities": capabilities, "missing": missing, "unknown": unknown, "model_in_connection": model_in_connection, "reason": reason}
 
 
-def resolve_effective_agent_ai_config(agent_id: str) -> dict[str, Any]:
-    data = load_studio_keys()
-    _ensure_provider_connection_records(data)
-    global_cfg = _load_global_ai_config(data)
-    agent = agent_configs.get(agent_id, {})
-    default = _agent_default_config(agent_id)
-    legacy_use_global = agent.get("use_global", default.get("use_global", True)) is not False
-    use_global_connection = bool(agent.get("use_global_connection", legacy_use_global))
-    use_global_model = bool(agent.get("use_global_model", legacy_use_global))
-    use_global_generation = bool(agent.get("use_global_generation_parameters", False))
-    connection_id = global_cfg.get("connection_id", "") if use_global_connection else str(agent.get("connection_id") or "")
-    provider = str(global_cfg.get("provider") or SYSTEM_SETTINGS["global_provider"]) if use_global_connection else str(agent.get("provider") or default.get("provider") or SYSTEM_SETTINGS["global_provider"])
-    if not connection_id:
-        connection_id = _provider_connection_id(provider)
-    connection = _connection_for_id(connection_id, data)
-    if not connection and provider:
-        connection = _general_provider_connection(data, provider, agent.get("model") or default.get("model") or global_cfg.get("model", ""))
-    model = str(global_cfg.get("model") or SYSTEM_SETTINGS["global_model"]) if use_global_model else str(agent.get("model") or default.get("model") or global_cfg.get("model") or SYSTEM_SETTINGS["global_model"])
-    available_model_ids = {str(item.get("id")) for item in connection.get("available_models", []) if isinstance(item, dict)}
-    stale_model = bool(available_model_ids and model not in available_model_ids)
-    if use_global_generation:
-        generation = {key: global_cfg.get(key) for key in ("temperature", "top_p", "top_k", "max_tokens")}
-        generation_source = "global"
-    else:
-        generation = {
-            "temperature": agent.get("temperature", default.get("temperature", global_cfg.get("temperature", 0.2))),
-            "top_p": agent.get("top_p", default.get("top_p", global_cfg.get("top_p"))),
-            "top_k": agent.get("top_k", default.get("top_k", global_cfg.get("top_k"))),
-            "max_tokens": agent.get("max_tokens", default.get("max_tokens", global_cfg.get("max_tokens"))),
-        }
-        generation_source = "agent"
-    sendable, unsupported = _filter_supported_generation(provider, model, generation)
-    validation = _validate_agent_capabilities(agent_id, connection, model)
-    return {
-        "agent_id": agent_id,
-        "connection_id": connection_id,
-        "connection_type": connection.get("connection_type", _canonical_connection_type("api_provider", provider)),
-        "provider": provider,
-        "model": model,
-        "stale_model": stale_model,
-        "connection_display_name": connection.get("display_name") or connection.get("name") or provider,
-        "temperature": generation.get("temperature"),
-        "top_p": generation.get("top_p"),
-        "top_k": generation.get("top_k"),
-        "max_tokens": generation.get("max_tokens"),
-        "generation_parameters": generation,
-        "sendable_generation_parameters": sendable,
-        "unsupported_generation_parameters": unsupported,
-        "use_global_connection": use_global_connection,
-        "use_global_model": use_global_model,
-        "use_global_generation_parameters": use_global_generation,
-        "inherited_fields": {
-            "connection": use_global_connection,
-            "model": use_global_model,
-            "generation_parameters": use_global_generation,
-        },
-        "overridden_fields": {
-            "connection": not use_global_connection,
-            "model": not use_global_model,
-            "generation_parameters": not use_global_generation,
-        },
-        "configuration_source": {
-            "connection": "global" if use_global_connection else "agent",
-            "model": "global" if use_global_model else "agent",
-            "generation_parameters": generation_source,
-        },
-        "capability_validation": validation,
-        "capability_status": "compatible" if validation.get("valid") else "incompatible",
-        "recommended_defaults": recommended_defaults_for(agent_id),
-    }
+
+
+
+
+
+
+
+
+
+
+
 
 
 def agent_generation_kwargs(agent_id: str) -> dict[str, Any]:
     return resolve_effective_agent_ai_config(agent_id)["sendable_generation_parameters"]
 
 
-def load_agent_configs() -> Dict[str, Dict[str, Any]]:
-    data = load_studio_keys()
-    return data.get("_agent_configs", {})
 
 
-def save_agent_configs(configs: Dict[str, Dict[str, Any]]):
-    data = load_studio_keys()
-    data["_agent_configs"] = configs
-    save_studio_keys(data)
+
+
+
+
+
+
+
+
 
 
 agent_configs = load_agent_configs()
 
 
-def _configured_product_judge_runtime() -> dict[str, Any]:
-    """Resolve a read-only judge identity, preferring an independently configured vision model."""
-    cfg = {**DEFAULT_AGENTS["product_judge"], **agent_configs.get("product_judge", {})}
-    effective = resolve_effective_agent_ai_config("product_judge")
-    implementation_provider, implementation_model = get_agent_provider_model("elena")
-    provider = ""
-    model = ""
-    connection = {}
-    status = _product_judge_status(cfg)
-    configured_connection = _connection_for_id(str(cfg.get("connection_id") or ""))
-    if configured_connection and configured_connection.get("connection_type") == "api_provider":
-        provider = str(configured_connection.get("provider") or "")
-        model = str(cfg.get("model") or configured_connection.get("configured_model") or "")
-    elif str(cfg.get("provider") or "") == "opencode_bridge":
-        connection_id = str(cfg.get("connection_id") or "")
-        connection = next((item for item in _load_provider_connections() if item.get("connection_id") == connection_id and item.get("connection_type") == "opencode_bridge"), {})
-        provider = "opencode_bridge" if connection else ""
-        model = str(cfg.get("model") or connection.get("configured_model") or "")
-    elif cfg.get("use_global") or cfg.get("use_global_model") or cfg.get("use_global_connection"):
-        provider = effective["provider"]
-        model = effective["model"]
-    elif cfg.get("provider") and cfg.get("model"):
-        provider = str(cfg["provider"])
-        model = str(cfg["model"])
-    elif cfg.get("auto_select_independent", True):
-        keys = load_studio_keys()
-        candidates = [
-            name for name in AI_PROVIDER_MODELS
-            if (name == "ollama" or bool(keys.get(_provider_key_name(name)) or keys.get(f"{name}_api_key")))
-            and ai_utils.provider_capabilities(name).get("image_input")
-        ]
-        provider = next((name for name in candidates if name != implementation_provider), "")
-        if not provider and implementation_provider in candidates:
-            provider = implementation_provider
-        if provider:
-            models = AI_PROVIDER_MODELS.get(provider, [])
-            model = next((item for item in models if provider != implementation_provider or item != implementation_model), models[0] if models else "")
-    return {
-        "enabled": bool(cfg.get("enabled", True)),
-        "provider": provider,
-        "model": model,
-        "temperature": effective.get("temperature", cfg.get("temperature", 0.3)),
-        "top_p": effective.get("top_p", cfg.get("top_p", 0.9)),
-        "top_k": effective.get("top_k", cfg.get("top_k")),
-        "connection": connection,
-        "connection_id": connection.get("connection_id", ""),
-        "effective_image_input": bridge_effective_capabilities(OpenCodeBridgeConnection.from_dict(connection)).get("image_input", False) if connection else False,
-        "use_global": bool(cfg.get("use_global")),
-        "implementation_identity": {"agent_id": "elena", "provider": implementation_provider, "model": implementation_model},
-        "readiness_status": status.get("status"),
-        "readiness_reason": status.get("reason"),
-        "independence_level": status.get("independence_level", "unavailable"),
-    }
+def _set_agent_configs(value):
+    global agent_configs
+    agent_configs = value
+
+
+_agent_ai_resolution = build_agent_ai_resolution(
+    lambda: agent_configs,
+    _set_agent_configs,
+    _HAS_OPENCODE,
+    (lambda: test_opencode_readiness) if _HAS_OPENCODE else None,
+)
+_agent_default_config = _agent_ai_resolution._agent_default_config
+_all_agent_ids = _agent_ai_resolution._all_agent_ids
+_agent_meta = _agent_ai_resolution._agent_meta
+resolve_effective_agent_ai_config = _agent_ai_resolution.resolve_effective_agent_ai_config
+get_agent_provider_model = _agent_ai_resolution.get_agent_provider_model
+agent_opencode_model_override = _agent_ai_resolution.agent_opencode_model_override
+resolve_agent_provider_connection = _agent_ai_resolution.resolve_agent_provider_connection
+_product_judge_independence = _agent_ai_resolution._product_judge_independence
+_product_judge_status = _agent_ai_resolution._product_judge_status
+_configured_product_judge_runtime = _agent_ai_resolution._configured_product_judge_runtime
+_save_repaired_opencode_model = _agent_ai_resolution._save_repaired_opencode_model
+_opencode_preflight_for_agent = _agent_ai_resolution._opencode_preflight_for_agent
+
+
+app.include_router(build_proposals_router(
+    lambda agent_id: agent_configs.get(agent_id, {}),
+    get_agent_provider_model,
+    generate_proposal,
+    refine_spec,
+))
+app.include_router(build_goldie_router(active_projects, get_agent_provider_model, goldie_agent))
+
+
 
 
 delivery_audit_module.configure_product_judge(lambda _project: _configured_product_judge_runtime())
@@ -2356,41 +1916,32 @@ def get_agents():
     return result
 
 
-@app.get("/api/pipeline/metadata")
-def get_pipeline_metadata():
-    return {
-        "stage_order": PIPELINE_UI_STAGE_ORDER,
-        "stages": {
-            stage: {"id": stage, **PIPELINE_STAGE_METADATA.get(stage, {"label": _STATE_DISPLAY.get(stage, stage.replace("_", " ").title())})}
-            for stage in PIPELINE_UI_STAGE_ORDER
-        },
-        "agent_stages": AGENT_STAGE_METADATA,
-    }
 
 
-def _all_agent_ids() -> set:
-    return set(DEFAULT_AGENTS.keys()) | set(agent_configs.get("_custom_agents", {}).keys())
-
-
-def _agent_meta(agent_id: str) -> dict:
-    if agent_id in DEFAULT_AGENTS:
-        return DEFAULT_AGENTS[agent_id]
-    custom = agent_configs.get("_custom_agents", {}).get(agent_id, {})
-    return custom
 
 
 @app.post("/api/agents/{agent_id}/config")
-def update_agent_config(agent_id: str, payload: Dict[str, Any]):
+def update_agent_config(agent_id: str, payload: AgentAIConfigPayload):
     if agent_id not in _all_agent_ids():
         raise HTTPException(status_code=404, detail="Agent not found")
     current = agent_configs.get(agent_id, {})
-    allowed_keys = ("provider", "model", "temperature", "top_p", "top_k", "max_tokens", "use_global", "use_global_connection", "use_global_model", "use_global_generation_parameters", "enabled", "custom_prompt", "save_path", "connection_id")
-    for key in allowed_keys:
-        if key in payload:
-            current[key] = payload[key]
+    current = _validated_agent_ai_patch(agent_id, current, payload.model_dump(exclude_unset=True))
     agent_configs[agent_id] = current
     save_agent_configs(agent_configs)
-    return {"status": "success", "agent_id": agent_id}
+    return {"status": "success", "agent_id": agent_id, "config": current, "effective_ai": resolve_effective_agent_ai_config(agent_id)}
+
+
+@app.get("/api/agents/{agent_id}/config")
+def get_agent_config(agent_id: str):
+    if agent_id not in _all_agent_ids():
+        raise HTTPException(status_code=404, detail="Agent not found")
+    current = {
+        "use_global_connection": True,
+        "use_global_model": True,
+        "use_global_generation_parameters": True,
+        **agent_configs.get(agent_id, {}),
+    }
+    return {"agent_id": agent_id, "config": current, "effective_ai": resolve_effective_agent_ai_config(agent_id)}
 
 
 @app.get("/api/product-judge/config")
@@ -2628,23 +2179,6 @@ def agent_chat(agent_id: str, payload: AgentChatPayload):
     return {"agent_id": agent_id, "agent_name": meta.get("name", agent_id), "reply": response, "fast_mode": payload.fast_mode, "context_used": bool(project_context), "invocation": invocation}
 
 
-@app.get("/api/jobs/search")
-def search_jobs(q: str = Query(default=""), search_query: str = Query(default=None)):
-    query = q or search_query or ""
-    results = search_freelance_jobs(query)
-    return {"results": results}
-
-
-@app.get("/api/platforms/suggest")
-def suggest_platforms(q: str = Query(default=""), search_query: str = Query(default=None)):
-    query = (q or search_query or "").lower()
-    if query:
-        filtered = [p for p in AVAILABLE_PLATFORMS if query in p["code"].lower() or query in p["name"].lower()]
-    else:
-        filtered = AVAILABLE_PLATFORMS
-    return filtered
-
-
 @app.get("/api/projects/active/current")
 def get_active_projects():
     all_projects = list(active_projects.values())
@@ -2656,6 +2190,8 @@ def get_active_projects():
 
 @app.websocket("/ws/projects/{project_id}/logs")
 async def project_logs_ws(websocket: WebSocket, project_id: str):
+    if await authorize_websocket(websocket) is None:
+        return
     await websocket.accept()
     last_count = 0
     sent_snapshot = False
@@ -3591,7 +3127,7 @@ def _post_process_code(target_path, log_func=None, project_type="simple"):
     junk_files -= SUPPORTED_LOCK_FILES
     # For React projects, keep frontend build files
     if is_react_project:
-        junk_files -= {"package.json", "postcss.config.js", "tailwind.config.js", "vite.config.js", "vite.config.ts"}
+        junk_files -= {"package.json", "postcss.config.js", "tailwind.config.js", "vite.config.js", "vite.config.ts", "tsconfig.json"}
     if project_type == "telegram_bot":
         junk_files -= {"docker-compose.yml", "docker-compose.yaml"}
     for _rel, fpath_obj in walk_repairable_files(target_path):
@@ -4517,18 +4053,26 @@ def _fix_requirements_txt(target_path, log_func=None, project_type="simple"):
                 pass
 
 
-_OPENCODE_RECOVERY_FLOW = "Open Settings -> AI Provider -> Download Node.js if Node.js or npm is missing -> Detect Again -> Download OpenCode if it is missing -> Detect Again -> Authenticate Provider -> complete the steps in the OpenCode terminal -> Start OpenCode Web or server -> Test Connection -> Save Connection -> Retry Generation."
+_OPENCODE_RECOVERY_FLOW = "Open Settings -> AI Provider -> Detect Again -> Repair automatically or Test Connection -> Save Connection -> Retry Generation."
 
 
 def _opencode_recovery_code(error: str) -> str:
     text = str(error or "").lower()
     if any(marker in text for marker in ("node.js", "npm_missing", "npm is required")):
         return "nodejs_missing"
+    if "invalid opencode model reference" in text or "opencode_model_reference_invalid" in text:
+        return "opencode_model_reference_invalid"
+    if "model not found" in text or "selected_model_unavailable" in text:
+        return "opencode_model_not_found"
+    if "rate limit" in text or "rate_limited" in text:
+        return "provider_rate_limited"
+    if "quota" in text or "resourceexhausted" in text:
+        return "provider_quota_exceeded"
     if any(marker in text for marker in ("not installed", "installation")):
         return "opencode_not_installed"
     if any(marker in text for marker in ("executable", "binary not found", "enoent")):
         return "executable_not_detected"
-    if any(marker in text for marker in ("server", "connection refused", "unreachable")):
+    if any(marker in text for marker in ("server required", "serve failed")):
         return "server_not_running"
     if any(marker in text for marker in ("auth", "unauthorized", "credential")):
         return "provider_not_authenticated"
@@ -4544,13 +4088,29 @@ def _opencode_recovery_instruction(error_code: str) -> str:
         "nodejs_missing": "Node.js is required to install OpenCode with npm. Download the official Windows LTS installer, install it, restart Studio, and select Detect Again.",
         "opencode_not_installed": "Download OpenCode from the official website or install it with npm. Then return to Studio and select Detect Again.",
         "executable_not_detected": "The OpenCode executable was not detected. Restart Studio if it was installed while Studio was open, then select Detect Again.",
-        "server_not_running": "The OpenCode local server is unavailable. Select Start OpenCode Web before testing.",
+        "server_not_running": "The OpenCode local service is required for this action but could not be started.",
+        "opencode_model_reference_invalid": "The selected OpenCode model reference is invalid. Studio can repair legacy saved model IDs automatically.",
+        "opencode_model_not_found": "The selected model is not available in the current OpenCode configuration. Select one of the available models.",
+        "opencode_executable_not_found": "OpenCode is not installed or could not be detected. Select Detect Again after installation.",
+        "opencode_authentication_failure": "The selected OpenCode provider is not authenticated. Configure provider authentication in OpenCode, then select Test Connection.",
+        "opencode_workspace_invalid": "The project workspace path is invalid or not writable. Choose a writable projects folder.",
+        "provider_rate_limited": "The provider rate limit was reached. Retry later or choose another configured provider/model.",
+        "provider_quota_exceeded": "The provider quota was exceeded. Retry later or choose another configured provider/model.",
         "provider_not_authenticated": "No authorized provider is available. Select Authenticate Provider and complete the terminal flow.",
         "models_unavailable": "The provider is authorized, but no models are available. Complete provider setup, then run Test Connection again.",
         "connection_test_failed": "OpenCode connection readiness was not confirmed. Run Test Connection and resolve the reported failed check.",
         "connection_not_saved": "The tested OpenCode connection was not saved. Select Save Connection before retrying generation.",
     }
     return f"{reasons.get(error_code, reasons['connection_test_failed'])} {_OPENCODE_RECOVERY_FLOW}"
+
+
+
+
+@app.get("/api/opencode/preflight/{agent_id}")
+def get_opencode_preflight(agent_id: str):
+    if agent_id not in _all_agent_ids():
+        raise HTTPException(404, "Agent not found")
+    return _opencode_preflight_for_agent(agent_id)
 
 
 def _pipeline_codex_fix(project, generated_data, target_path, feedback):
@@ -4572,15 +4132,18 @@ def _pipeline_codex_fix(project, generated_data, target_path, feedback):
 
     try:
         oc_bridge = _get_oc_bridge()
-        if not oc_bridge.ensure_running(workdir=target_path):
-            _set_project_status(project, "blocked", reason="OpenCode unavailable during repair")
-            project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('server_not_running')}")
+        preflight = _opencode_preflight_for_agent("codex", target_path)
+        if not preflight.get("ready"):
+            _set_project_status(project, "blocked", reason=preflight.get("blocking_reason", "OpenCode preflight failed"))
+            project["logs"].append(f"[OpenCode]: Preflight failed: {preflight.get('message')}")
+            project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(str(preflight.get('blocking_reason') or 'connection_test_failed'))}")
             clear_agent_status("codex")
             return generated_data
         result = oc_bridge.execute_fix_task(
             project_dir=target_path,
             issues=feedback,
             log_callback=lambda msg: project["logs"].append(msg),
+            model_override=agent_opencode_model_override("codex"),
         )
         if not result.get("success"):
             _set_project_status(project, "blocked", reason="OpenCode repair task failed")
@@ -4667,7 +4230,7 @@ def _repair_final_audit_issues(project: dict, target_path: str, project_id: str)
         return False
     attempts = int(project.get("_final_audit_repair_attempts", 0))
     if attempts >= 2:
-        project.setdefault("logs", []).append("[PRODUCT JUDGE] Repair limit reached; blocking objection remains open.")
+        project.setdefault("logs", []).append("[FINAL AUDIT] Repair limit reached; blocking audit issue remains open.")
         return False
     project["_final_audit_repair_attempts"] = attempts + 1
     project["_repair_active"] = True
@@ -4699,15 +4262,33 @@ def _repair_final_audit_issues(project: dict, target_path: str, project_id: str)
     try:
         project_state.persist_project_state(project, target_path)
     except Exception as exc:
-        project.setdefault("logs", []).append(f"[PRODUCT JUDGE] Could not persist repair diagnostics: {type(exc).__name__}")
+        project.setdefault("logs", []).append(f"[FINAL AUDIT] Could not persist repair diagnostics: {type(exc).__name__}")
     if not repair.get("meaningful_changes_detected", False):
-        project.setdefault("logs", []).append("[PRODUCT JUDGE] OpenCode did not produce a verified file change.")
+        project.setdefault("logs", []).append("[FINAL AUDIT] OpenCode did not produce a verified file change.")
         return False
     for issue in issues:
         issue["status"] = "verification_pending"
-    project.setdefault("logs", []).append("[PRODUCT JUDGE] Repair changed files; restarting full QA before browser and judge re-verification.")
+    project.setdefault("logs", []).append("[FINAL AUDIT] Repair changed files; restarting full QA before final audit re-verification.")
     _run_qa_only(project_id, target_path)
     return True
+
+
+def _project_target_path(project: dict, project_id: str) -> str:
+    for key in ("target_path", "project_path", "path"):
+        value = str(project.get(key) or "").strip()
+        if value and os.path.exists(value):
+            return value
+    dir_name = str(project.get("title") or project_id).replace(" ", "_").lower()
+    candidates = [
+        os.path.join(DATA_DIR, "generated_projects", dir_name),
+        os.path.join(os.getcwd(), "generated_projects", dir_name),
+        os.path.join(DATA_DIR, "generated_projects", f"{project_id}_{dir_name}"),
+        os.path.join(os.getcwd(), "generated_projects", f"{project_id}_{dir_name}"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
 
 
 def _repair_product_judge_objections(project: dict, target_path: str, project_id: str) -> bool:
@@ -4865,27 +4446,36 @@ def async_studio_production_pipeline(project_id: str):
             if detected_type in ("history_story", "landing_page", "telegram_bot"):
                 project["_project_type"] = detected_type
 
-            # OpenCode is the mandatory coding backend. Do not silently fall back to text-only LLM generation.
+            # OpenCode is the default mandatory coding backend. An agent with an explicitly
+            # configured coding-capable provider connection (e.g. Claude Code CLI) can use
+            # that instead; everyone else keeps the exact existing OpenCode-only behavior.
             _oc_used = False
-            if not _HAS_OPENCODE:
+            codex_connection = resolve_agent_provider_connection("codex")
+            if codex_connection is None and not _HAS_OPENCODE:
                 _set_project_status(project, "blocked", reason="OpenCode bridge unavailable")
-                project["logs"].append("[System]: OpenCode bridge is not available. Code generation was not started.")
+                project["logs"].append("[System]: OpenCode bridge is not available and no alternative coding-capable AI connection is configured for Codex. Code generation was not started.")
                 project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('opencode_not_installed')}")
                 clear_agent_status("codex")
                 return
 
-            if _HAS_OPENCODE:
+            if codex_connection is not None or _HAS_OPENCODE:
+                backend_label = codex_connection.connection_type if codex_connection is not None else "OpenCode"
                 try:
                     backend_ok, backend_error = _backend_health_available()
                     if not backend_ok:
                         _set_project_status(project, "blocked", reason="backend health check failed")
-                        project["logs"].append(f"[System]: FreelancerStudio backend health check failed before OpenCode launch: {backend_error}")
+                        project["logs"].append(f"[System]: FreelancerStudio backend health check failed before code generation: {backend_error}")
                         project["logs"].append("[System]: Code generation was not started. Start backend on http://127.0.0.1:8080 and retry.")
                         clear_agent_status("codex")
                         return
-                    oc_bridge = _get_oc_bridge()
-                    if oc_bridge.ensure_running(workdir=target_path):
-                        project["logs"].append("OpenCode bridge active. Delegating code generation to OpenCode...")
+                    oc_bridge = None
+                    if codex_connection is None:
+                        oc_bridge = _get_oc_bridge()
+                        preflight = _opencode_preflight_for_agent("codex", target_path)
+                    else:
+                        preflight = {"ready": True, "effective_execution_config": {}}
+                    if preflight.get("ready"):
+                        project["logs"].append(f"{backend_label} active. Delegating code generation to {backend_label}...")
                         ctx = _build_agent_context(project, sprint_plan, design_system, tdd_tests)
                         spec_json = json.dumps(project.get("project_spec", {}), ensure_ascii=False, indent=2)
                         qa_plan_json = json.dumps(project.get("qa_plan", {}), ensure_ascii=False, indent=2)
@@ -4906,20 +4496,51 @@ def async_studio_production_pipeline(project_id: str):
                             "- For JS/Vite projects, run 'npm install' and 'npm run build' from the project root and fix failures.\n"
                             "- Do not include placeholder/stub code, fake tests, stale audit notes, or documentation that contradicts implementation."
                         )
-                        oc_result = oc_bridge.execute_coding_task(
-                            project_dir=target_path,
-                            task_spec=task_spec,
-                            autonomous=project.get("autonomous_mode", True),
-                            log_callback=lambda msg: project["logs"].append(msg),
+                        execution_brief = ExecutionBrief(
+                            project_id=project_id,
+                            task_id=f"{project_id}-codex-implementation",
+                            title=f"Implement {project.get('title', '')}",
+                            objective="Implement the approved project specification on disk using the configured coding backend.",
+                            project_root=target_path,
+                            requirements=[str(project.get("description", ""))],
+                            constraints=["Use the existing generated project workspace only", "Do not fake tests or evidence", "Do not write outside project root"],
+                            acceptance_criteria=[line for line in ac_text.splitlines() if line.strip()],
+                            allowed_paths=[target_path],
+                            forbidden_paths=[str(Path.home()), str(Path(DATA_DIR).parent)],
+                            implementation_steps=["Inspect project", "Implement files", "Run relevant tests", "Report changed files and command results"],
+                            test_commands=["python -m pytest -q", "npm run build"],
+                            validation_commands=["Final Delivery Audit"],
+                            requires_browser_validation=project.get("_project_type") in {"landing_page"} or "frontend" in str(project.get("description", "")).lower(),
+                            requires_security_review=True,
+                            approval_policy="plan_approved_or_existing_pipeline_phase",
+                            sandbox_policy="project_root_containment",
+                            metadata={"backend_type": codex_connection.connection_type if codex_connection is not None else "opencode", "effective_execution_config": preflight.get("effective_execution_config", {})},
                         )
+                        project["execution_brief"] = execution_brief.to_dict()
+                        project["execution_brief_validation"] = execution_brief.validate()
+                        if codex_connection is not None:
+                            oc_result = _run_provider_adapter_coding_task(
+                                codex_connection,
+                                execution_brief,
+                                log_callback=lambda msg: project["logs"].append(msg),
+                                cancel_check=lambda: bool(project.get("cancel_requested")),
+                            )
+                        else:
+                            oc_result = oc_bridge.execute_coding_task(
+                                project_dir=target_path,
+                                task_spec=task_spec,
+                                autonomous=project.get("autonomous_mode", True),
+                                log_callback=lambda msg: project["logs"].append(msg),
+                                model_override=agent_opencode_model_override("codex"),
+                            )
                         if oc_result.get("session_id"):
                             project["opencode_session_id"] = oc_result.get("session_id")
                         if oc_result.get("cancelled") or project.get("cancel_requested"):
-                            _set_project_status(project, "cancelled", force=True, reason="OpenCode generation cancelled")
+                            _set_project_status(project, "cancelled", force=True, reason=f"{backend_label} generation cancelled")
                             clear_agent_status("codex")
                             return
                         if oc_result["success"]:
-                            project["logs"].append(f"OpenCode task completed (session {oc_result.get('session_id','?')})")
+                            project["logs"].append(f"{backend_label} task completed (session {oc_result.get('session_id','?')})")
                             project["logs"].append(f"Summary: {oc_result.get('summary','')[:200]}")
                             summary_text = str(oc_result.get("summary", ""))
                             for feature in (project.get("feature_matrix") or {}).get("features", []):
@@ -4939,26 +4560,28 @@ def async_studio_production_pipeline(project_id: str):
                                         pass
                             _oc_used = True
                             _mark_generation_finished(project, True)
-                            project["logs"].append(f"OpenCode: {len(generated_data['files'])} files found in {target_path}")
+                            project["logs"].append(f"{backend_label}: {len(generated_data['files'])} files found in {target_path}")
                         else:
                             _mark_generation_finished(project, False)
-                            _set_project_status(project, "blocked", reason="OpenCode generation failed")
-                            project["logs"].append(f"[OpenCode]: Generation failed: {oc_result.get('error','unknown')}")
-                            project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(_opencode_recovery_code(oc_result.get('error', '')))}")
+                            _set_project_status(project, "blocked", reason=f"{backend_label} generation failed")
+                            project["logs"].append(f"[{backend_label}]: Generation failed: {oc_result.get('error','unknown')}")
+                            if codex_connection is None:
+                                project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(_opencode_recovery_code(oc_result.get('error', '')))}")
                             clear_agent_status("codex")
                             return
                     else:
                         _mark_generation_finished(project, False)
-                        _set_project_status(project, "blocked", reason="OpenCode server unavailable")
-                        project["logs"].append("[OpenCode]: Server unavailable. Code generation was not started.")
-                        project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction('server_not_running')}")
+                        _set_project_status(project, "blocked", reason=preflight.get("blocking_reason", "OpenCode preflight failed"))
+                        project["logs"].append(f"[OpenCode]: Preflight failed: {preflight.get('message')}")
+                        project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(str(preflight.get('blocking_reason') or 'connection_test_failed'))}")
                         clear_agent_status("codex")
                         return
                 except Exception as oc_e:
                     _mark_generation_finished(project, False)
-                    _set_project_status(project, "blocked", reason="OpenCode exception")
-                    project["logs"].append(f"[OpenCode]: Error: {oc_e}")
-                    project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(_opencode_recovery_code(str(oc_e)))}")
+                    _set_project_status(project, "blocked", reason=f"{backend_label} exception")
+                    project["logs"].append(f"[{backend_label}]: Error: {oc_e}")
+                    if codex_connection is None:
+                        project["logs"].append(f"[OpenCode Recovery]: {_opencode_recovery_instruction(_opencode_recovery_code(str(oc_e)))}")
                     clear_agent_status("codex")
                     return
 
@@ -5060,9 +4683,10 @@ def async_studio_production_pipeline(project_id: str):
                 if _HAS_OPENCODE and project.get("_project_type") not in ("history_story", "landing_page", "telegram_bot"):
                     try:
                         oc_bridge = _get_oc_bridge()
-                        if oc_bridge.ensure_running():
+                        preflight = _opencode_preflight_for_agent(review_type, target_path)
+                        if preflight.get("ready"):
                             project["logs"].append(f"{label} reviewing via OpenCode...")
-                            oc_r = oc_bridge.execute_review_task(target_path, review_type, context)
+                            oc_r = oc_bridge.execute_review_task(target_path, review_type, context, model_override=agent_opencode_model_override(review_type))
                             if oc_r["success"]:
                                 summary = oc_r.get("summary", "")
                                 has_issues = "VERDICT: FAIL" in summary.upper() or "FAIL" in summary.upper()
@@ -5085,7 +4709,10 @@ def async_studio_production_pipeline(project_id: str):
                 # Phase 5a: BugCatcher (QC Review)
                 bc = _try_opencode_review("bugcatcher", "BugCatcher", feedback_context)
                 project["bugcatcher_review_v" + str(iteration)] = bc["result"]
-                append_agent_review_issues(project, "bugcatcher", bc["result"], iteration)
+                if bc["has_issues"]:
+                    append_agent_review_issues(project, "bugcatcher", bc["result"], iteration)
+                else:
+                    close_resolved_review_issues(project, "bugcatcher", iteration)
 
                 # Phase 5b: Sentinel (Security Review)
                 sentinel_cfg = agent_configs.get("sentinel", {})
@@ -5093,7 +4720,10 @@ def async_studio_production_pipeline(project_id: str):
                 if sentinel_enabled:
                     sn = _try_opencode_review("sentinel", "Sentinel", feedback_context)
                     project["sentinel_review_v" + str(iteration)] = sn["result"]
-                    append_agent_review_issues(project, "sentinel", sn["result"], iteration)
+                    if sn["has_issues"]:
+                        append_agent_review_issues(project, "sentinel", sn["result"], iteration)
+                    else:
+                        close_resolved_review_issues(project, "sentinel", iteration)
                 else:
                     sn = {"has_issues": False, "result": ""}
 
@@ -5103,7 +4733,10 @@ def async_studio_production_pipeline(project_id: str):
                 if lupa_enabled:
                     lp = _try_opencode_review("lupa", "Lupa", feedback_context)
                     project["lupa_review_v" + str(iteration)] = lp["result"]
-                    append_agent_review_issues(project, "lupa", lp["result"], iteration)
+                    if lp["has_issues"]:
+                        append_agent_review_issues(project, "lupa", lp["result"], iteration)
+                    else:
+                        close_resolved_review_issues(project, "lupa", iteration)
                 else:
                     lp = {"has_issues": False, "result": ""}
 
@@ -5258,9 +4891,10 @@ def retry_project_qa(project_id: str, background_tasks: BackgroundTasks):
     if project_id not in active_projects:
         raise HTTPException(404, "Project not found")
     project = active_projects[project_id]
-    if project.get("status") in ("completed", "cancelled"):
+    current_status = _normalize_state(project.get("status"))
+    if current_status in ("completed", "cancelled"):
         raise HTTPException(400, f"Cannot retry QA for project in terminal state: {project.get('status')}")
-    if project.get("status") == "blocked":
+    if current_status == "blocked":
         saved_phase = project.get("_phase")
         if not saved_phase or saved_phase not in _PHASE_ORDER:
             raise HTTPException(400, "Cannot retry generation without a saved pipeline phase")
@@ -5274,10 +4908,11 @@ def retry_project_qa(project_id: str, background_tasks: BackgroundTasks):
         _save_projects_state()
         background_tasks.add_task(async_studio_production_pipeline, project_id)
         return {"status": "retrying_generation", "message": f"Generation restarted from '{saved_phase}'."}
-    if project.get("status") == "failed_final_audit":
-        target_path = str(project.get("target_path") or os.path.join(DATA_DIR, "generated_projects", project['title'].replace(' ', '_').lower()))
+    if current_status == "failed_final_audit":
+        target_path = _project_target_path(project, project_id)
         if _repair_final_audit_issues(project, target_path, project_id):
-            return {"status": "repairing", "message": "Final Audit repair started."}
+            return {"status": "repairing", "message": "Final Audit repair completed and verification restarted."}
+        project["logs"].append("[FINAL AUDIT] No automatic repair change was produced; rerunning full QA and final audit from current files.")
     if not _set_project_status(project, "verifying"):
         _save_projects_state()
         raise HTTPException(400, "Invalid project state transition to verifying")
@@ -5287,18 +4922,11 @@ def retry_project_qa(project_id: str, background_tasks: BackgroundTasks):
     _mark_qa_passed(project, False)
     _mark_final_audit_passed(project, False)
 
-    dir_name = project['title'].replace(' ', '_').lower()
-    target_path = os.path.join(DATA_DIR, "generated_projects", dir_name)
+    target_path = _project_target_path(project, project_id)
 
     if not os.path.exists(target_path):
-        # fallback: try old naming with uuid prefix
-        old_name = f"{project_id}_{dir_name}"
-        old_path = os.path.join(DATA_DIR, "generated_projects", old_name)
-        if os.path.exists(old_path):
-            target_path = old_path
-        else:
-            _set_project_status(project, "failed", reason="project directory missing")
-            project["logs"].append("Project source directory not found. Cannot retry.")
+        _set_project_status(project, "failed", reason="project directory missing")
+        project["logs"].append("Project source directory not found. Cannot retry.")
         return {"status": "error", "message": "Source directory missing"}
 
     background_tasks.add_task(_run_qa_only, project_id, target_path)
@@ -5601,170 +5229,6 @@ def claim_project(payload: ProjectClaimPayload, background_tasks: BackgroundTask
     return project
 
 
-class GoldieChatPayload(BaseModel):
-    message: str
-    chat_history: List[Dict[str, str]] = []
-
-
-class GoldieAnalyzePayload(BaseModel):
-    project_id: str = ""
-    project_title: str = ""
-    project_description: str = ""
-    project_budget: str = "?"
-
-
-class GoldieSearchPayload(BaseModel):
-    query: str
-
-
-@app.post("/api/agents/goldie/analyze")
-def goldie_analyze(payload: GoldieAnalyzePayload):
-    title = ""
-    desc = ""
-    budget = "?"
-    if payload.project_id and payload.project_id in active_projects:
-        proj = active_projects[payload.project_id]
-        title = proj.get("title", "")
-        desc = proj.get("description", "")
-        budget = proj.get("budget", "?")
-    title = payload.project_title or title
-    desc = payload.project_description or desc
-    budget = payload.project_budget or budget
-    provider, model = get_agent_provider_model("goldie")
-    result = goldie_agent.analyze_project_finances(
-        project_title=title,
-        project_description=desc,
-        project_budget=budget,
-        provider=provider,
-        model_name=model,
-    )
-    return result
-
-
-@app.post("/api/agents/goldie/search")
-def goldie_search(payload: GoldieSearchPayload):
-    result = goldie_agent.search_financial_data(query=payload.query)
-    return result
-
-
-# ── GitHub Integration ───────────────────────────────────────────────────
-
-class GitHubConfigPayload(BaseModel):
-    token: str = ""
-    username: str = ""
-    repo: str = ""
-
-class GitHubPushPayload(BaseModel):
-    project_id: str
-
-class GitHubImportPayload(BaseModel):
-    raw_url: str
-
-@app.get("/api/config/github")
-def get_github_config():
-    data = load_studio_keys()
-    cfg = data.get("_github", {})
-    token = secret_store.get_secret("github_token", {"github_token": cfg.get("token", "")})
-    warnings = []
-    if cfg.get("token") and not secret_store.has_env_secret("github_token"):
-        warnings.append(secret_store.legacy_secret_warning("github_token"))
-    return {
-        "token": bool(token),
-        "username": cfg.get("username", ""),
-        "repo": cfg.get("repo", ""),
-        "connected": bool(token and cfg.get("username") and cfg.get("repo")),
-        "legacy_secret_warnings": warnings,
-    }
-
-@app.post("/api/config/github")
-def save_github_config(payload: GitHubConfigPayload):
-    data = load_studio_keys()
-    current = data.get("_github", {}) if isinstance(data.get("_github"), dict) else {}
-    data["_github"] = {
-        "token": current.get("token", ""),
-        "username": payload.username,
-        "repo": payload.repo,
-    }
-    save_studio_keys(data)
-    token = payload.token or secret_store.get_secret("github_token", {"github_token": current.get("token", "")})
-    response = {"status": "saved", "connected": bool(token and payload.username and payload.repo)}
-    if payload.token:
-        response["secret_store_warning"] = "GitHub token was not written to studio_config.json. Set GITHUB_TOKEN to persist it."
-    return response
-
-@app.post("/api/projects/{project_id}/github/push")
-def push_project_to_github(project_id: str):
-    data = load_studio_keys()
-    github = data.get("_github", {})
-    token = secret_store.get_secret("github_token", {"github_token": github.get("token", "")})
-    username = github.get("username", "")
-    repo = github.get("repo", "")
-    if not (token and username and repo):
-        raise HTTPException(400, "GitHub not configured. Save token/username/repo first.")
-
-    proj = active_projects.get(project_id)
-    if not proj:
-        raise HTTPException(404, "Project not found")
-
-    proj_data = {k: v for k, v in proj.items() if k != "_key"}
-    body = json.dumps(proj_data, indent=2, ensure_ascii=False).encode("utf-8")
-    file_name = f"projects/{project_id}.json"
-    commit_msg = f"Update project {proj.get('title', project_id)}"
-
-    # Try to get existing file SHA (for update)
-    sha = None
-    get_url = f"https://api.github.com/repos/{username}/{repo}/contents/{file_name}"
-    req = urllib.request.Request(get_url, headers={
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-    })
-    try:
-        with urllib.request.urlopen(req) as resp:
-            sha = json.loads(resp.read()).get("sha", "")
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            raise HTTPException(400, f"GitHub API error: {e.code}")
-
-    import base64
-    put_body = json.dumps({
-        "message": commit_msg,
-        "content": base64.b64encode(body).decode("utf-8"),
-        "sha": sha,
-        "branch": "main",
-    }).encode("utf-8")
-
-    put_url = f"https://api.github.com/repos/{username}/{repo}/contents/{file_name}"
-    req = urllib.request.Request(put_url, data=put_body, method="PUT", headers={
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-    })
-    try:
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read())
-            return {"status": "pushed", "url": result.get("content", {}).get("html_url", "")}
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode()
-        raise HTTPException(400, f"GitHub push failed: {e.code} — {detail}")
-
-@app.post("/api/projects/import/github")
-def import_project_from_github(payload: GitHubImportPayload):
-    try:
-        req = urllib.request.Request(payload.raw_url, headers={"User-Agent": "FreelancerStudio"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            proj_data = json.loads(resp.read().decode())
-    except Exception as e:
-        raise HTTPException(400, f"Failed to fetch project from URL: {e}")
-
-    proj_id = proj_data.get("project_id", str(uuid.uuid4())[:8])
-    proj_data["project_id"] = proj_id
-    proj_data["_key"] = "project"
-    data = load_studio_keys()
-    data[proj_id] = proj_data
-    save_studio_keys(data)
-    return {"status": "imported", "project": proj_data}
-
-
 # ── Export ───────────────────────────────────────────────────────────────
 
 @app.get("/api/projects/{project_id}/export")
@@ -5823,17 +5287,18 @@ def sanitize_filename(name: str) -> str:
     return "".join(c for c in name if c.isprintable() and c not in '<>:"|?*')
 
 
-def _get_project_dir(project_id: str) -> str:
+def _get_project_dir(project_id: str, *, create: bool = True) -> str:
     """Get the filesystem path for a project's uploaded files."""
     safe_id = "".join(c for c in project_id if c.isalnum() or c in "-_.")
     path = os.path.join(PROJECTS_DATA_DIR, safe_id)
-    os.makedirs(path, exist_ok=True)
+    if create:
+        os.makedirs(path, exist_ok=True)
     return path
 
 
-def resolve_path(project_id: str, relative_path: str) -> str:
+def resolve_path(project_id: str, relative_path: str, *, create: bool = True) -> str:
     """Resolve a relative path within a project directory, blocking traversal."""
-    base = os.path.realpath(_get_project_dir(project_id))
+    base = os.path.realpath(_get_project_dir(project_id, create=create))
     target = os.path.realpath(os.path.join(base, relative_path.lstrip("/")))
     if not target.startswith(base + os.sep) and target != base:
         raise HTTPException(400, "Path traversal denied")
@@ -5845,7 +5310,7 @@ def list_project_files(project_id: str, path: str = Query("", alias="path")):
     proj = active_projects.get(project_id)
     if not proj:
         raise HTTPException(404, "Project not found")
-    target = resolve_path(project_id, path)
+    target = resolve_path(project_id, path, create=False)
     if not os.path.exists(target):
         raise HTTPException(404, "Path not found")
     if not os.path.isdir(target):
@@ -5973,7 +5438,7 @@ def download_project_file(project_id: str, path: str):
     proj = active_projects.get(project_id)
     if not proj:
         raise HTTPException(404, "Project not found")
-    target = resolve_path(project_id, path)
+    target = resolve_path(project_id, path, create=False)
     if not os.path.exists(target):
         raise HTTPException(404, "File not found")
     if os.path.isdir(target):
@@ -6027,6 +5492,42 @@ def create_project_directory(project_id: str, name: str = Query(...)):
 FRONTEND_DIST = os.environ.get("FREELANCERSTUDIO_FRONTEND_DIR") or os.path.join(BASE_DIR, "frontend", "dist")
 print(f"[Backend Debug]: FRONTEND_DIST={FRONTEND_DIST} isdir={os.path.isdir(FRONTEND_DIST)}")
 
+def iter_app_route_paths(routes) -> list[str]:
+    """Flatten FastAPI route paths, including lazily-wrapped included routers.
+
+    Newer FastAPI versions represent app.include_router(...) as an opaque
+    _IncludedRouter wrapper (no .path) instead of eagerly flattening the
+    sub-router's routes, so a plain `r.path for r in app.routes` crashes
+    with AttributeError once a router has been included this way.
+    """
+    paths: list[str] = []
+    for route in routes:
+        path = getattr(route, "path", None)
+        if path is not None:
+            paths.append(path)
+            continue
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            paths.extend(iter_app_route_paths(getattr(original_router, "routes", [])))
+    return paths
+
+
+def find_app_routes(app_or_routes, *, path: str, method: str | None = None) -> list[Any]:
+    """Resolve routes matching a path (and optional method), flattening included routers."""
+    routes = getattr(app_or_routes, "routes", app_or_routes)
+    matches: list[Any] = []
+    for route in routes:
+        route_path = getattr(route, "path", None)
+        if route_path is not None:
+            if route_path == path and (method is None or method in getattr(route, "methods", set())):
+                matches.append(route)
+            continue
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            matches.extend(find_app_routes(original_router, path=path, method=method))
+    return matches
+
+
 @app.get("/api/debug/frontend", include_in_schema=False)
 async def debug_frontend():
     return {
@@ -6035,11 +5536,30 @@ async def debug_frontend():
         "isdir": os.path.isdir(FRONTEND_DIST),
         "index_exists": os.path.isfile(os.path.join(FRONTEND_DIST, "index.html")),
         "assets_exists": os.path.isdir(os.path.join(FRONTEND_DIST, "assets")),
-        "routes": [r.path for r in app.routes],
+        "routes": iter_app_route_paths(app.routes),
     }
 
 if os.path.isdir(FRONTEND_DIST):
     print(f"[Backend]: Frontend dist found at {FRONTEND_DIST}")
+
+    FRONTEND_SHELL_CACHE_HEADERS = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    def _is_hashed_frontend_asset(path: str) -> bool:
+        normalized = path.replace("\\", "/")
+        name = os.path.basename(normalized)
+        stem, ext = os.path.splitext(name)
+        return normalized.startswith("assets/") and ext.lower() in {".js", ".css", ".png", ".svg", ".ico", ".woff2"} and bool(re.search(r"-[A-Za-z0-9_-]{6,}$", stem))
+
+    def _frontend_cache_headers(path: str, *, spa_shell: bool = False) -> dict[str, str]:
+        if spa_shell or path == "index.html" or path.endswith(".html"):
+            return FRONTEND_SHELL_CACHE_HEADERS
+        if _is_hashed_frontend_asset(path):
+            return {"Cache-Control": "public, max-age=31536000, immutable"}
+        return {"Cache-Control": "no-cache, max-age=0"}
 
     @app.get("/", include_in_schema=False)
     async def serve_index():
@@ -6048,7 +5568,7 @@ if os.path.isdir(FRONTEND_DIST):
             raise HTTPException(404)
         with open(idx, "r", encoding="utf-8") as f:
             html = f.read()
-        return HTMLResponse(html, media_type="text/html")
+        return HTMLResponse(html, media_type="text/html", headers=_frontend_cache_headers("index.html", spa_shell=True))
 
     MEDIA_TYPES = {".js": "application/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2", ".html": "text/html", ".map": "application/json"}
 
@@ -6059,10 +5579,10 @@ if os.path.isdir(FRONTEND_DIST):
         file_path = os.path.join(FRONTEND_DIST, path)
         if os.path.isfile(file_path):
             ext = os.path.splitext(path)[1].lower()
-            return FileResponse(file_path, media_type=MEDIA_TYPES.get(ext))
+            return FileResponse(file_path, media_type=MEDIA_TYPES.get(ext), headers=_frontend_cache_headers(path))
         idx = os.path.join(FRONTEND_DIST, "index.html")
         if os.path.isfile(idx):
-            return FileResponse(idx, media_type="text/html")
+            return FileResponse(idx, media_type="text/html", headers=_frontend_cache_headers("index.html", spa_shell=True))
         raise HTTPException(404)
 else:
     print(f"[Backend Warning]: Frontend dist not found at {FRONTEND_DIST}")
@@ -6073,8 +5593,9 @@ def run_backend():
     import socket
 
     def find_free_port(start_port: int = 8080, max_attempts: int = 20, host: str = "127.0.0.1") -> int:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
         for port in range(start_port, start_port + max_attempts):
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
                 try:
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     s.bind((host, port))
@@ -6086,6 +5607,38 @@ def run_backend():
     start_port = int(os.environ.get("BACKEND_START_PORT", "8080"))
     bind_host = get_backend_bind_host()
     free_port = find_free_port(start_port=start_port, host=bind_host)
+    startup_token = None
+    launch_id = None
+    if os.environ.pop("FREELANCERSTUDIO_AUTH_STDIN", "") == "1":
+        try:
+            startup_payload = json.loads(sys.stdin.readline(4096))
+            startup_token = str(startup_payload.get("token") or "")
+            launch_id = str(startup_payload.get("launch_id") or "")
+        except (AttributeError, json.JSONDecodeError, OSError, ValueError):
+            raise RuntimeError("Trusted backend authorization bootstrap failed") from None
+    security_context = LocalSecurityContext.create(
+        token=startup_token,
+        bind_host=bind_host,
+        port=free_port,
+        launch_id=launch_id,
+        allowed_origins=get_cors_origins(),
+    )
+    set_app_security_context(app, security_context)
+    control_fd = os.environ.pop("FREELANCERSTUDIO_CONTROL_FD", "")
+    if control_fd:
+        connect_host = "::1" if bind_host == "::" else "127.0.0.1" if bind_host == "0.0.0.0" else bind_host
+        descriptor = {
+            "port": free_port,
+            "bind_host": bind_host,
+            "connect_host": connect_host,
+            "launch_id": security_context.launch_id,
+            "instance_id": security_context.instance_id,
+        }
+        try:
+            os.write(int(control_fd), (json.dumps(descriptor, separators=(",", ":")) + "\n").encode("utf-8"))
+            os.close(int(control_fd))
+        except (OSError, ValueError):
+            raise RuntimeError("Trusted backend control channel failed") from None
     print(f"[Backend Boot]: Network cluster allocated securely on {bind_host}:{free_port}")
 
     os.makedirs(RUNTIME_DIR, exist_ok=True)

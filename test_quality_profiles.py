@@ -1,6 +1,35 @@
 import main
 import project_state
-from quality_profiles import LEVEL_2_BUILD, LEVEL_3_RUNTIME, LEVEL_4_INTERACTION, LEVEL_6_NATIVE_RUNTIME, LEVEL_7_PACKAGED_ARTIFACT, default_quality_settings, ensure_quality_settings, evaluate_quality_completion, target_required_evidence_level
+from quality_profiles import LEVEL_2_BUILD, LEVEL_3_RUNTIME, LEVEL_4_INTERACTION, LEVEL_6_NATIVE_RUNTIME, LEVEL_7_PACKAGED_ARTIFACT, default_quality_settings, derive_target_requirements, ensure_quality_settings, evaluate_quality_completion, target_required_evidence_level
+
+
+def test_explicit_platform_scope_excludes_other_os_targets_from_boilerplate_text():
+    spec = {
+        "requested_target_platforms": ["desktop", "Windows", "web"],
+        "project_profiles": ["react_frontend", "vite_frontend"],
+        "description": (
+            "Installer targets are configured through electron-builder for Windows NSIS/MSI, "
+            "macOS DMG, and Linux AppImage/deb. Critical scenarios must be tested."
+        ),
+    }
+    targets = derive_target_requirements(spec, "strict_mvp")
+
+    assert targets["desktop_windows"] == "required"
+    assert targets["desktop_macos"] == "not_applicable"
+    assert targets["desktop_linux"] == "not_applicable"
+    assert targets["ios"] == "not_applicable"
+
+
+def test_unscoped_text_still_falls_back_to_keyword_detection():
+    spec = {
+        "requested_target_platforms": [],
+        "project_profiles": [],
+        "description": "Build a cross platform desktop app for windows and linux users.",
+    }
+    targets = derive_target_requirements(spec, "strict_mvp")
+
+    assert targets["desktop_windows"] == "required"
+    assert targets["desktop_linux"] == "required"
 
 
 def _checks(*extra):

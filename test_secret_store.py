@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import config_storage
 import main
+from test_security_support import authorized_test_client
 import secret_store
 
 
@@ -15,7 +16,7 @@ def _client(monkeypatch, tmp_path, config=None):
     config_path = tmp_path / "studio_config.json"
     config_path.write_text(json.dumps(config or {}, indent=2), encoding="utf-8")
     monkeypatch.setattr(config_storage, "CONFIG_FILE", str(config_path))
-    return TestClient(main.app), config_path
+    return authorized_test_client(main.app), config_path
 
 
 def test_env_secret_store_reads_provider_api_key(monkeypatch):

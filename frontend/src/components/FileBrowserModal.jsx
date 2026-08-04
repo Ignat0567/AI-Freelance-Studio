@@ -145,7 +145,7 @@ export default function FileBrowserModal({ activePort, projectId, projectTitle, 
 
   const handleDownload = (name) => {
     const relPath = currentPath ? `${currentPath}/${name}` : name;
-    const url = `http://localhost:${activePort}/api/projects/${projectId}/files/download/${encodeURIComponent(relPath)}`;
+    const url = `${window.location.origin}/api/projects/${projectId}/files/download/${encodeURIComponent(relPath)}`;
     window.open(url, '_blank');
   };
 
