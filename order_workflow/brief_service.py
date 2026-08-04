@@ -166,6 +166,24 @@ def _generic_features(order: UserOrder) -> tuple[str, ...]:
     return (sanitize_public_text(order.description[:1_500]),)
 
 
+_SECTION_HEADING = re.compile(r"^\s*\d+\.\s+(.+)$", re.MULTILINE)
+
+
+def _looks_like_authoritative_spec(description: str) -> bool:
+    """A long, already-numbered technical spec should be passed through mostly
+    verbatim rather than reduced to a handful of inferred signals. Both length and
+    structure are required so a very long but unstructured paragraph still falls
+    through to the ordinary signal-based branches."""
+    return len(description.strip()) > 2_000 and len(_SECTION_HEADING.findall(description)) >= 3
+
+
+def _authoritative_spec_features(description: str) -> tuple[str, ...]:
+    headings = _unique(sanitize_public_text(heading)[:240] for heading in _SECTION_HEADING.findall(description))
+    if headings:
+        return headings[:40]
+    return (sanitize_public_text(description[:240]) or "See the full specification in Goal.",)
+
+
 def _pdf_acceptance(signals) -> tuple[str, ...]:
     criteria = [
         "A user can upload a text-based PDF.",
@@ -270,8 +288,15 @@ class ProjectBriefService:
             raise BriefServiceError("elena_choice_required")
 
         signals = infer_requirement_signals(order)
-        features = _pdf_features(signals) if signals.pdf_documents else _generic_features(order)
-        if signals.pdf_documents:
+        if _looks_like_authoritative_spec(order.description):
+            features = _authoritative_spec_features(order.description)
+            goal = sanitize_public_text(order.description[:20_000]) or f"A small browser application supporting {features[0].rstrip('.').casefold()}."
+            non_goals = ()
+            technical = ()
+            ui = ()
+            acceptance = _generic_acceptance(features)
+        elif signals.pdf_documents:
+            features = _pdf_features(signals)
             goal = "A browser application for conversational search across uploaded PDF documents using text and voice."
             non_goals = [
                 "Handwritten documents",
@@ -308,7 +333,8 @@ class ProjectBriefService:
             )
             acceptance = _pdf_acceptance(signals)
         else:
-            goal = sanitize_public_text(order.description[:1_500]) or f"A small browser application supporting {features[0].rstrip('.').casefold()}."
+            features = _generic_features(order)
+            goal = sanitize_public_text(order.description[:20_000]) or f"A small browser application supporting {features[0].rstrip('.').casefold()}."
             non_goals = ("Features not explicitly included in the approved first version",)
             technical = ("React + Vite frontend", "FastAPI backend where required", "SQLite local storage")
             ui = ("Accessible browser interface with clear loading, error, and empty states",) if signals.ui_required else ()
