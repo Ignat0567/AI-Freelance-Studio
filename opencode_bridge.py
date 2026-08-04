@@ -70,7 +70,7 @@ _PROVIDER_MAP = {
 }
 
 _MODEL_MAP = {
-    "nvidia": "meta/llama-3.3-70b-instruct",
+    "nvidia": "deepseek-ai/deepseek-v4-pro",
     "openai": "gpt-5.5",
     "anthropic": "claude-sonnet-4-20250514",
     "deepseek": "deepseek-chat",
@@ -135,7 +135,7 @@ def _ensure_opencode_config() -> bool:
     studio_cfg = _get_studio_config()
     system_cfg = studio_cfg.get("_system", {}) if isinstance(studio_cfg.get("_system"), dict) else {}
     provider_raw = system_cfg.get("global_provider") or studio_cfg.get("global_provider") or "nvidia"
-    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
+    model = system_cfg.get("global_model") or studio_cfg.get("global_model") or _MODEL_MAP.get(provider_raw, "deepseek-ai/deepseek-v4-pro")
     # Map provider. Effective OpenCode model can differ from Studio model only
     # when the selected provider is known to fail OpenCode tool/function calls
     # and a logged-in compatible OpenCode credential is available.
@@ -472,7 +472,10 @@ def test_opencode_readiness(executable_path: str = "", selected_model: str = "",
 def _effective_opencode_provider_model(provider_raw: str, model: str, studio_cfg: dict) -> tuple[str, str, str]:
     """Choose an OpenCode-compatible provider/model while staying inside OpenCode."""
     oc_provider = _PROVIDER_MAP.get(provider_raw, provider_raw)
-    selected_model = model or _MODEL_MAP.get(provider_raw, "meta/llama-3.3-70b-instruct")
+    # Fallback default kept in sync with _MODEL_MAP["nvidia"] (both branches independently
+    # updated that entry to "deepseek-ai/deepseek-v4-pro" -- this literal mirrors it for
+    # providers absent from the map entirely).
+    selected_model = model or _MODEL_MAP.get(provider_raw, "deepseek-ai/deepseek-v4-pro")
     if provider_raw in {"opencode_bridge", "opencode_oauth_bridge", "opencode"} and "/" in str(selected_model):
         provider_from_model, model_part = str(selected_model).split("/", 1)
         return provider_from_model, model_part, ""
@@ -1085,7 +1088,7 @@ class OpencodeBridge:
         cmd = [
             binary,
             "run",
-            "Read the attached .opencode_task.md file and complete the task exactly. Modify project files on disk.",
+            prompt,
             "--model",
             native_model_id,
             "--dangerously-skip-permissions",

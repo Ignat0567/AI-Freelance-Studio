@@ -34,6 +34,21 @@ CAPABILITY_NAMES = (
     "single_image_input", "multi_image_input",
 )
 SECRET_VALUE_RE = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|authorization|cookie)\b\s*[:=]\s*[^\s'\"]+|\bsk-[A-Za-z0-9_-]{16,}\b")
+PROVIDER_ERROR_RE = re.compile(r"(?i)\b(too many requests|rate[_ -]?limited|rate limit|quota exceeded|resourceexhausted|resource exhausted|ai_apicallerror|ai_retryerror)\b")
+STUDIO_METADATA_FILES = frozenset(
+    {
+        ".freelancerstudio-project.json",
+        "execution_package.json",
+        "execution_prompt.md",
+        "delivery_report.md",
+        "generated_project_summary.json",
+        "opencode_command.txt",
+        "README_NEXT_STEPS.md",
+    }
+)
+MEANINGFUL_FILE_NAMES = frozenset({"package.json", "README.md", "pyproject.toml", "requirements.txt", "index.html", "main.py", "server.py"})
+MEANINGFUL_DIR_NAMES = frozenset({"src", "app", "frontend", "backend"})
+MEANINGFUL_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".py", ".html", ".css", ".json", ".md")
 
 
 def _native_opencode_model(model: str, connection_id: str = "") -> str:
@@ -121,19 +136,90 @@ def _attachment_metadata(paths: list[str]) -> list[dict[str, Any]]:
     return metadata
 
 
+def _parse_json_event_stream(stdout: str) -> dict[str, Any]:
+    events: list[dict[str, Any]] = []
+    non_json_lines: list[str] = []
+    event_types: list[str] = []
+    terminal_event = False
+    permission_event = False
+    explicit_errors: list[Any] = []
+    session_id = ""
+    for raw_line in _strip_ansi(stdout).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            non_json_lines.append(_safe_summary(line, 500))
+            continue
+        if not isinstance(event, dict):
+            non_json_lines.append(_safe_summary(line, 500))
+            continue
+        events.append(event)
+        event_type = str(event.get("type") or event.get("event") or event.get("kind") or "unknown")
+        event_types.append(event_type)
+        part = event.get("part") if isinstance(event.get("part"), dict) else {}
+        reason = str(part.get("reason") or event.get("reason") or "").lower()
+        terminal_event = terminal_event or (event_type == "step_finish" and reason == "stop")
+        lowered = json.dumps(event, ensure_ascii=True).lower()
+        permission_event = permission_event or "permission" in lowered or "approval" in lowered
+        if "error" in event:
+            explicit_errors.append(event.get("error"))
+        if not session_id and isinstance(event.get("sessionID") or event.get("sessionId") or event.get("session_id"), str):
+            session_id = str(event.get("sessionID") or event.get("sessionId") or event.get("session_id"))
+    return {
+        "events": events,
+        "event_types": event_types,
+        "valid_event_lines": len(events),
+        "non_json_lines": non_json_lines,
+        "non_json_line_count": len(non_json_lines),
+        "terminal_event": terminal_event,
+        "permission_event": permission_event,
+        "explicit_errors": explicit_errors,
+        "session_id": session_id[:16] + "..." if len(session_id) > 16 else session_id,
+    }
+
+
 def _error_category(stderr: str, stdout: str) -> str:
     text = f"{stderr}\n{stdout}".lower()
-    if any(item in text for item in ("unknown option", "unknown argument", "usage: opencode run", "missing argument")):
-        return "cli_argument_parsing"
+    if any(item in text for item in ("request rejected", "request was rejected", "rejected request")):
+        return "request_rejected"
+    if any(item in text for item in ("unknown option", "invalid option", "unknown argument", "invalid flag", "invalid value", "usage: opencode run", "missing argument")):
+        return "flag_rejected"
     if any(item in text for item in ("no such file", "enoent", "failed to read", "cannot read attachment")):
         return "attachment_load_failed"
-    if any(item in text for item in ("auth", "unauthorized", "login")):
-        return "unauthenticated"
-    if "model" in text:
-        return "model_unavailable"
+    if any(item in text for item in ("unauthorized", "forbidden", "missing credentials", "invalid credentials", "expired credential", "authentication", "login required")):
+        return "authentication_failure"
+    if any(item in text for item in ("unknown model", "unavailable model", "model not found", "unsupported model", "invalid model", "provider not found", "model does not exist")):
+        return "model_rejected"
+    if _provider_error_diagnostics(stderr, stdout)["provider_error"] or any(item in text for item in ("provider error", "api error", "worker local total request limit reached", "http 4", "bad request")):
+        return "provider_error"
     if any(item in text for item in ("upload", "payload too large", "request entity too large")):
         return "provider_upload_failed"
-    return "request_rejected"
+    return "process_failed"
+
+
+def _provider_error_diagnostics(stderr: str, stdout: str) -> dict[str, Any]:
+    text = _safe_summary(f"{stderr}\n{stdout}", 4000)
+    provider = ""
+    model = ""
+    provider_match = re.search(r"\bproviderID=([^\s]+)", text)
+    model_match = re.search(r"\bmodelID=([^\s]+)", text)
+    if provider_match:
+        provider = provider_match.group(1).strip('"')[:100]
+    if model_match:
+        model = model_match.group(1).strip('"')[:150]
+    signals = sorted({match.group(1) for match in PROVIDER_ERROR_RE.finditer(text)})
+    retry_observed = bool(re.search(r"(?i)\b(retry|retryerror|failed after \d+ attempts)\b", text))
+    return {
+        "provider_error": bool(signals),
+        "provider_id": provider,
+        "model_id": model,
+        "error_signals": signals,
+        "retry_observed": retry_observed,
+        "diagnostic_summary": text[-1000:] if signals else "",
+    }
 
 
 def _find_binary() -> str:
@@ -168,6 +254,116 @@ def _run_capture(command: list[str], timeout: int, cwd: str | None = None) -> tu
         return None, "", "timeout"
     except OSError as exc:
         return None, "", str(exc)
+
+
+def _terminate_owned_process_tree(process: subprocess.Popen) -> bool:
+    if process.poll() is not None:
+        return True
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, text=True, timeout=10)
+            return process.poll() is not None
+        except Exception:
+            pass
+    try:
+        process.terminate()
+        return True
+    except Exception:
+        try:
+            process.kill()
+            return False
+        except Exception:
+            return False
+
+
+def _run_owned_capture(command: list[str], timeout: int, cwd: str) -> tuple[int | None, str, str, bool, bool]:
+    process = None
+    try:
+        process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+            return process.returncode, stdout or "", stderr or "", False, False
+        except subprocess.TimeoutExpired:
+            terminated_gracefully = _terminate_owned_process_tree(process)
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                terminated_gracefully = False
+                stdout, stderr = process.communicate()
+            return None, stdout or "", stderr or "", True, terminated_gracefully
+    except OSError as exc:
+        return None, "", str(exc), False, False
+
+
+def _safe_cli_invocation(binary: str, model: str, attachment_count: int, *, workspace_bound: bool = False) -> list[str]:
+    invocation = [binary, "run", "<prompt>", "--model", model, "--format", "json"]
+    if workspace_bound:
+        invocation.extend(["--dir", "<workspace>"])
+    invocation.extend(["--file", "<attachment>"] * attachment_count)
+    return invocation
+
+
+def _scan_meaningful_artifacts(workdir: str | None, *, max_files: int = 200, max_depth: int = 4, limit: int = 50) -> tuple[str, ...]:
+    if not workdir:
+        return ()
+    root = Path(workdir).expanduser().resolve()
+    if not root.is_dir():
+        return ()
+    found: list[str] = []
+    scanned = 0
+    for child in sorted(root.rglob("*"), key=lambda item: str(item.relative_to(root)).casefold()):
+        if child.is_symlink():
+            continue
+        try:
+            resolved = child.resolve()
+        except OSError:
+            continue
+        if resolved != root and root not in resolved.parents:
+            continue
+        relative = child.relative_to(root)
+        if len(relative.parts) > max_depth or any(part in {"", ".", ".."} for part in relative.parts):
+            continue
+        safe_relative = relative.as_posix()
+        if child.name in STUDIO_METADATA_FILES:
+            continue
+        if child.is_dir():
+            if child.name in MEANINGFUL_DIR_NAMES:
+                found.append(safe_relative + "/")
+        elif child.is_file():
+            scanned += 1
+            if scanned > max_files:
+                break
+            if child.name in MEANINGFUL_FILE_NAMES or child.suffix in MEANINGFUL_SUFFIXES:
+                found.append(safe_relative)
+        if len(found) >= limit:
+            break
+    return tuple(found)
+
+
+def _artifact_validation_failure(request: dict[str, Any], workdir: str | None) -> str:
+    expected_path = str(request.get("expected_artifact_path") or "").strip()
+    expected_text = request.get("expected_artifact_text")
+    if not expected_path:
+        return ""
+    base = Path(workdir).expanduser().resolve() if workdir else Path.cwd()
+    target = Path(expected_path)
+    if not target.is_absolute():
+        target = base / target
+    try:
+        resolved = target.resolve()
+    except OSError:
+        return "Requested artifact path is invalid."
+    if workdir and resolved != base and base not in resolved.parents:
+        return "Requested artifact path escapes the workspace."
+    if not resolved.is_file():
+        return "Requested artifact was not created."
+    if expected_text is not None:
+        actual = resolved.read_text(encoding="utf-8", errors="replace")
+        allowed = {str(expected_text), f"{expected_text}\n", f"{expected_text}\r\n"}
+        if actual not in allowed:
+            return "Requested artifact content did not match."
+    return ""
 
 
 @dataclass
@@ -265,23 +461,53 @@ class OpenCodeBridgeConnection:
             return {"status": "error", "failure_stage": "before_invocation", "error_category": "attachment_missing", "errors": ["An attachment is missing"], "text": "", "attachment_count": len(requested_attachments)}
         attachment_metadata = _attachment_metadata(attachments)
         prompt = f"{request.get('system_instruction', '')}\n\n{request.get('user_content') or request.get('text_content') or ''}".strip()
+        workspace_path = request.get("workspace_path")
+        workdir = str(Path(workspace_path).expanduser().resolve()) if workspace_path else None
+        if workdir and not os.path.isdir(workdir):
+            return {"status": "error", "failure_stage": "before_invocation", "error_category": "workspace_unavailable", "errors": ["Workspace path is not available"], "text": "", "attachment_count": len(attachments)}
         command = [binary, "run", prompt, "--model", model, "--format", "json"]
+        if workdir:
+            command.extend(["--dir", workdir])
         for path in attachments:
             command.extend(["--file", path])
         timeout = max(1, int(request.get("timeout", 120)))
         started = time.monotonic()
-        # A temporary working directory prevents the judge from being placed inside a project tree.
-        with tempfile.TemporaryDirectory(prefix="freelancerstudio-opencode-") as workdir:
-            code, stdout, stderr = _run_capture(command, timeout, workdir)
+        timed_out = False
+        terminated_gracefully = False
+        if workdir:
+            code, stdout, stderr, timed_out, terminated_gracefully = _run_owned_capture(command, timeout, workdir)
+        else:
+            # A temporary working directory prevents the judge from being placed inside a project tree.
+            with tempfile.TemporaryDirectory(prefix="freelancerstudio-opencode-") as temp_workdir:
+                code, stdout, stderr = _run_capture(command, timeout, temp_workdir)
+                timed_out = code is None and stderr == "timeout"
         duration = round(time.monotonic() - started, 3)
+        event_stream = _parse_json_event_stream(stdout)
+        provider_diagnostics = _provider_error_diagnostics(stderr, stdout)
         text = self._extract_text(stdout)
-        raw_error = _strip_ansi(stderr or stdout)[-1000:]
+        raw_error = _safe_summary(stderr or stdout)
         if code is None:
-            category = "timeout" if stderr == "timeout" else "bridge_unavailable"
-            return {"status": "error", "failure_stage": "model_execution" if category == "timeout" else "cli_invocation", "error_category": category, "errors": [raw_error], "text": text, "duration": duration, "timeout": category == "timeout", "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": [binary, "run", "<prompt>", "--model", model, "--format", "json"] + ["--file", "<attachment>"] * len(attachments)}
+            if provider_diagnostics["provider_error"]:
+                meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+                return {"status": "partial" if meaningful_artifacts else "error", "failure_stage": "model_execution", "error_category": "provider_error", "classification": "provider_error", "errors": [raw_error or provider_diagnostics["diagnostic_summary"]], "text": text, "duration": duration, "timeout": timed_out, "timed_out": timed_out, "terminated_owned_process": bool(workdir), "terminated_gracefully": terminated_gracefully, "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "provider_id": provider_diagnostics["provider_id"], "model_id": provider_diagnostics["model_id"], "provider_error_signals": provider_diagnostics["error_signals"], "provider_retry_observed": provider_diagnostics["retry_observed"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+            category = "timeout" if timed_out else "bridge_unavailable"
+            meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+            classification = "opencode_usable_but_nonterminating" if timed_out and meaningful_artifacts else "opencode_timeout_without_artifact" if timed_out else "bridge_unavailable"
+            return {"status": "partial" if classification == "opencode_usable_but_nonterminating" else "error", "failure_stage": "model_execution" if category == "timeout" else "cli_invocation", "error_category": category, "classification": classification, "errors": [raw_error], "text": text, "duration": duration, "timeout": timed_out, "timed_out": timed_out, "terminated_owned_process": bool(workdir), "terminated_gracefully": terminated_gracefully, "exit_code": None, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
         if code != 0:
-            return {"status": "error", "failure_stage": "cli_process_exit", "error_category": _error_category(stderr, stdout), "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": [binary, "run", "<prompt>", "--model", model, "--format", "json"] + ["--file", "<attachment>"] * len(attachments)}
-        return {"status": "success", "text": text, "structured_output": None, "provider_connection": self.connection_id, "bridge": "opencode_bridge", "underlying_provider": model.split("/", 1)[0] if "/" in model else "", "model": model, "capabilities_used": ["text_input"] + (["file_input"] if attachments else []), "session_id": "fresh-cli-session", "duration": duration, "errors": [], "failure_stage": "", "timeout": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": [binary, "run", "<prompt>", "--model", model, "--format", "json"] + ["--file", "<attachment>"] * len(attachments)}
+            meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+            category = _error_category(stderr, stdout)
+            classification = category if category == "provider_error" or not meaningful_artifacts else "opencode_process_failed_with_artifacts"
+            return {"status": "partial" if meaningful_artifacts else "error", "failure_stage": "cli_process_exit", "error_category": category, "classification": classification, "errors": [raw_error], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "provider_id": provider_diagnostics["provider_id"], "model_id": provider_diagnostics["model_id"], "provider_error_signals": provider_diagnostics["error_signals"], "provider_retry_observed": provider_diagnostics["retry_observed"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+        meaningful_artifacts = _scan_meaningful_artifacts(workdir)
+        if event_stream["non_json_line_count"] and not event_stream["valid_event_lines"]:
+            return {"status": "error", "failure_stage": "response_parsing", "error_category": "json_stream_failure", "classification": "opencode_json_stream_failure", "errors": event_stream["non_json_lines"][:3], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": [], "opencode_json_valid_lines": 0, "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": False, "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+        if event_stream["valid_event_lines"] and not event_stream["terminal_event"]:
+            return {"status": "error", "failure_stage": "response_parsing", "error_category": "json_stream_failure", "classification": "opencode_json_stream_failure", "errors": ["OpenCode JSON event stream ended without a terminal stop event."], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": False, "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+        artifact_error = _artifact_validation_failure(request, workdir)
+        if artifact_error:
+            return {"status": "error", "failure_stage": "artifact_validation", "error_category": "artifact_validation_failed", "classification": "opencode_artifact_validation_failed", "errors": [artifact_error], "text": text, "duration": duration, "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
+        return {"status": "success", "text": text, "structured_output": None, "provider_connection": self.connection_id, "bridge": "opencode_bridge", "underlying_provider": model.split("/", 1)[0] if "/" in model else "", "model": model, "capabilities_used": ["text_input"] + (["file_input"] if attachments else []), "session_id": event_stream["session_id"] or "fresh-cli-session", "duration": duration, "errors": [], "failure_stage": "", "timeout": False, "timed_out": False, "exit_code": code, "stdout_summary": _safe_summary(stdout), "stderr_summary": _safe_summary(stderr), "opencode_events": event_stream["event_types"], "opencode_json_valid_lines": event_stream["valid_event_lines"], "opencode_json_non_json_lines": event_stream["non_json_line_count"], "opencode_terminal_event": event_stream["terminal_event"], "files_detected": bool(meaningful_artifacts), "meaningful_artifacts": list(meaningful_artifacts), "attachment_count": len(attachments), "attachment_metadata": attachment_metadata, "prompt_characters": len(prompt), "cli_invocation": _safe_cli_invocation(binary, model, len(attachments), workspace_bound=bool(workdir))}
 
     def test_connection(self, include_vision: bool = False) -> dict[str, Any]:
         response = self.execute({"user_content": "Return exactly OPENCODE_BRIDGE_TEXT_OK", "timeout": 120})

@@ -12,6 +12,7 @@ import claude_bridge
 import config_storage
 from backend_security import StrictRequestModel, get_app_security_context
 
+from api.orders import router as orders_router
 from requirements_checker import check_all, get_components
 from system_settings import (
     ALLOWED_SYSTEM_KEYS,
@@ -23,6 +24,8 @@ from system_settings import (
 
 
 router = APIRouter()
+# Temporary router-composition seam while main.py remains a monolithic explicit registrar.
+router.include_router(orders_router)
 SYSTEM_CONFIG_DEFAULTS = DEFAULT_SYSTEM_SETTINGS
 SYSTEM_CONFIG_ALLOWED_KEYS = ALLOWED_SYSTEM_KEYS
 STORAGE_PATH_KEYS = {
