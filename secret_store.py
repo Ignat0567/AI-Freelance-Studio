@@ -17,6 +17,7 @@ NAMED_SECRET_ENV_NAMES = {
     "github_token": "GITHUB_TOKEN",
     "freelancer_client_secret": "FREELANCER_CLIENT_SECRET",
     "upwork_client_secret": "UPWORK_CLIENT_SECRET",
+    "replicate_api_token": "REPLICATE_API_TOKEN",
 }
 
 SECRET_KEY_SUFFIXES = ("_key", "_api_key", "_token", "_secret", "_password")
