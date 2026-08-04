@@ -5,6 +5,10 @@ import sys
 import config_storage
 import secret_store
 
+# Every provider offered in provider_config.AI_PROVIDER_MODELS must have an entry here.
+# A missing entry is a credential-disclosure bug, not a cosmetic gap: the request is sent
+# with Authorization: Bearer <that provider's key>, so routing it anywhere else hands the
+# key to a third party that was never meant to receive it. See _resolve_base_url().
 PROVIDERS_URLS = {
     "nvidia": "https://integrate.api.nvidia.com/v1",
     "openai": "https://api.openai.com/v1",
@@ -14,6 +18,9 @@ PROVIDERS_URLS = {
     "groq": "https://api.groq.com/openai/v1",
     "together": "https://api.together.xyz/v1",
     "mistral": "https://api.mistral.ai/v1",
+    # Gemini's OpenAI-compatibility layer, so the shared f"{base_url}/chat/completions"
+    # request shape and Bearer auth used by _ai_worker.py both apply unchanged.
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai",
 }
 
 # Sampling support is explicitly filtered per transport instead of sending
@@ -27,6 +34,9 @@ PROVIDER_CAPABILITIES = {
     "deepseek": {"top_p": True, "top_k": False, "image_input": False},
     "together": {"top_p": True, "top_k": True, "image_input": False},
     "ollama": {"top_p": True, "top_k": True, "image_input": False},
+    # top_k is deliberately False: Gemini itself supports topK, but it is not an OpenAI
+    # parameter and this provider is reached through the OpenAI-compatibility endpoint.
+    "google": {"top_p": True, "top_k": False, "image_input": True},
 }
 
 _AI_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_ai_worker.py")
@@ -43,6 +53,18 @@ def get_api_key(provider: str) -> str:
 
 def provider_capabilities(provider: str) -> dict:
     return dict(PROVIDER_CAPABILITIES.get(provider.lower(), {"top_p": False, "top_k": False, "image_input": False}))
+
+
+def _resolve_base_url(provider_lower: str) -> str:
+    """Return the endpoint for a provider, or "" if it has none.
+
+    Fails closed on purpose. This previously defaulted to NVIDIA's endpoint for any
+    unrecognized provider, which meant an unlisted provider's API key was transmitted to
+    NVIDIA -- "google" was selectable in Settings and passed its own key-validation check,
+    yet every actual request sent the Google key to NVIDIA. Returning "" lets the caller
+    surface a clear error instead of silently misrouting a credential.
+    """
+    return PROVIDERS_URLS.get(provider_lower, "")
 
 
 def ask_studio_ai_with_history(
@@ -84,7 +106,9 @@ def ask_studio_ai_with_history(
             if response.get("status") == "success":
                 return response.get("text", "")
             return f"OpenCode bridge error: {response.get('error_category', 'request_failed')}"
-        base_url = PROVIDERS_URLS.get(provider_lower, PROVIDERS_URLS["nvidia"])
+        base_url = _resolve_base_url(provider_lower)
+        if not base_url:
+            return f"AI provider '{provider}' has no configured endpoint. Select a supported provider in Settings."
         api_key = get_api_key(provider)
 
         lang_hint = ""
