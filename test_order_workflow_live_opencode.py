@@ -27,6 +27,8 @@ from order_workflow import (
 )
 from order_workflow.api_models import CreateOrderRequest
 from order_workflow.execution_config import ExecutionConfigurationProvider
+from order_workflow.production_adapter import MAX_QA_REPAIR_ATTEMPTS
+from order_workflow.qa_runner import QACommandResult, QAOutcome
 from order_workflow.service import ConfiguredOpenCodeExecutionClient, OrderWorkflowService, _public_opencode_failure_code
 from order_workflow.workspace import ProjectWorkspace, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
@@ -59,14 +61,45 @@ class SequenceIds:
             return f"live-{self.index:04d}"
 
 
+def write_trivially_passing_package_json(workspace_path: Path) -> None:
+    """QA now really runs `npm test` (the adapter's default qa_commands), so fakes
+    that claim to have generated a project need a package.json whose test script
+    genuinely exits 0 -- otherwise every "successful" fixture would fail real QA."""
+    (workspace_path / "package.json").write_text(json.dumps({"name": "generated", "version": "1.0.0", "scripts": {"test": "exit 0"}}), encoding="utf-8")
+
+
+def always_passing_qa(_qa_commands, _cwd):
+    return QAOutcome(passed=True, results=())
+
+
+_FAILING_QA = QAOutcome(passed=False, results=(QACommandResult(command="npm test", exit_code=1, stdout_tail="", stderr_tail="assertion failed", duration=0.1),))
+_PASSING_QA = QAOutcome(passed=True, results=(QACommandResult(command="npm test", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),))
+
+
+class ScriptedQARunner:
+    """Returns outcomes[0], outcomes[1], ... in order; repeats the last one
+    once exhausted. Lets tests script exactly how many QA rounds fail."""
+
+    def __init__(self, outcomes: list[QAOutcome]) -> None:
+        self.outcomes = outcomes
+        self.calls = 0
+
+    def __call__(self, _qa_commands, _cwd) -> QAOutcome:
+        outcome = self.outcomes[min(self.calls, len(self.outcomes) - 1)]
+        self.calls += 1
+        return outcome
+
+
 class FakeOpenCodeClient:
     def __init__(self, *, ready=True, fail=False, cancel=False) -> None:
         self.ready = ready
         self.fail = fail
         self.cancel = cancel
         self.prompt = ""
+        self.prompts: list[str] = []
         self.workspace_path = None
         self.cancellation_seen = False
+        self.call_count = 0
 
     def check_readiness(self):
         if self.ready:
@@ -76,7 +109,9 @@ class FakeOpenCodeClient:
         return ReadinessResult.blocked(readiness_blocker("opencode_unavailable", "OpenCode is not available."))
 
     def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+        self.call_count += 1
         self.prompt = prompt
+        self.prompts.append(prompt)
         self.workspace_path = Path(workspace_path)
         self.cancellation_seen = cancellation.is_cancelled()
         event_sink.emit(stage="implementation", agent="OpenCode", progress=60, message="OpenCode execution started")
@@ -87,6 +122,7 @@ class FakeOpenCodeClient:
             raise RuntimeError("traceback token=secret-value")
         (self.workspace_path / "README.md").write_text("Generated project", encoding="utf-8")
         (self.workspace_path / "frontend").mkdir(exist_ok=True)
+        write_trivially_passing_package_json(self.workspace_path)
         return OpenCodeExecutionResult(success=True, summary="generated")
 
 
@@ -112,7 +148,10 @@ class TimeoutOpenCodeClient(FakeOpenCodeClient):
                 target.mkdir(parents=True, exist_ok=True)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text("generated", encoding="utf-8")
+                if target.name == "package.json":
+                    target.write_text(json.dumps({"name": "generated", "version": "1.0.0", "scripts": {"test": "exit 0"}}), encoding="utf-8")
+                else:
+                    target.write_text("generated", encoding="utf-8")
         event_sink.emit(stage="implementation", agent="OpenCode", progress=60, message="OpenCode timed out")
         if self.files:
             return OpenCodeExecutionResult(
@@ -435,13 +474,13 @@ def test_failed_live_execution_reports_failure_without_generation_claim_or_secre
     assert finished.result.test_summary.skipped == 1
     assert "opencode_execution_failed" in finished.result.errors
     assert "opencode_request_rejected" in finished.result.warnings
-    assert delivery.summary == "Live OpenCode execution failed; QA was not run."
+    assert delivery.summary == "Live OpenCode execution failed. QA not run because OpenCode execution did not succeed."
     assert "completed" not in delivery.summary.casefold()
     assert "generated project summary" not in workspace_summary.summary.casefold()
     assert "generated app files detected: 0" in workspace_summary.summary.casefold()
     assert report_path.is_file()
     assert "Live OpenCode execution failed." in report_path.read_text(encoding="utf-8")
-    assert "QA status: not_run" in report_path.read_text(encoding="utf-8")
+    assert "QA status: QA not run because OpenCode execution did not succeed." in report_path.read_text(encoding="utf-8")
     assert "token" not in serialized
     assert "api_key" not in serialized
 
@@ -460,12 +499,12 @@ def test_timeout_without_files_reports_execution_timeout(tmp_path):
     assert finished.result.outcome == "timed_out_without_artifacts"
     assert finished.result.errors == ("opencode_execution_timeout",)
     assert finished.result.test_summary.skipped == 1
-    assert delivery.summary == "OpenCode timed out without generated project files; QA was not run."
+    assert delivery.summary == "OpenCode timed out without generated project files. QA not run because OpenCode execution did not succeed."
     assert "OpenCode did not finish and no generated project files were detected." in report_path.read_text(encoding="utf-8")
 
 
 def test_timeout_with_readme_is_reviewable_and_honest(tmp_path):
-    client = TimeoutOpenCodeClient(files=("README.md",))
+    client = TimeoutOpenCodeClient(files=("README.md", "package.json"))
     service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
     order_id, _ = _approve_order(service)
 
@@ -479,7 +518,7 @@ def test_timeout_with_readme_is_reviewable_and_honest(tmp_path):
     assert finished.result.outcome == "generated_needs_review"
     assert finished.result.test_summary.skipped == 1
     assert "OpenCode created files but did not exit before timeout. Review the generated workspace before QA." in finished.result.warnings
-    assert delivery.summary == "OpenCode created project files but timed out; manual review required and QA was not run."
+    assert delivery.summary == "OpenCode created project files but timed out; manual review required. QA passed."
     assert "OpenCode created project files but did not exit before timeout. The workspace requires review." in report
     assert "Live OpenCode execution completed" not in report
 
@@ -509,7 +548,7 @@ def test_successful_live_execution_keeps_success_wording(tmp_path):
 
     assert finished.status is ExecutionStatus.SUCCEEDED
     assert finished.result.outcome == "generated"
-    assert delivery.summary == "Live OpenCode execution completed; QA was not run."
+    assert delivery.summary == "Live OpenCode execution completed. QA passed."
     assert (client.workspace_path / "delivery_report.md").is_file()
 
 
@@ -562,6 +601,7 @@ def test_cinematic_brief_routes_through_curated_website_sections(tmp_path):
         opencode_client=client,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
         website_section_ai_ask=_fake_section_ai_ask,
+        qa_runner=always_passing_qa,  # real `npm install && npm run build` is covered separately; keep this unit test fast
     )
     service = ProjectExecutionService(id_factory=SequenceIds(), clock=_clock, live_adapter=adapter)
 
@@ -592,3 +632,105 @@ def test_non_cinematic_brief_does_not_materialize_curated_sections(tmp_path):
     assert finished.status is ExecutionStatus.SUCCEEDED
     assert not (client.workspace_path / "frontend" / "src" / "sections").exists()
     assert "Implement the approved AI Freelancer Studio project brief" in client.prompt
+
+
+def test_qa_failure_triggers_repair_call_and_succeeds_once_qa_passes(tmp_path):
+    client = FakeOpenCodeClient()
+    qa_runner = ScriptedQARunner([_FAILING_QA, _PASSING_QA])
+    brief, handoff = _contract(PDF)
+    adapter = LiveOpenCodeExecutionAdapter(
+        provider_name="OpenCode",
+        model_name="local-codex",
+        workspace_root=tmp_path,
+        opencode_client=client,
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
+        qa_runner=qa_runner,
+    )
+    service = ProjectExecutionService(id_factory=SequenceIds(), clock=_clock, live_adapter=adapter)
+
+    finished = service.wait(service.start(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True).id, 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert finished.result.success is True
+    assert qa_runner.calls == 2  # initial QA (fails) + one re-check after repair (passes)
+    assert client.call_count == 2  # initial implementation call + one repair call
+    assert "QA passed after 1 repair attempt(s)." in finished.result.warnings
+    assert "fix the code" in client.prompts[1].lower()
+
+
+def test_qa_failure_exhausts_repair_attempts_and_reports_failure(tmp_path):
+    client = FakeOpenCodeClient()
+    qa_runner = ScriptedQARunner([_FAILING_QA])  # never passes
+    brief, handoff = _contract(PDF)
+    adapter = LiveOpenCodeExecutionAdapter(
+        provider_name="OpenCode",
+        model_name="local-codex",
+        workspace_root=tmp_path,
+        opencode_client=client,
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
+        qa_runner=qa_runner,
+    )
+    service = ProjectExecutionService(id_factory=SequenceIds(), clock=_clock, live_adapter=adapter)
+
+    finished = service.wait(service.start(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True).id, 2)
+
+    assert finished.status is ExecutionStatus.FAILED
+    assert finished.result.success is False
+    assert finished.result.outcome == "qa_failed"
+    assert finished.result.errors == ("qa_failed",)
+    assert qa_runner.calls == MAX_QA_REPAIR_ATTEMPTS + 1  # initial QA + one re-check per repair attempt
+    assert client.call_count == MAX_QA_REPAIR_ATTEMPTS + 1  # initial implementation + one call per repair attempt
+    assert f"QA failed after {MAX_QA_REPAIR_ATTEMPTS} repair attempt(s)." in finished.result.warnings
+
+
+def test_qa_repair_loop_stops_early_when_the_repair_call_itself_fails(tmp_path):
+    class FailsOnSecondCall(FakeOpenCodeClient):
+        def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+            if self.call_count == 1:  # the repair call (0-indexed count already incremented by super())
+                self.call_count += 1
+                self.prompt = prompt
+                self.prompts.append(prompt)
+                self.workspace_path = Path(workspace_path)
+                return OpenCodeExecutionResult(success=False, summary="repair attempt failed")
+            return super().execute_project_prompt(prompt, workspace_path, event_sink, cancellation)
+
+    client = FailsOnSecondCall()
+    qa_runner = ScriptedQARunner([_FAILING_QA, _PASSING_QA])  # would pass on round 2, but the repair call itself fails first
+    brief, handoff = _contract(PDF)
+    adapter = LiveOpenCodeExecutionAdapter(
+        provider_name="OpenCode",
+        model_name="local-codex",
+        workspace_root=tmp_path,
+        opencode_client=client,
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
+        qa_runner=qa_runner,
+    )
+    service = ProjectExecutionService(id_factory=SequenceIds(), clock=_clock, live_adapter=adapter)
+
+    finished = service.wait(service.start(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True).id, 2)
+
+    assert finished.status is ExecutionStatus.FAILED
+    assert qa_runner.calls == 1  # loop stopped before re-checking QA, since the repair call itself failed
+    assert "QA failed after 1 repair attempt(s)." in finished.result.warnings
+
+
+def test_empty_qa_commands_is_blocked_by_readiness_before_execution_even_starts(tmp_path):
+    # qa_commands=() is a genuinely unreachable state during execute() in practice:
+    # the base adapter's own check_readiness() already requires non-empty qa_commands
+    # (QA_TOOLS_UNAVAILABLE), so an execution never gets this far with no commands
+    # configured. The "no commands configured" vacuous-pass wording in execute()
+    # is defensive; the real coverage for it lives in test_order_workflow_qa_runner.py's
+    # test_run_qa_commands_empty_input_vacuously_passes.
+    adapter = LiveOpenCodeExecutionAdapter(
+        provider_name="OpenCode",
+        model_name="local-codex",
+        workspace_root=tmp_path,
+        opencode_client=FakeOpenCodeClient(),
+        qa_commands=(),
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
+    )
+
+    readiness = adapter.check_readiness(_contract(PDF)[0])
+
+    assert readiness.ready is False
+    assert any(item.code == "qa_tools_unavailable" for item in readiness.blockers)
