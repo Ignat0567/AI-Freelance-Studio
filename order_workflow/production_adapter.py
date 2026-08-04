@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Protocol
 
+from ai_utils import ask_studio_ai_with_history
+
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventLevel, ProjectBrief, TestSummary
@@ -19,6 +21,7 @@ from .readiness import (
     WORKSPACE_ROOT_UNAVAILABLE,
     ReadinessResult,
 )
+from .website_generation import build_website_execution_plan, detect_cinematic_website_intent
 from .workspace import plan_project_workspace, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
 
@@ -154,10 +157,15 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         qa_commands: tuple[str, ...] = ("QA not run in first live MVP",),
         environ: dict[str, str] | None = None,
         writable_probe: Callable[[Path], bool] | None = None,
+        website_section_ai_ask: Callable[[str], str] | None = None,
     ) -> None:
         super().__init__(provider_name=provider_name, model_name=model_name, workspace_root=workspace_root, qa_commands=qa_commands, dry_run=True, writable_probe=writable_probe)
         self._opencode_client = opencode_client or UnavailableOpenCodeExecutionClient()
         self._environ = environ
+        self._website_section_ai_ask = website_section_ai_ask or self._default_website_section_ai_ask
+
+    def _default_website_section_ai_ask(self, prompt: str) -> str:
+        return ask_studio_ai_with_history(self.provider_name, self.model_name, prompt, [], temperature=0.3)
 
     def check_readiness(self, brief: ProjectBrief) -> ReadinessResult:
         blockers = list(super().check_readiness(brief).blockers)
@@ -172,9 +180,22 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         if cancellation.is_cancelled():
             return _cancelled_result(request)
         event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=10, message="Preparing live OpenCode execution")
-        package = self.prepare_execution(request)
         event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=20, message="Creating project workspace")
         workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint)
+        if detect_cinematic_website_intent(request.brief):
+            event_sink.emit(stage=ExecutionStage.PLANNING, agent="Elena", progress=25, message="Selecting cinematic website sections")
+            package = build_website_execution_plan(
+                execution_id=request.execution_id,
+                brief=request.brief,
+                handoff=request.handoff,
+                workspace=workspace,
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                qa_commands=self.qa_commands,
+                ai_ask=self._website_section_ai_ask,
+            )
+        else:
+            package = self.prepare_execution(request)
         event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=30, message="Writing execution package")
         (workspace.project_path / "execution_prompt.md").write_text(package.prompt, encoding="utf-8")
         (workspace.project_path / "execution_package.json").write_text(package.to_json(), encoding="utf-8")

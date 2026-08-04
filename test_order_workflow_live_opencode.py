@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 from threading import Lock
 
@@ -9,6 +10,7 @@ import pytest
 from order_workflow import (
     AgentHandoffService,
     AlexClarificationService,
+    ClarificationAnswer,
     DesignPreviewService,
     ExecutionMode,
     ExecutionStatus,
@@ -17,8 +19,10 @@ from order_workflow import (
     ProductionProjectExecutionAdapter,
     ProjectBriefService,
     ProjectExecutionService,
+    QuestionType,
     ReadinessResult,
     UserOrder,
+    UserOrderStatus,
     live_opencode_execution_enabled,
 )
 from order_workflow.api_models import CreateOrderRequest
@@ -139,6 +143,48 @@ def _contract(description=PDF):
     clarification = AlexClarificationService(clock=lambda: NOW)
     started = clarification.begin(order)
     result = clarification.use_recommended_defaults(started.order, started.session)
+    briefs = ProjectBriefService(id_factory=ids, clock=_clock)
+    brief = briefs.generate(result.order, result.session)
+    brief = briefs.approve(brief, briefs.prepare_approval(brief))
+    design = DesignPreviewService(id_factory=ids, clock=_clock)
+    preview = design.approve(design.generate(brief), brief)
+    handoff = AgentHandoffService(id_factory=ids, clock=_clock).create_implementation_handoff(brief, preview)
+    return brief, handoff
+
+
+def _answer_for(question):
+    if question.recommended_answer is not None:
+        return question.recommended_answer
+    if question.type is QuestionType.LONG_TEXT:
+        return "Present the studio's work with a hero, a highlights section, and a contact call-to-action."
+    if question.type is QuestionType.SHORT_TEXT:
+        return "Visitors"
+    if question.type is QuestionType.BOOLEAN:
+        return False
+    if question.type is QuestionType.SINGLE_SELECT:
+        return question.options[0] if question.options else ""
+    if question.type is QuestionType.MULTI_SELECT:
+        return list(question.options[:1]) if question.options else []
+    return ""
+
+
+def _contract_answering_every_question(description):
+    """Like `_contract`, but explicitly answers any question `use_recommended_defaults`
+    cannot default (e.g. core-features, which always requires a free-text answer)."""
+    ids = SequenceIds()
+    order = UserOrder(id="order_live", title="Live App", description=description, product_type="web_app", created_at=NOW, updated_at=NOW)
+    clarification = AlexClarificationService(clock=lambda: NOW)
+    started = clarification.begin(order)
+    result = clarification.use_recommended_defaults(started.order, started.session)
+    for _ in range(5):
+        if result.order.status is UserOrderStatus.BRIEF_READY:
+            break
+        answered_ids = {answer.question_id for answer in result.order.answers}
+        pending = tuple(question for question in result.order.questions if question.id not in answered_ids)
+        if not pending:
+            break
+        answers = tuple(ClarificationAnswer(question_id=question.id, value=_answer_for(question)) for question in pending)
+        result = clarification.apply_answers(result.order, result.session, answers)
     briefs = ProjectBriefService(id_factory=ids, clock=_clock)
     brief = briefs.generate(result.order, result.session)
     brief = briefs.approve(brief, briefs.prepare_approval(brief))
@@ -486,3 +532,63 @@ def test_configured_client_passes_owned_workspace_to_bridge(tmp_path, monkeypatc
 
     assert result.success is True
     assert captured["request"]["workspace_path"] == str(tmp_path.resolve())
+
+
+def _fake_section_ai_ask(_prompt: str) -> str:
+    from website_sections import SECTION_LIBRARY
+
+    return json.dumps(
+        {
+            "sections": [
+                {
+                    "slug": section.slug,
+                    "content": {field_name: f"copy for {field_name}" for field_name, _description in section.content_schema},
+                }
+                for section in SECTION_LIBRARY
+            ]
+        }
+    )
+
+
+def test_cinematic_brief_routes_through_curated_website_sections(tmp_path):
+    from website_sections import SECTION_LIBRARY
+
+    client = FakeOpenCodeClient()
+    brief, handoff = _contract_answering_every_question("Build a cinematic WebGL showcase website with scroll storytelling for a design agency.")
+    adapter = LiveOpenCodeExecutionAdapter(
+        provider_name="OpenCode",
+        model_name="local-codex",
+        workspace_root=tmp_path,
+        opencode_client=client,
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
+        website_section_ai_ask=_fake_section_ai_ask,
+    )
+    service = ProjectExecutionService(id_factory=SequenceIds(), clock=_clock, live_adapter=adapter)
+
+    finished = service.wait(service.start(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True).id, 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    for section in SECTION_LIBRARY:
+        for relative_path in section.files:
+            assert (client.workspace_path / "frontend/src" / relative_path).is_file()
+    assert "Do NOT rewrite, simplify, or remove the existing animation" in client.prompt
+    assert "Implement the approved AI Freelancer Studio project brief" not in client.prompt
+
+
+def test_non_cinematic_brief_does_not_materialize_curated_sections(tmp_path):
+    client = FakeOpenCodeClient()
+    brief, handoff = _contract(PDF)
+    adapter = LiveOpenCodeExecutionAdapter(
+        provider_name="OpenCode",
+        model_name="local-codex",
+        workspace_root=tmp_path,
+        opencode_client=client,
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
+    )
+    service = ProjectExecutionService(id_factory=SequenceIds(), clock=_clock, live_adapter=adapter)
+
+    finished = service.wait(service.start(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True).id, 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert not (client.workspace_path / "frontend" / "src" / "sections").exists()
+    assert "Implement the approved AI Freelancer Studio project brief" in client.prompt
