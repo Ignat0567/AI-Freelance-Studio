@@ -115,3 +115,66 @@ def test_ai_utils_uses_config_storage_without_direct_studio_config_reads():
     assert "studio_config.json" not in source
     assert "load_studio_keys()" in source
     assert "with open(" not in source
+
+
+def _capture_worker_invocation(monkeypatch) -> list:
+    """Record argv passed to the AI worker subprocess without performing any network call."""
+    calls = []
+
+    class _Result:
+        returncode = 0
+        stdout = json.dumps({"choices": [{"message": {"content": "ok"}}]})
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Result()
+
+    monkeypatch.setattr(ai_utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(ai_utils, "get_api_key", lambda provider: f"SECRET-{provider}-KEY")
+    return calls
+
+
+def test_every_selectable_provider_has_its_own_endpoint():
+    """A provider offered in Settings but missing from PROVIDERS_URLS used to fall back to
+    NVIDIA's endpoint, transmitting that provider's API key to NVIDIA."""
+    import provider_config
+
+    missing = [name for name in provider_config.AI_PROVIDER_MODELS if not ai_utils._resolve_base_url(name)]
+
+    assert missing == [], f"providers reachable in Settings with no endpoint of their own: {missing}"
+
+
+def test_google_requests_go_to_google_and_never_to_another_vendor(monkeypatch):
+    calls = _capture_worker_invocation(monkeypatch)
+
+    result = ai_utils.ask_studio_ai_with_history(
+        "google", "gemini-2.0-flash-001", "system", [{"role": "user", "content": "hi"}]
+    )
+
+    assert result == "ok"
+    url, api_key = calls[0][2], calls[0][3]
+    assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    assert api_key == "SECRET-google-KEY"
+    assert "nvidia" not in url.lower()
+
+
+def test_unknown_provider_fails_closed_without_transmitting_the_key(monkeypatch):
+    calls = _capture_worker_invocation(monkeypatch)
+
+    result = ai_utils.ask_studio_ai_with_history(
+        "totally-unknown", "some-model", "system", [{"role": "user", "content": "hi"}]
+    )
+
+    assert "no configured endpoint" in result
+    assert calls == [], "an unrecognized provider must not reach any vendor endpoint"
+
+
+def test_google_advertises_openai_compatible_sampling_support():
+    """Reached through Gemini's OpenAI-compatibility endpoint, so top_k -- not an OpenAI
+    parameter -- must stay off even though Gemini itself supports topK."""
+    capabilities = ai_utils.provider_capabilities("google")
+
+    assert capabilities["top_p"] is True
+    assert capabilities["top_k"] is False
+    assert capabilities["image_input"] is True

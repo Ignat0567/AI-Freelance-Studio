@@ -111,11 +111,128 @@ def test_default_registry_contains_required_connection_types():
         ConnectionType.ANTHROPIC_API_KEY,
         ConnectionType.GEMINI_GOOGLE_ACCOUNT,
         ConnectionType.GEMINI_API_KEY,
+        ConnectionType.OPENROUTER_API_KEY,
         ConnectionType.OPENCODE_PROVIDER,
         ConnectionType.OLLAMA_LOCAL,
+        ConnectionType.LM_STUDIO_LOCAL,
+        ConnectionType.LLAMA_CPP_SERVER,
+        ConnectionType.LOCALAI_LOCAL,
+        ConnectionType.VLLM_LOCAL,
         ConnectionType.OPENAI_COMPATIBLE_LOCAL,
     ):
         assert item.value in registered
+
+
+def _openrouter_connection(**overrides):
+    data = {
+        "provider_id": "openrouter",
+        "connection_type": ConnectionType.OPENROUTER_API_KEY.value,
+        "model_id": "anthropic/claude-sonnet-4",
+        "credential_reference": "OPENROUTER_TEST_KEY",
+    }
+    data.update(overrides)
+    return _connection("openrouter", **data)
+
+
+def test_openrouter_resolves_paths_against_the_aggregator_base_url():
+    adapter = provider_registry.create(_openrouter_connection())
+    assert isinstance(adapter, provider_adapters.OpenRouterAPIAdapter)
+    assert adapter.endpoint() + adapter.api_path == "https://openrouter.ai/api/v1/chat/completions"
+    assert adapter.endpoint() + adapter.models_path == "https://openrouter.ai/api/v1/models"
+
+
+def test_openrouter_model_id_preserves_the_vendor_prefix():
+    """Regression guard: APIAdapter.model_id() strips a leading f"{provider_name}/", and
+    OpenRouter model IDs carry a real vendor prefix. Naming the adapter after any actual
+    vendor would silently eat that prefix and request the wrong model."""
+    for model_id in ("anthropic/claude-sonnet-4", "openai/gpt-4o", "meta-llama/llama-3.3-70b-instruct"):
+        adapter = provider_registry.create(_openrouter_connection(model_id=model_id))
+        assert adapter.model_id() == model_id
+    # A caller who does redundantly prefix with the adapter's own name still gets it stripped.
+    assert provider_registry.create(_openrouter_connection(model_id="openrouter/openai/gpt-4o")).model_id() == "openai/gpt-4o"
+
+
+def test_openrouter_attribution_headers_are_opt_in():
+    plain = provider_registry.create(_openrouter_connection())
+    assert set(plain._headers("KEY")) == {"Authorization", "Content-Type"}
+    assert plain._headers("KEY")["Authorization"] == "Bearer KEY"
+
+    attributed = provider_registry.create(_openrouter_connection(metadata={"x_title": "AI Freelance Studio", "http_referer": "https://example.test"}))
+    headers = attributed._headers("KEY")
+    assert headers["X-Title"] == "AI Freelance Studio"
+    assert headers["HTTP-Referer"] == "https://example.test"
+
+    for metadata in ({"x_title": "   "}, {"x_title": 123}, {}):
+        assert set(provider_registry.create(_openrouter_connection(metadata=metadata))._headers("KEY")) == {"Authorization", "Content-Type"}
+
+
+def test_openrouter_stream_execution_normalizes_events(tmp_path, monkeypatch):
+    store = ProviderCredentialStore(MemoryBackend())
+    store.save_api_key("OPENROUTER_TEST_KEY", "sk-or-test-placeholder")
+    adapter = provider_adapters.OpenRouterAPIAdapter(_openrouter_connection(), store)
+    monkeypatch.setattr(adapter, "_request_sse", lambda *_args, **_kwargs: [
+        {"choices": [{"delta": {"content": "routed "}}]},
+        {"choices": [{"delta": {"content": "reply"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}},
+    ])
+    events = asyncio.run(_events(adapter, _brief(tmp_path)))
+    assert [events[0].type, events[-1].type] == ["started", "completed"]
+    assert any(event.type == "text_delta" and event.message == "routed " for event in events)
+    assert any(event.type == "usage" and event.data["total_tokens"] == 5 for event in events)
+    assert sum(event.type in {"completed", "cancelled", "error"} for event in events) == 1
+
+
+def test_openrouter_list_models_parses_aggregator_ids(monkeypatch):
+    store = ProviderCredentialStore(MemoryBackend())
+    store.save_api_key("OPENROUTER_TEST_KEY", "sk-or-test-placeholder")
+    adapter = provider_adapters.OpenRouterAPIAdapter(_openrouter_connection(), store)
+    monkeypatch.setattr(adapter, "_request_json", lambda *_args, **_kwargs: {"data": [{"id": "anthropic/claude-sonnet-4"}, {"id": "openai/gpt-4o"}]})
+    assert [model.id for model in asyncio.run(adapter.list_models())] == ["anthropic/claude-sonnet-4", "openai/gpt-4o"]
+
+
+def test_openrouter_is_gated_as_a_paid_api(monkeypatch):
+    """A paid cloud aggregator missing from API_TYPES would be silently auto-selected as a
+    fallback and spend real money without the approval every other paid API requires."""
+    import provider_router
+
+    assert ConnectionType.OPENROUTER_API_KEY.value in provider_router.API_TYPES
+
+    async def ready(self):
+        return type("R", (), {"ready": True, "status": "ready", "message": "", "error_code": "", "diagnostics": {}})()
+    monkeypatch.setattr(provider_adapters.OpenRouterAPIAdapter, "test_connection", ready)
+    policy = AgentProviderPolicy(primary_connection_id="missing", fallback_connection_ids=["openrouter"], fallback_mode=FallbackMode.ASK_USER.value, allow_paid_api_fallback=False)
+    decision = asyncio.run(route_connection(policy, [_openrouter_connection()]))
+    assert decision.status == "requires_user_action"
+
+
+def test_openrouter_is_blocked_by_local_only_policy():
+    policy = AgentProviderPolicy(primary_connection_id="openrouter", fallback_connection_ids=[], data_locality_policy=DataLocalityPolicy.LOCAL_ONLY.value)
+    decision = asyncio.run(route_connection(policy, [_openrouter_connection()]))
+    assert decision.status == "blocked"
+    assert decision.error_code == ProviderErrorCode.PRIVACY_POLICY_BLOCK.value
+
+
+def test_every_local_connection_type_resolves_to_an_adapter():
+    """All five of these shipped working adapters but were unreachable from the Settings UI
+    until their templates were added; this pins the backend half of that contract."""
+    import provider_router
+
+    local_types = [
+        ConnectionType.LM_STUDIO_LOCAL,
+        ConnectionType.LLAMA_CPP_SERVER,
+        ConnectionType.LOCALAI_LOCAL,
+        ConnectionType.VLLM_LOCAL,
+        ConnectionType.OPENAI_COMPATIBLE_LOCAL,
+    ]
+    for item in local_types:
+        adapter = provider_registry.create(_connection("local", connection_type=item.value, provider_id="local", auth_method=AuthMethod.LOCAL.value, endpoint="http://127.0.0.1:1234"))
+        assert isinstance(adapter, provider_adapters.OpenAICompatibleLocalAdapter)
+        assert item.value in provider_router.LOCAL_TYPES
+
+
+def test_local_adapter_rejects_a_non_loopback_endpoint():
+    adapter = provider_registry.create(_connection("local", connection_type=ConnectionType.LLAMA_CPP_SERVER.value, provider_id="local", auth_method=AuthMethod.LOCAL.value, endpoint="http://198.51.100.10:8080"))
+    health = asyncio.run(adapter.get_status())
+    assert health.error_code == ProviderErrorCode.PRIVACY_POLICY_BLOCK.value
 
 
 def test_credentials_save_read_delete_and_no_secret_in_reference():

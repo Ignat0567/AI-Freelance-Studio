@@ -519,6 +519,39 @@ class OpenAIAPIAdapter(APIAdapter):
         return events
 
 
+class OpenRouterAPIAdapter(OpenAIAPIAdapter):
+    """OpenRouter is an OpenAI-compatible aggregator, so the inherited SSE event
+    normalization applies verbatim. base_url deliberately includes /api so the inherited
+    api_path ("/v1/chat/completions") and models_path ("/v1/models") resolve correctly with
+    no overrides.
+
+    provider_name is load-bearing: model_id() strips a leading f"{provider_name}/", and
+    OpenRouter model IDs carry a real vendor prefix ("anthropic/claude-sonnet-4"). Naming
+    this after any actual vendor would silently eat that prefix and request the wrong model.
+    """
+
+    base_url = "https://openrouter.ai/api"
+    provider_name = "openrouter"
+    default_models = [
+        "anthropic/claude-sonnet-4",
+        "openai/gpt-4o",
+        "google/gemini-2.5-pro",
+        "meta-llama/llama-3.3-70b-instruct",
+    ]
+
+    def _headers(self, api_key: str) -> dict[str, str]:
+        headers = super()._headers(api_key)
+        metadata = self.connection.metadata if isinstance(self.connection.metadata, dict) else {}
+        # OpenRouter's optional attribution headers are opt-in rather than hardcoded:
+        # HTTP-Referer identifies this app to a third party on every request, which is the
+        # user's disclosure to make, not ours.
+        for header, key in (("HTTP-Referer", "http_referer"), ("X-Title", "x_title")):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                headers[header] = value.strip()
+        return headers
+
+
 class AnthropicAPIAdapter(APIAdapter):
     base_url = "https://api.anthropic.com"
     api_path = "/v1/messages"
@@ -797,6 +830,7 @@ def register_default_adapters() -> None:
         ConnectionType.OPENAI_API_KEY: OpenAIAPIAdapter,
         ConnectionType.ANTHROPIC_API_KEY: AnthropicAPIAdapter,
         ConnectionType.GEMINI_API_KEY: GeminiAPIAdapter,
+        ConnectionType.OPENROUTER_API_KEY: OpenRouterAPIAdapter,
         ConnectionType.OPENCODE_PROVIDER: OpenCodeProviderAdapter,
         ConnectionType.OLLAMA_LOCAL: OllamaLocalAdapter,
         ConnectionType.LM_STUDIO_LOCAL: OpenAICompatibleLocalAdapter,
