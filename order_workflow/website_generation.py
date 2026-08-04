@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import json
 
+from design_system import generate_design_tokens, render_tokens_css
 from website_sections import SECTION_LIBRARY, get_section, materialize_site
 
 from .execution_plan import ProductionExecutionPackage
@@ -159,11 +160,16 @@ def build_website_execution_plan(
     ai_ask: Callable[[str], str],
 ) -> ProductionExecutionPackage:
     selected = select_website_sections(brief, handoff, ai_ask)
+    # Separate, narrow AI call from section selection — one AI call, one job — so
+    # each can be validated and tested independently. A broken/garbage response
+    # here never fails the build: generate_design_tokens falls back per-field.
+    tokens = generate_design_tokens(f"{brief.goal}\n\n{handoff.context_summary}", ai_ask)
     materialize_site(
         [(item.slug, item.content) for item in selected],
         workspace.project_path,
         project_name=workspace.project_reference,
         project_title=brief.goal[:80] or "AI Freelance Studio",
+        tokens_css=render_tokens_css(tokens),
     )
     return ProductionExecutionPackage(
         execution_id=execution_id,

@@ -17,6 +17,14 @@ function DriftingParticles() {
     return values;
   }, []);
 
+  // Three.js materials read raw color values, not CSS custom properties, so the
+  // design token has to be resolved once from the DOM rather than referenced as var(...).
+  const particleColor = useMemo(() => {
+    if (typeof window === "undefined") return "#8ab4ff";
+    const resolved = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
+    return resolved || "#8ab4ff";
+  }, []);
+
   useFrame((_state, delta) => {
     if (!pointsRef.current) return;
     pointsRef.current.rotation.y += delta * 0.05;
@@ -33,7 +41,7 @@ function DriftingParticles() {
           itemSize={3}
         />
       </bufferGeometry>
-      <pointsMaterial size={0.035} color="#8ab4ff" sizeAttenuation transparent opacity={0.85} />
+      <pointsMaterial size={0.035} color={particleColor} sizeAttenuation transparent opacity={0.85} />
     </points>
   );
 }
@@ -66,8 +74,8 @@ _HERO_WEBGL_CSS = """.hero-webgl {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 20%, #1b2140 0%, #060814 70%);
-  color: #f5f7ff;
+  background: radial-gradient(circle at 50% 20%, var(--color-surface) 0%, var(--color-background) 70%);
+  color: var(--color-text);
 }
 
 .hero-webgl__canvas {
@@ -99,8 +107,8 @@ _HERO_WEBGL_CSS = """.hero-webgl {
   display: inline-block;
   padding: 0.85rem 2rem;
   border-radius: 999px;
-  background: #8ab4ff;
-  color: #060814;
+  background: var(--color-accent);
+  color: var(--color-background);
   font-weight: 600;
   text-decoration: none;
   transition: transform 0.2s ease;

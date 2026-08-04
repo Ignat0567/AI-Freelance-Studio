@@ -50,8 +50,8 @@ export default function ClosingCTA() {
 _CLOSING_CTA_CSS = """.closing-cta {
   padding: 7rem 2rem;
   text-align: center;
-  background: #0d1024;
-  color: #f5f7ff;
+  background: var(--color-background);
+  color: var(--color-text);
 }
 
 .closing-cta h2 {
@@ -68,8 +68,8 @@ _CLOSING_CTA_CSS = """.closing-cta {
   display: inline-block;
   padding: 0.9rem 2.25rem;
   border-radius: 999px;
-  background: #f5f7ff;
-  color: #0d1024;
+  background: var(--color-text);
+  color: var(--color-background);
   font-weight: 600;
   text-decoration: none;
   transition: transform 0.2s ease;

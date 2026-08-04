@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+from design_system import DEFAULT_TOKENS, render_tokens_css
+
 from . import scaffold
 from .library import get_section
 
@@ -28,6 +30,7 @@ def materialize_site(
     *,
     project_name: str = "generated-cinematic-site",
     project_title: str = "AI Freelance Studio",
+    tokens_css: str | None = None,
 ) -> tuple[str, ...]:
     """Write the base scaffold plus each selected section's files into `destination`.
 
@@ -35,6 +38,8 @@ def materialize_site(
     fail closed. Content dict keys not declared by that section's `content_schema`
     are silently dropped; any declared field left unfilled raises, since an unfilled
     `%%CONTENT:...%%` placeholder would ship as broken, unbuildable source.
+    `tokens_css` defaults to the built-in design tokens when omitted, so every
+    existing call site keeps working unmodified.
     Returns the relative paths (posix-style, rooted at `destination`) that were written.
     """
     sections = []
@@ -51,6 +56,7 @@ def materialize_site(
 
     extra_dependencies = tuple(dict.fromkeys(dep for section, _content in sections for dep in section.npm_dependencies))
     written: dict[str, str] = dict(scaffold.base_files(project_name, project_title, extra_dependencies))
+    written["frontend/src/tokens.css"] = tokens_css if tokens_css is not None else render_tokens_css(DEFAULT_TOKENS)
 
     for section, content in sections:
         for relative_path, raw_text in section.files.items():

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
+from design_system import DEFAULT_TOKENS, render_tokens_css
 from website_sections import SECTION_LIBRARY, get_section, materialize_site
 from website_sections.materialize import _escape_jsx_text
+
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 
 pytestmark = pytest.mark.unit
 
@@ -114,3 +118,33 @@ def test_materialize_site_escapes_content_that_could_break_jsx(tmp_path):
 
     combined = "\n".join((tmp_path / "frontend/src" / relative_path).read_text(encoding="utf-8") for relative_path in section.files)
     assert "<img" not in combined
+
+
+def test_section_stylesheets_have_no_hardcoded_hex_colors():
+    """Regression guard: section CSS must reference design tokens (var(--color-...)),
+    never a raw hex literal, so different briefs actually produce different-looking sites."""
+    for section in SECTION_LIBRARY:
+        for relative_path, content in section.files.items():
+            if not relative_path.endswith(".css"):
+                continue
+            matches = _HEX_COLOR.findall(content)
+            assert not matches, f"{section.slug}:{relative_path} has hardcoded hex colors: {matches}"
+
+
+def test_materialize_site_writes_default_tokens_css_when_not_provided(tmp_path):
+    section = SECTION_LIBRARY[0]
+    materialize_site([(section.slug, _fill_all_fields(section))], tmp_path)
+
+    tokens_text = (tmp_path / "frontend/src/tokens.css").read_text(encoding="utf-8")
+    assert tokens_text == render_tokens_css(DEFAULT_TOKENS)
+    main_jsx = (tmp_path / "frontend/src/main.jsx").read_text(encoding="utf-8")
+    assert "./tokens.css" in main_jsx
+
+
+def test_materialize_site_writes_custom_tokens_css_when_provided(tmp_path):
+    section = SECTION_LIBRARY[0]
+    custom_css = ":root { --color-primary: #abcdef; }"
+
+    materialize_site([(section.slug, _fill_all_fields(section))], tmp_path, tokens_css=custom_css)
+
+    assert (tmp_path / "frontend/src/tokens.css").read_text(encoding="utf-8") == custom_css

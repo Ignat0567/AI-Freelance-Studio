@@ -55,7 +55,8 @@ _SCROLL_REVEAL_CSS = """.scroll-reveal {
   padding: 6rem 2rem;
   max-width: 48rem;
   margin: 0 auto;
-  color: #1a1d29;
+  color: var(--color-text);
+  background: var(--color-background);
 }
 
 .scroll-reveal__body {
@@ -75,7 +76,7 @@ _SCROLL_REVEAL_CSS = """.scroll-reveal {
 .scroll-reveal__list .scroll-reveal__item {
   padding: 1.25rem 1.5rem;
   border-radius: 0.75rem;
-  background: #f2f4fb;
+  background: var(--color-surface);
   font-weight: 500;
 }
 """

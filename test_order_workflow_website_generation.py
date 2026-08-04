@@ -158,3 +158,58 @@ def test_build_website_execution_plan_materializes_files_and_builds_narrow_promp
     for section in SECTION_LIBRARY:
         for relative_path in section.files:
             assert (workspace.project_path / "frontend/src" / relative_path).is_file()
+
+
+def _tokens_response(accent: str) -> str:
+    return json.dumps(
+        {
+            "light": {"primary": accent, "secondary": "#333333", "accent": accent, "background": "#ffffff", "surface": "#eeeeee", "text": "#111111", "muted": "#999999"},
+            "dark": {"primary": accent, "secondary": "#cccccc", "accent": accent, "background": "#000000", "surface": "#111111", "text": "#eeeeee", "muted": "#666666"},
+            "font_pairing": "editorial-serif",
+        }
+    )
+
+
+def _ai_ask_for(accent: str):
+    def _ask(prompt: str) -> str:
+        if "font_pairing" in prompt:
+            return _tokens_response(accent)
+        return _full_ai_response()
+
+    return _ask
+
+
+def test_two_different_briefs_produce_two_different_tokens_css(tmp_path):
+    brief = _brief("Cinematic WebGL showcase site.")
+    handoff = _handoff(brief)
+
+    first_workspace = ProjectWorkspace(root=tmp_path, project_path=tmp_path / "first")
+    build_website_execution_plan(
+        execution_id="execution_first",
+        brief=brief,
+        handoff=handoff,
+        workspace=first_workspace,
+        provider_name="OpenCode",
+        model_name="local-codex",
+        qa_commands=(),
+        ai_ask=_ai_ask_for("#ff0000"),
+    )
+
+    second_workspace = ProjectWorkspace(root=tmp_path, project_path=tmp_path / "second")
+    build_website_execution_plan(
+        execution_id="execution_second",
+        brief=brief,
+        handoff=handoff,
+        workspace=second_workspace,
+        provider_name="OpenCode",
+        model_name="local-codex",
+        qa_commands=(),
+        ai_ask=_ai_ask_for("#00ff00"),
+    )
+
+    first_css = (first_workspace.project_path / "frontend/src/tokens.css").read_text(encoding="utf-8")
+    second_css = (second_workspace.project_path / "frontend/src/tokens.css").read_text(encoding="utf-8")
+
+    assert first_css != second_css
+    assert "#ff0000" in first_css
+    assert "#00ff00" in second_css

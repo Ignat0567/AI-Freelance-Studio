@@ -31,6 +31,7 @@ _MAIN_JSX = (
     "import React from 'react';\n"
     "import { createRoot } from 'react-dom/client';\n"
     "import App from './App.jsx';\n"
+    "import './tokens.css';\n"
     "import './index.css';\n\n"
     "createRoot(document.getElementById('root')).render(<App />);\n"
 )
@@ -38,7 +39,9 @@ _MAIN_JSX = (
 _INDEX_CSS = (
     "*{box-sizing:border-box;margin:0;padding:0}\n"
     "html{scroll-behavior:smooth}\n"
-    "body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}\n"
+    "body{font-family:var(--font-body, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);"
+    "background:var(--color-background, #ffffff);color:var(--color-text, #12141a)}\n"
+    "h1,h2,h3,h4{font-family:var(--font-heading, inherit)}\n"
     "a{color:inherit}\n"
 )
 
