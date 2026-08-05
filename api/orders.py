@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
 from ai_utils import ask_studio_ai_with_history
+from collaboration.execution_bridge import publish_execution_event
+from collaboration.service import get_or_create_collaboration_service
 from order_workflow import ExecutionMode
 from order_workflow.api_models import (
     AnswersRequest,
@@ -55,7 +57,12 @@ _STATUS_BY_CODE = {
 def get_order_workflow_service(request: Request) -> OrderWorkflowService:
     service = getattr(request.app.state, "order_workflow_service", None)
     if service is None:
-        service = OrderWorkflowService()
+        app = request.app
+
+        def _collaboration_sink(event) -> None:
+            publish_execution_event(get_or_create_collaboration_service(app), event)
+
+        service = OrderWorkflowService(collaboration_sink=_collaboration_sink)
         request.app.state.order_workflow_service = service
     return service
 

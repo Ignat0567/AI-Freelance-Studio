@@ -115,6 +115,7 @@ class ProjectExecutionService:
         clock: Callable[[], datetime] | None = None,
         thread_factory: Callable[..., Thread] = Thread,
         event_limit: int = 200,
+        collaboration_sink: Callable[[ExecutionEvent], None] | None = None,
     ) -> None:
         if event_limit <= 0:
             raise ValueError("event_limit must be positive")
@@ -127,6 +128,7 @@ class ProjectExecutionService:
         self._clock = clock
         self._thread_factory = thread_factory
         self._event_limit = event_limit
+        self._collaboration_sink = collaboration_sink
         self._lock = RLock()
         self._records: dict[str, _ExecutionRecord] = {}
         self._by_approval: dict[tuple[str, str, str], str] = {}
@@ -229,7 +231,9 @@ class ProjectExecutionService:
                 return self._snapshot(record.snapshot)
             record.token.cancel()
             if record.snapshot.status in {ExecutionStatus.QUEUED, ExecutionStatus.AWAITING_USER}:
-                self._finish_locked(record, self._cancelled_result(), ExecutionStatus.CANCELLED)
+                finished_event = self._finish_locked(record, self._cancelled_result(), ExecutionStatus.CANCELLED)
+                if finished_event is not None:
+                    self._notify_collaboration(finished_event)
                 return self._snapshot(record.snapshot)
         self._emit(
             execution_id,
@@ -257,18 +261,31 @@ class ProjectExecutionService:
     def shutdown(self, timeout: float = 2.0) -> None:
         if timeout < 0:
             raise ValueError("timeout must not be negative")
+        finished_events: list[ExecutionEvent] = []
         with self._lock:
             self._accepting = False
             workers = []
             for record in self._records.values():
                 if record.snapshot.status not in TERMINAL_EXECUTION_STATUSES:
                     record.token.cancel()
-                    self._finish_locked(record, self._cancelled_result(), ExecutionStatus.CANCELLED)
+                    finished_event = self._finish_locked(record, self._cancelled_result(), ExecutionStatus.CANCELLED)
+                    if finished_event is not None:
+                        finished_events.append(finished_event)
                     workers.append(record.worker)
+        for finished_event in finished_events:
+            self._notify_collaboration(finished_event)
         deadline = monotonic() + timeout
         for worker in workers:
             if worker is not None:
                 worker.join(max(0.0, deadline - monotonic()))
+
+    def _notify_collaboration(self, event: ExecutionEvent) -> None:
+        if self._collaboration_sink is None:
+            return
+        try:
+            self._collaboration_sink(event)
+        except Exception:
+            pass  # collaboration mirroring is best-effort and must never break real execution
 
     def _restore(self) -> None:
         for snapshot in self._store.load():
@@ -287,7 +304,9 @@ class ProjectExecutionService:
         with self._lock:
             record = self._records[execution_id]
             if record.token.is_cancelled():
-                self._finish_locked(record, self._cancelled_result(), ExecutionStatus.CANCELLED)
+                finished_event = self._finish_locked(record, self._cancelled_result(), ExecutionStatus.CANCELLED)
+                if finished_event is not None:
+                    self._notify_collaboration(finished_event)
                 return
             record.started_monotonic = monotonic()
             self._set_running_locked(record, ExecutionStage.REQUIREMENTS, "Alex", 5, "Starting execution")
@@ -298,7 +317,9 @@ class ProjectExecutionService:
             if result.outcome == "cancelled" or record.token.is_cancelled():
                 status = ExecutionStatus.CANCELLED
             with self._lock:
-                self._finish_locked(record, result, status)
+                finished_event = self._finish_locked(record, result, status)
+            if finished_event is not None:
+                self._notify_collaboration(finished_event)
         except Exception:
             result = ExecutionResult(
                 success=False,
@@ -310,7 +331,9 @@ class ProjectExecutionService:
                 completed_at=utc_now(self._clock),
             )
             with self._lock:
-                self._finish_locked(self._records[execution_id], result, ExecutionStatus.FAILED)
+                finished_event = self._finish_locked(self._records[execution_id], result, ExecutionStatus.FAILED)
+            if finished_event is not None:
+                self._notify_collaboration(finished_event)
 
     def _emit(
         self,
@@ -354,6 +377,7 @@ class ProjectExecutionService:
             )
             record.snapshot = updated
             self._save(updated)
+        self._notify_collaboration(event)
 
     def _add_artifact(self, execution_id: str, *, kind: ArtifactKind, name: str, summary: str, reference: str) -> ExecutionArtifact:
         with self._lock:
@@ -389,7 +413,8 @@ class ProjectExecutionService:
             )
             record.snapshot = updated
             self._save(updated)
-            return artifact
+        self._notify_collaboration(event)
+        return artifact
 
     def _create_blocked_execution(
         self,
@@ -401,6 +426,16 @@ class ProjectExecutionService:
     ) -> ProjectExecution:
         now = utc_now(self._clock)
         execution_id = new_public_id("execution", self._id_factory)
+        blocker_event = ExecutionEvent(
+            id=new_public_id("event", self._id_factory),
+            execution_id=execution_id,
+            kind=EventKind.BLOCKER,
+            level=EventLevel.WARNING,
+            message=blockers[0].message,
+            stage=ExecutionStage.REQUIREMENTS,
+            agent="Studio",
+            created_at=now,
+        )
         execution = ProjectExecution(
             id=execution_id,
             order_id=brief.order_id,
@@ -413,18 +448,7 @@ class ProjectExecutionService:
             active_agent="Studio",
             current_activity="Execution is blocked until required setup is complete",
             blockers=blockers,
-            events=(
-                ExecutionEvent(
-                    id=new_public_id("event", self._id_factory),
-                    execution_id=execution_id,
-                    kind=EventKind.BLOCKER,
-                    level=EventLevel.WARNING,
-                    message=blockers[0].message,
-                    stage=ExecutionStage.REQUIREMENTS,
-                    agent="Studio",
-                    created_at=now,
-                ),
-            ),
+            events=(blocker_event,),
             created_at=now,
             updated_at=now,
         )
@@ -436,6 +460,7 @@ class ProjectExecutionService:
             self._records[execution.id] = record
             self._by_approval[key] = execution.id
             self._save(execution)
+        self._notify_collaboration(blocker_event)
         return self._snapshot(execution)
 
     def _set_running_locked(
@@ -467,9 +492,9 @@ class ProjectExecutionService:
         record: _ExecutionRecord,
         result: ExecutionResult,
         status: ExecutionStatus,
-    ) -> None:
+    ) -> ExecutionEvent | None:
         if record.snapshot.status in TERMINAL_EXECUTION_STATUSES:
-            return
+            return None
         now = utc_now(self._clock)
         duration = monotonic() - record.started_monotonic if record.started_monotonic is not None else 0.0
         result = self._sanitize_result(result).model_copy(
@@ -506,6 +531,7 @@ class ProjectExecutionService:
             }
         )
         self._save(record.snapshot)
+        return event
 
     @staticmethod
     def _sanitize_result(result: ExecutionResult) -> ExecutionResult:

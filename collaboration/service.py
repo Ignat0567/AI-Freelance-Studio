@@ -116,3 +116,11 @@ class CollaborationService:
             self._require_known_channel(channel_id)
         events = self._store.list_events(channel_id)
         return tuple(sorted(events, key=lambda item: item.created_at))
+
+
+def get_or_create_collaboration_service(app) -> CollaborationService:
+    service = getattr(app.state, "collaboration_service", None)
+    if service is None:
+        service = CollaborationService()
+        app.state.collaboration_service = service
+    return service

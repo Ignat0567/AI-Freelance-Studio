@@ -7,7 +7,7 @@ from pydantic import Field, StringConstraints
 
 from backend_security import StrictRequestModel
 from collaboration.models import ChannelId
-from collaboration.service import CollaborationError, CollaborationService
+from collaboration.service import CollaborationError, CollaborationService, get_or_create_collaboration_service
 
 router = APIRouter(prefix="/api/collaboration", tags=["collaboration"])
 
@@ -29,11 +29,7 @@ class PostMessageRequest(StrictRequestModel):
 
 
 def get_collaboration_service(request: Request) -> CollaborationService:
-    service = getattr(request.app.state, "collaboration_service", None)
-    if service is None:
-        service = CollaborationService()
-        request.app.state.collaboration_service = service
-    return service
+    return get_or_create_collaboration_service(request.app)
 
 
 def install_collaboration_api(app, *, service: CollaborationService | None = None) -> CollaborationService:
