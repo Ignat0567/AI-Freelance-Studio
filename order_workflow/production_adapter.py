@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ai_utils import ask_studio_ai_with_history
+from project_docs import build_architecture_mermaid, build_module_map, build_readme, generate_overview_paragraph
 
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
@@ -285,6 +286,37 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             f"Workspace files inspected: {summary['files_created']}.\n"
         )
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
+
+        doc_artifacts: tuple = ()
+        if result.success:
+            # The structure (module map, Mermaid diagram) is fully deterministic --
+            # built from the real generated file tree, never AI-imagined -- so it
+            # can never drift out of sync with what was actually delivered. Only
+            # the README's overview paragraph gets one narrow AI call, with a safe
+            # non-AI fallback (generate_overview_paragraph never raises).
+            module_map = build_module_map(workspace.project_path)
+            tech_stack = (
+                f"Frontend: {request.brief.recommended_stack.frontend}\n"
+                f"Backend: {request.brief.recommended_stack.backend}\n"
+                f"Storage: {request.brief.recommended_stack.storage}"
+            )
+            overview = generate_overview_paragraph(request.brief.goal, request.handoff.requirements, self._website_section_ai_ask)
+            readme_text = build_readme(
+                project_name=workspace.project_reference,
+                goal=request.brief.goal,
+                tech_stack=tech_stack,
+                features=request.handoff.requirements,
+                setup_commands=package.qa_commands,
+                module_map=module_map,
+                overview=overview,
+            )
+            architecture_text = build_architecture_mermaid(module_map, workspace.project_reference)
+            (workspace.project_path / "README.md").write_text(readme_text, encoding="utf-8")
+            (workspace.project_path / "ARCHITECTURE.md").write_text(architecture_text, encoding="utf-8")
+            doc_artifacts = (
+                event_sink.artifact(kind=ArtifactKind.PROJECT_DOCUMENTATION, name="README.md", summary="Generated project README with a real feature/tech-stack overview.", reference="readme-md"),
+                event_sink.artifact(kind=ArtifactKind.PROJECT_DOCUMENTATION, name="ARCHITECTURE.md", summary="Real Mermaid architecture diagram built from the generated file tree.", reference="architecture-md"),
+            )
         workspace_summary = (
             f"Workspace contains {summary['files_created']} non-marker files; "
             f"generated app files detected: {app_file_count}."
@@ -303,6 +335,7 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink.artifact(kind=ArtifactKind.AGENT_HANDOFF, name="execution_package.json", summary="Live execution package written to the owned workspace.", reference="execution-package-json"),
             event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="execution_prompt.md", summary="Implementation prompt sent to OpenCode.", reference="execution-prompt-md"),
             event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="delivery_report.md", summary=delivery_summary, reference="delivery-report-md"),
+            *doc_artifacts,
         )
         event_sink.emit(stage=ExecutionStage.COMPLETED, agent="Product Judge", progress=100, message="Delivery summary prepared")
 

@@ -265,13 +265,23 @@ def _configuration(tmp_path, *, config=None, opt_in=False):
     )
 
 
-def _configured_workflow(tmp_path, *, config=None, opt_in=False, client=None):
+def _no_network_ai_ask(_prompt: str) -> str:
+    """Default stub for _configured_workflow: no test in this file exercises the
+    cinematic-website branch (which is the only thing that used to call this),
+    but documentation generation now calls it on every successful execution too --
+    returning "" makes generate_overview_paragraph fall back deterministically
+    instead of any test silently attempting a real network call."""
+    return ""
+
+
+def _configured_workflow(tmp_path, *, config=None, opt_in=False, client=None, website_section_ai_ask=None):
     ids = SequenceIds()
     return OrderWorkflowService(
         id_factory=ids,
         clock=_clock,
         configuration_provider=_configuration(tmp_path, config=config, opt_in=opt_in),
         opencode_client=client or FakeOpenCodeClient(),
+        website_section_ai_ask=website_section_ai_ask or _no_network_ai_ask,
     )
 
 
@@ -550,6 +560,45 @@ def test_successful_live_execution_keeps_success_wording(tmp_path):
     assert finished.result.outcome == "generated"
     assert delivery.summary == "Live OpenCode execution completed. QA passed."
     assert (client.workspace_path / "delivery_report.md").is_file()
+
+
+def test_successful_live_execution_writes_real_readme_and_architecture_docs(tmp_path):
+    client = FakeOpenCodeClient()
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    doc_artifacts = [item for item in finished.artifacts if item.kind == "project_documentation"]
+    assert {item.name for item in doc_artifacts} == {"README.md", "ARCHITECTURE.md"}
+
+    readme_text = (client.workspace_path / "README.md").read_text(encoding="utf-8")
+    architecture_text = (client.workspace_path / "ARCHITECTURE.md").read_text(encoding="utf-8")
+
+    # write_trivially_passing_package_json + FakeOpenCodeClient's own README.md write
+    # produce a real generated file tree; the deterministic generator overwrites the
+    # fake client's placeholder README (matching website_sections/design_system's own
+    # "curated beats freeform" precedent) with real substituted content.
+    assert "Generated project" not in readme_text  # the fake client's own placeholder got overwritten
+    assert "## Overview" in readme_text
+    assert "## Tech Stack" in readme_text
+    assert "```mermaid" in architecture_text
+    assert "flowchart TD" in architecture_text
+
+
+def test_failed_live_execution_does_not_write_documentation(tmp_path):
+    client = RejectingOpenCodeClient()
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+
+    assert finished.status is ExecutionStatus.FAILED
+    assert not any(item.kind == "project_documentation" for item in finished.artifacts)
+    assert not (client.workspace_path / "README.md").exists()
 
 
 def test_configured_client_passes_owned_workspace_to_bridge(tmp_path, monkeypatch):

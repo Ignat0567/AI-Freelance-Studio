@@ -106,6 +106,7 @@ class ArtifactKind(str, Enum):
     TEST_SUMMARY = "test_summary"
     DELIVERY_REPORT = "delivery_report"
     GENERATED_PROJECT = "generated_project"
+    PROJECT_DOCUMENTATION = "project_documentation"
 
 
 class StrictDomainModel(BaseModel):

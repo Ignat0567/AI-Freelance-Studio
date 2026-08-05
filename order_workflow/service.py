@@ -156,10 +156,12 @@ class ConfigurationBackedExecutionAdapter:
         *,
         live: bool = False,
         opencode_client: OpenCodeExecutionClient | None = None,
+        website_section_ai_ask: Callable[[str], str] | None = None,
     ) -> None:
         self._configuration_provider = configuration_provider
         self._live = live
         self._opencode_client = opencode_client
+        self._website_section_ai_ask = website_section_ai_ask
 
     def check_readiness(self, brief: ProjectBrief) -> ReadinessResult:
         return self._adapter().check_readiness(brief)
@@ -180,6 +182,7 @@ class ConfigurationBackedExecutionAdapter:
                 workspace_root=workspace_root,
                 opencode_client=self._opencode_client or ConfiguredOpenCodeExecutionClient(),
                 environ=environ,
+                website_section_ai_ask=self._website_section_ai_ask,
             )
         return ProductionProjectExecutionAdapter(provider_name=provider, model_name=model, workspace_root=workspace_root)
 
@@ -193,6 +196,7 @@ class OrderWorkflowService:
         execution_service: ProjectExecutionService | None = None,
         configuration_provider: ExecutionConfigurationProvider | None = None,
         opencode_client: OpenCodeExecutionClient | None = None,
+        website_section_ai_ask: Callable[[str], str] | None = None,
     ) -> None:
         self._id_factory = id_factory
         self._clock = clock
@@ -205,7 +209,7 @@ class OrderWorkflowService:
             id_factory=id_factory,
             clock=clock,
             production_adapter=ConfigurationBackedExecutionAdapter(self._configuration),
-            live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client),
+            live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask),
         )
         self._orders: dict[str, UserOrder] = {}
         self._sessions: dict[str, ClarificationSession] = {}
