@@ -46,6 +46,7 @@
 .ow-readiness .unavailable { opacity: .72; }
 .ow-readiness span { display: block; color: var(--fs-muted); }
 .ow-callout label { display: flex; gap: 8px; align-items: center; }
+.ow-proposal-text { white-space: pre-wrap; word-break: break-word; background: rgba(255,255,255,.05); border: 1px solid var(--fs-border); border-radius: 16px; padding: 14px; color: var(--fs-text); font-family: inherit; max-height: 420px; overflow-y: auto; }
 .ow-progress { height: 12px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.12); }
 .ow-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--fs-accent), #8fe3ff); }
 .ow-timeline, .ow-artifacts { display: grid; gap: 8px; }

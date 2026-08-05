@@ -21,7 +21,35 @@ function DesignPreviewPanel({ preview, required, approved, pending, onGenerate, 
   );
 }
 
-export default function ProjectBriefPanel({ state, pending, onGenerate, onApprove, onRevise, onBack, onGeneratePreview, onApprovePreview, onRevisePreview }) {
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function ClientProposalSection({ proposal, pending, error, onGenerate }) {
+  return (
+    <section className="ow-brief-section wide">
+      <h3>Client Proposal</h3>
+      <div className="ow-actions"><button type="button" className="fs-secondary" onClick={onGenerate} disabled={pending}>{pending ? 'Generating proposal...' : 'Generate proposal'}</button></div>
+      {error && <p className="ow-note">{error}</p>}
+      {proposal && (
+        <>
+          <pre className="ow-proposal-text">{proposal.proposal_markdown}</pre>
+          <div className="ow-actions"><button type="button" className="fs-secondary" onClick={() => downloadTextFile('proposal.md', proposal.proposal_markdown)}>Download as .md</button></div>
+        </>
+      )}
+    </section>
+  );
+}
+
+export default function ProjectBriefPanel({ state, pending, onGenerate, onApprove, onRevise, onBack, onGeneratePreview, onApprovePreview, onRevisePreview, proposal, proposalPending, proposalError, onGenerateProposal }) {
   const brief = state?.brief;
   const [revisionText, setRevisionText] = useState('');
   if (!brief) {
@@ -44,6 +72,7 @@ export default function ProjectBriefPanel({ state, pending, onGenerate, onApprov
       </div>
       <div className="ow-revision-box"><label>Request changes: add one requirement<input value={revisionText} onChange={event => setRevisionText(event.target.value)} placeholder="Example: Keyboard shortcut for push-to-talk" /></label><button type="button" className="fs-secondary" disabled={!revisionText.trim() || pending} onClick={() => { onRevise(revisionText); setRevisionText(''); }}>Request changes</button></div>
       <DesignPreviewPanel preview={state?.design_preview} required={state?.design_preview_required} approved={state?.approval?.approved} pending={pending} onGenerate={onGeneratePreview} onApprove={onApprovePreview} onRevise={onRevisePreview} />
+      <ClientProposalSection proposal={proposal} pending={proposalPending} error={proposalError} onGenerate={onGenerateProposal} />
       {state?.handoff_ready && <div className="ow-callout success"><strong>Alex to Codex handoff is ready.</strong><span>Execution can begin after explicit approval and Elena preview approval.</span></div>}
       <div className="ow-actions"><button type="button" className="fs-secondary" onClick={onBack}>Back to answers</button><button type="button" className="fs-primary" onClick={() => onApprove(brief)} disabled={pending || state?.approval?.approved}>{state?.approval?.approved ? 'Brief approved' : 'Approve brief'}</button></div>
     </section>

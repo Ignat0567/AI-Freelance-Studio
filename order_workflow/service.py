@@ -308,6 +308,14 @@ class OrderWorkflowService:
                 raise OrderWorkflowError("brief_not_ready", "Generate the brief after clarification is complete.")
         return self.snapshot(order_id)
 
+    def get_brief_model(self, order_id: str) -> ProjectBrief:
+        with self._lock:
+            self._order(order_id)
+            brief = self._latest_brief(order_id)
+            if brief is None:
+                raise OrderWorkflowError("brief_not_ready", "Generate the brief after clarification is complete.")
+            return brief
+
     def generate_brief(self, order_id: str) -> dict[str, Any]:
         with self._lock:
             existing = self._latest_brief(order_id)

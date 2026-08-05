@@ -44,6 +44,9 @@ export default function OrderWorkflowPage({ active }) {
   const [liveConfirm, setLiveConfirm] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [polling, setPolling] = useState(false);
+  const [proposal, setProposal] = useState(null);
+  const [proposalPending, setProposalPending] = useState(false);
+  const [proposalError, setProposalError] = useState('');
   const mounted = useRef(true);
   const startInFlight = useRef(false);
 
@@ -134,6 +137,22 @@ export default function OrderWorkflowPage({ active }) {
     });
   };
 
+  const generateProposal = async () => {
+    // Deliberately not routed through run()/applyState() -- the proposal
+    // response ({proposal_markdown, estimate}) is not an order-snapshot shape,
+    // and feeding it to applyState would corrupt the current step state.
+    setProposalPending(true);
+    setProposalError('');
+    try {
+      const next = await orderWorkflowApi.generateProposal(state.order.id);
+      if (mounted.current) setProposal(next);
+    } catch (err) {
+      if (mounted.current) setProposalError(cleanError(err));
+    } finally {
+      if (mounted.current) setProposalPending(false);
+    }
+  };
+
   const submitAnswers = () => {
     const payload = Object.entries(answers).map(([question_id, value]) => ({ question_id, value }));
     if (!payload.length) { setError('Choose at least one answer or use recommended defaults.'); return; }
@@ -184,7 +203,7 @@ export default function OrderWorkflowPage({ active }) {
       </nav>
       {step === 'new-order' && <OrderCreatePanel form={form} setForm={setForm} pending={pending} onSubmit={submitOrder} onAutoSubmit={submitOrderAutomatically} />}
       {step === 'clarification' && <ClarificationPanel state={state} answers={answers} setAnswers={setAnswers} pending={pending} onSubmit={submitAnswers} onDefaults={() => run(() => orderWorkflowApi.applyDefaults(state.order.id))} onBack={() => setStep('new-order')} />}
-      {step === 'brief' && <ProjectBriefPanel state={state} pending={pending} onGenerate={() => run(() => orderWorkflowApi.generateBrief(state.order.id))} onApprove={approveBrief} onRevise={reviseBrief} onGeneratePreview={generateDesignPreview} onApprovePreview={approveDesignPreview} onRevisePreview={reviseDesignPreview} onBack={() => setStep('clarification')} />}
+      {step === 'brief' && <ProjectBriefPanel state={state} pending={pending} onGenerate={() => run(() => orderWorkflowApi.generateBrief(state.order.id))} onApprove={approveBrief} onRevise={reviseBrief} onGeneratePreview={generateDesignPreview} onApprovePreview={approveDesignPreview} onRevisePreview={reviseDesignPreview} onBack={() => setStep('clarification')} proposal={proposal} proposalPending={proposalPending} proposalError={proposalError} onGenerateProposal={generateProposal} />}
       {step === 'execution' && <ExecutionDashboard state={state} readiness={readiness} pending={pending} canStart={canStartExecution} canDryRun={Boolean(readiness?.can_prepare_dry_run && canStartExecution)} canLive={Boolean(readiness?.can_run_live && canStartExecution)} liveConfirm={liveConfirm} setLiveConfirm={setLiveConfirm} onStart={() => startExecution('fake')} onDryRun={startDryRun} onLive={startLive} onCancel={() => run(() => orderWorkflowApi.cancelExecution(state.order.id))} onRefresh={() => loadOrder(state.order.id).catch(err => setError(cleanError(err)))} onRefreshReadiness={() => loadReadiness(state.order.id).catch(err => setError(cleanError(err)))} />}
       {step === 'result' && <ExecutionResultPanel state={state} onNewOrder={reset} onBackToBrief={() => setStep('brief')} />}
       {!state?.order && step !== 'new-order' && <div className="ow-callout warning">No current order is loaded. Use the new order screen to begin.</div>}

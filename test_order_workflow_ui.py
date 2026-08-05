@@ -202,6 +202,22 @@ def test_autopilot_trigger_is_wired_end_to_end():
     assert "onAutoSubmit={submitOrderAutomatically}" in page
 
 
+def test_client_proposal_trigger_is_wired_end_to_end():
+    api = _read("orderWorkflowApi.js")
+    brief = _read("ProjectBriefPanel.jsx")
+    page = _read("OrderWorkflowPage.jsx")
+    css = _read("OrderWorkflow.css")
+
+    assert "/proposal" in api
+    assert "generateProposal" in api
+    assert "Generate proposal" in brief
+    assert "Download as .md" in brief
+    assert "proposal_markdown" in brief
+    assert "onGenerateProposal" in page
+    assert "generateProposal" in page
+    assert "ow-proposal-text" in css
+
+
 def test_theme_accessibility_and_reduced_motion_hooks_exist():
     css = _read("OrderWorkflow.css")
     jsx = _read("OrderWorkflowPage.jsx") + _read("ExecutionDashboard.jsx")

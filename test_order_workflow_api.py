@@ -405,6 +405,38 @@ def test_autopilot_propagates_order_workflow_errors_through_the_status_table():
     assert response.json()["detail"]["code"] == "order_not_found"
 
 
+def test_proposal_returns_real_markdown_and_estimate_for_a_ready_brief():
+    def fake_ai_ask(_prompt: str) -> str:
+        return "A concrete, specific value proposition sentence."
+
+    app = _app(ai_ask=fake_ai_ask)
+    client = _client(app)
+    order_id, _ = _complete_defaults(client)
+    brief_state = client.post(f"/api/orders/{order_id}/brief", json={})
+    assert brief_state.status_code == 200, brief_state.text
+
+    response = client.post(f"/api/orders/{order_id}/proposal", json={})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "# Project Proposal" in body["proposal_markdown"]
+    assert "A concrete, specific value proposition sentence." in body["proposal_markdown"]
+    assert body["estimate"]["min_hours"] > 0
+    assert body["estimate"]["min_cost"] > 0
+    assert body["estimate"]["currency"] == "USD"
+
+
+def test_proposal_requires_a_ready_brief():
+    client = _client(_app())
+    created = client.post("/api/orders", json=_order_payload())
+    order_id = created.json()["order"]["id"]
+
+    response = client.post(f"/api/orders/{order_id}/proposal", json={})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "brief_not_ready"
+
+
 def test_order_routes_are_registered_through_system_router_seam():
     from api.system import router as system_router
 

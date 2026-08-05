@@ -20,6 +20,7 @@ from order_workflow.api_models import (
 )
 from order_workflow.autopilot import run_order_to_handoff_automatically
 from order_workflow.execution_config import ExecutionConfigurationProvider
+from order_workflow.proposal import build_proposal, estimate_project_cost, generate_value_proposition
 from order_workflow.service import OrderWorkflowError, OrderWorkflowService
 
 
@@ -137,6 +138,31 @@ async def apply_defaults(order_id: str, request: Request):
 @router.post("/{order_id}/autopilot")
 def run_autopilot(order_id: str, request: Request):
     return _call(run_order_to_handoff_automatically, get_order_workflow_service(request), order_id, get_order_autopilot_ai_ask(request))
+
+
+@router.post("/{order_id}/proposal")
+def generate_order_proposal(order_id: str, request: Request):
+    service = get_order_workflow_service(request)
+    ai_ask = get_order_autopilot_ai_ask(request)
+
+    def _build():
+        brief = service.get_brief_model(order_id)
+        estimate = estimate_project_cost(brief)
+        value_proposition = generate_value_proposition(brief, ai_ask)
+        proposal_markdown = build_proposal(brief, estimate, value_proposition)
+        return {
+            "proposal_markdown": proposal_markdown,
+            "estimate": {
+                "min_hours": estimate.min_hours,
+                "max_hours": estimate.max_hours,
+                "hourly_rate": estimate.hourly_rate,
+                "min_cost": estimate.min_cost,
+                "max_cost": estimate.max_cost,
+                "currency": estimate.currency,
+            },
+        }
+
+    return _call(_build)
 
 
 @router.get("/{order_id}/brief")
