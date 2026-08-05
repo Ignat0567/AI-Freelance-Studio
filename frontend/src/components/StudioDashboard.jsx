@@ -4,6 +4,7 @@ import OrderWorkflowPage from '../features/order-workflow/OrderWorkflowPage.jsx'
 import SandboxTestLabPage from '../features/sandbox-test-lab/SandboxTestLabPage.jsx';
 import KnowledgeBasePage from '../features/knowledge-base/KnowledgeBasePage.jsx';
 import MarketplacePage from '../features/marketplace/MarketplacePage.jsx';
+import VideoGenerationPage from '../features/video-generation/VideoGenerationPage.jsx';
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'OV' },
@@ -18,6 +19,7 @@ const navItems = [
   { id: 'sandbox', label: 'Sandbox Test Lab', icon: 'TL' },
   { id: 'knowledge-base', label: 'Knowledge Base', icon: 'KB' },
   { id: 'marketplace', label: 'Marketplace', icon: 'MP' },
+  { id: 'video-generation', label: 'AI Video', icon: 'VD' },
   { id: 'settings', label: 'Settings', icon: 'ST' },
 ];
 
@@ -241,7 +243,7 @@ export default function StudioDashboard({
 
         <div className="fs-body">
           <main className={`fs-workspace ${activeView === 'overview' ? 'fs-overview-workspace' : ''} ${activeView === 'settings' ? 'fs-settings-workspace' : ''} ${activeView === 'info' ? 'fs-info-workspace' : ''}`} tabIndex={0} aria-label="Central workspace content">
-            {!['settings', 'info', 'sandbox', 'create-project', 'knowledge-base', 'marketplace'].includes(activeView) && <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />}
+            {!['settings', 'info', 'sandbox', 'create-project', 'knowledge-base', 'marketplace', 'video-generation'].includes(activeView) && <ProjectOverview project={project} primaryAction={primaryAction} isGenerating={isGenerating} onStopGeneration={onStopGeneration} onNewProject={onNewProject} />}
             {activeView === 'overview' && (
               <>
                 <PipelineSummary pipeline={pipeline} project={project} workingAgent={workingAgent} criteria={criteria} passedCriteria={passedCriteria} onPipeline={() => setActiveView('pipeline')} />
@@ -254,6 +256,7 @@ export default function StudioDashboard({
             {activeView === 'create-project' && <OrderWorkflowPage active={activeView === 'create-project'} />}
             {activeView === 'knowledge-base' && <KnowledgeBasePage active={activeView === 'knowledge-base'} />}
             {activeView === 'marketplace' && <MarketplacePage active={activeView === 'marketplace'} />}
+            {activeView === 'video-generation' && <VideoGenerationPage active={activeView === 'video-generation'} />}
             {activeView === 'team' && <AgentActivity agents={agentEntries} statuses={statuses} onAgentChat={onAgentChat} expanded />}
             {activeView === 'projects' && <ProjectListPanel projects={projects} onRefresh={onProjects} onResume={onResume} onRetry={onRetryProject || onRetry} onDeleteProject={onDeleteProject} onRemoveProjectFromList={onRemoveProjectFromList} />}
             {activeView === 'features' && <FeatureCompletenessPanel project={project} />}
@@ -264,7 +267,7 @@ export default function StudioDashboard({
             {sandboxOpened && <section className="fs-test-lab-host" hidden={activeView !== 'sandbox'}><SandboxTestLabPage active={activeView === 'sandbox'} /></section>}
             {activeView === 'settings' && <section className="fs-panel fs-settings-page">{settingsContent}</section>}
             {activeView === 'info' && <section className="fs-panel fs-info-page">{infoContent}</section>}
-            {activeView !== 'overview' && !['create-project', 'team', 'projects', 'features', 'pipeline', 'mobile', 'issues', 'logs', 'sandbox', 'knowledge-base', 'marketplace', 'settings', 'info'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
+            {activeView !== 'overview' && !['create-project', 'team', 'projects', 'features', 'pipeline', 'mobile', 'issues', 'logs', 'sandbox', 'knowledge-base', 'marketplace', 'video-generation', 'settings', 'info'].includes(activeView) && <WorkspaceHint activeView={activeView} project={project} />}
             <div className="fs-workspace-bottom-sentinel" data-testid="workspace-bottom-sentinel" aria-hidden="true" />
           </main>
 
