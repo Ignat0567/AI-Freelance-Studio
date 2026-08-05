@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from order_workflow.models import EventKind, EventLevel, ExecutionEvent, ExecutionStage
 
-from .models import CollaborationEventKind
+from .models import CollaborationEventKind, PresenceStatus
 from .service import CollaborationService
 
 _STAGE_CHANNELS: dict[ExecutionStage, str] = {
@@ -14,6 +14,17 @@ _STAGE_CHANNELS: dict[ExecutionStage, str] = {
     ExecutionStage.REPAIR: "backend",
     ExecutionStage.PACKAGING: "deployment",
     ExecutionStage.COMPLETED: "general",
+}
+
+_STAGE_PRESENCE: dict[ExecutionStage, PresenceStatus] = {
+    ExecutionStage.REQUIREMENTS: PresenceStatus.THINKING,
+    ExecutionStage.DESIGN: PresenceStatus.REVIEWING,
+    ExecutionStage.PLANNING: PresenceStatus.THINKING,
+    ExecutionStage.IMPLEMENTATION: PresenceStatus.CODING,
+    ExecutionStage.VERIFICATION: PresenceStatus.TESTING,
+    ExecutionStage.REPAIR: PresenceStatus.CODING,
+    ExecutionStage.PACKAGING: PresenceStatus.REVIEWING,
+    ExecutionStage.COMPLETED: PresenceStatus.IDLE,
 }
 
 
@@ -33,6 +44,16 @@ def _kind_for(event: ExecutionEvent) -> CollaborationEventKind:
     return CollaborationEventKind.AGENT_ACTIVITY
 
 
+def _presence_for(event: ExecutionEvent) -> PresenceStatus:
+    if event.kind is EventKind.BLOCKER:
+        return PresenceStatus.WAITING
+    if event.kind is EventKind.RESULT:
+        return PresenceStatus.IDLE
+    if event.stage is None:
+        return PresenceStatus.IDLE
+    return _STAGE_PRESENCE.get(event.stage, PresenceStatus.IDLE)
+
+
 def publish_execution_event(collaboration_service: CollaborationService, event: ExecutionEvent) -> None:
     agent = event.agent if event.agent and event.agent != "Studio" else None
     collaboration_service.publish_event(
@@ -42,3 +63,5 @@ def publish_execution_event(collaboration_service: CollaborationService, event: 
         agent=agent,
         task_id=event.execution_id,
     )
+    if agent is not None:
+        collaboration_service.set_presence(agent=agent, status=_presence_for(event), last_message=event.message)

@@ -2,6 +2,14 @@
 .tc-hero { padding: 20px; border: 1px solid var(--fs-border); border-radius: 28px; background: linear-gradient(135deg, rgba(99, 132, 255, .18), rgba(255,255,255,.08)); box-shadow: var(--fs-shadow); backdrop-filter: blur(18px); }
 .tc-hero h2 { margin: 4px 0; font-size: clamp(1.8rem, 3vw, 3rem); }
 .tc-hero p { color: var(--fs-muted); margin: 0; }
+.tc-presence { display: flex; flex-wrap: wrap; gap: 8px; }
+.tc-presence-badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--fs-border); border-radius: 999px; padding: 5px 12px; font-size: .82rem; background: rgba(255,255,255,.05); }
+.tc-presence-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fs-muted); }
+.tc-presence-status { color: var(--fs-muted); text-transform: capitalize; font-size: .74rem; }
+.tc-presence-coding .tc-presence-dot, .tc-presence-testing .tc-presence-dot { background: #4ade80; }
+.tc-presence-thinking .tc-presence-dot, .tc-presence-reviewing .tc-presence-dot { background: #facc15; }
+.tc-presence-waiting .tc-presence-dot { background: #fb923c; }
+.tc-presence-idle .tc-presence-dot, .tc-presence-offline .tc-presence-dot { background: var(--fs-muted); }
 .tc-layout { display: grid; grid-template-columns: 200px 1fr 260px; gap: 14px; align-items: start; }
 .tc-channels { display: grid; gap: 6px; border: 1px solid var(--fs-border); border-radius: 16px; padding: 10px; background: rgba(255,255,255,.045); }
 .tc-channel-btn { text-align: left; border: 1px solid transparent; border-radius: 10px; padding: 8px 10px; background: transparent; color: var(--fs-text); cursor: pointer; }

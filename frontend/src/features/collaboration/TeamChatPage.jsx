@@ -24,6 +24,7 @@ export default function TeamChatPage({ active }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [events, setEvents] = useState([]);
+  const [presence, setPresence] = useState([]);
 
   useEffect(() => {
     if (!active) return;
@@ -45,6 +46,18 @@ export default function TeamChatPage({ active }) {
     collaborationApi.getEvents(channelId).then(result => { if (!cancelled) setEvents(result.events || []); }).catch(() => {});
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [active, channelId]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      collaborationApi.getPresence()
+        .then(result => { if (!cancelled) setPresence(result.presence || []); })
+        .catch(() => {});
+    }, 2000);
+    collaborationApi.getPresence().then(result => { if (!cancelled) setPresence(result.presence || []); }).catch(() => {});
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [active]);
 
   if (!active) return null;
 
@@ -72,6 +85,18 @@ export default function TeamChatPage({ active }) {
           <p>Watch agents and the timeline of work as it happens, channel by channel.</p>
         </div>
       </section>
+
+      {presence.length > 0 && (
+        <div className="tc-presence">
+          {presence.map(item => (
+            <span className={`tc-presence-badge tc-presence-${item.status}`} key={item.agent} title={item.last_message || ''}>
+              <span className="tc-presence-dot" />
+              {item.agent}
+              <span className="tc-presence-status">{item.status}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="tc-layout">
         <nav className="tc-channels">
