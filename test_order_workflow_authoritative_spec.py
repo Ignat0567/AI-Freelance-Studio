@@ -159,6 +159,26 @@ def test_brief_generation_takes_authoritative_branch_not_pdf_template():
     assert brief.technical_constraints == ()
 
 
+def test_brief_generation_survives_near_max_length_headings():
+    # A real-world spec whose numbered items are full sentences, not short titles,
+    # can produce a heading close to ShortText's 240-char cap. _generic_acceptance
+    # used to wrap that heading in a fixed prefix/suffix without re-truncating,
+    # pushing the acceptance-criteria string past 240 chars and crashing brief
+    # generation with a pydantic ValidationError.
+    long_heading = "x" * 235
+    spec = (
+        "Technical specification for a long-heading regression check.\n"
+        f"1. {long_heading}\n"
+        "2. Second short item\n"
+        "3. Third short item\n"
+    ) * 6
+    assert _looks_like_authoritative_spec(spec) is True
+
+    brief, _ids = _brief_for(spec)
+
+    assert all(len(item) <= 240 for item in brief.acceptance_criteria)
+
+
 def test_full_pipeline_prompt_carries_the_entire_spec(tmp_path: Path):
     long_spec = STRUCTURED_SPEC * 3
     brief, ids = _brief_for(long_spec)

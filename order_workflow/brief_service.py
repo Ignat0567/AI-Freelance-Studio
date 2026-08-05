@@ -220,7 +220,7 @@ def _pdf_acceptance(signals) -> tuple[str, ...]:
 
 
 def _generic_acceptance(features: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(f"A user can complete this core action: {feature.rstrip('.')}." for feature in features)
+    return tuple(f"A user can complete this core action: {feature.rstrip('.')}."[:240] for feature in features)
 
 
 def _brief_fingerprint(brief: ProjectBrief) -> str:
