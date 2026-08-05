@@ -29,6 +29,7 @@ export const orderWorkflowApi = {
   getQuestions: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/questions`),
   answerQuestions: (orderId, answers) => post(`/api/orders/${encodeURIComponent(orderId)}/answers`, { answers }),
   applyDefaults: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/defaults`, { use_recommended_defaults: true }),
+  runAutopilot: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/autopilot`, {}),
   getBrief: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/brief`),
   generateBrief: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/brief`, {}),
   reviseBrief: (orderId, operations) => post(`/api/orders/${encodeURIComponent(orderId)}/brief/revise`, { operations }),

@@ -1,7 +1,7 @@
 import React from 'react';
 import { PDF_VOICE_ASSISTANT_EXAMPLE } from './orderWorkflowState.js';
 
-export default function OrderCreatePanel({ form, setForm, pending, onSubmit }) {
+export default function OrderCreatePanel({ form, setForm, pending, onSubmit, onAutoSubmit }) {
   const update = (field, value) => setForm(current => ({ ...current, [field]: value }));
   const fillExample = () => setForm(PDF_VOICE_ASSISTANT_EXAMPLE);
   return (
@@ -18,6 +18,7 @@ export default function OrderCreatePanel({ form, setForm, pending, onSubmit }) {
         <label>Optional constraints<textarea value={form.constraints} onChange={event => update('constraints', event.target.value)} rows={3} placeholder="One constraint per line" /></label>
         <div className="ow-actions">
           <button type="button" className="fs-secondary" onClick={fillExample}>Use PDF Voice Assistant example</button>
+          <button type="button" className="fs-secondary" onClick={onAutoSubmit} disabled={pending}>{pending ? 'Running...' : 'Create & run automatically'}</button>
           <button type="submit" className="fs-primary" disabled={pending}>{pending ? 'Creating order...' : 'Create order'}</button>
         </div>
       </form>

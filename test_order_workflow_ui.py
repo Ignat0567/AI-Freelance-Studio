@@ -188,6 +188,20 @@ def test_design_preview_ui_and_api_are_wired_generically():
     assert "ow-design-preview" in css
 
 
+def test_autopilot_trigger_is_wired_end_to_end():
+    api = _read("orderWorkflowApi.js")
+    create = _read("OrderCreatePanel.jsx")
+    page = _read("OrderWorkflowPage.jsx")
+
+    assert "/autopilot" in api
+    assert "runAutopilot" in api
+    assert "Create & run automatically" in create
+    assert "onAutoSubmit" in create
+    assert "submitOrderAutomatically" in page
+    assert "runAutopilot" in page
+    assert "onAutoSubmit={submitOrderAutomatically}" in page
+
+
 def test_theme_accessibility_and_reduced_motion_hooks_exist():
     css = _read("OrderWorkflow.css")
     jsx = _read("OrderWorkflowPage.jsx") + _read("ExecutionDashboard.jsx")

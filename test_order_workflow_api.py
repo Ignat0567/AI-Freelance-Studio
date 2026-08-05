@@ -52,7 +52,7 @@ def _service(fake_adapter=None, mode="fake") -> OrderWorkflowService:
     return OrderWorkflowService(id_factory=ids, clock=lambda: NOW, execution_service=execution)
 
 
-def _app(service=None):
+def _app(service=None, ai_ask=None):
     app = FastAPI()
     app.add_middleware(LocalSecurityMiddleware)
     set_app_security_context(
@@ -65,7 +65,7 @@ def _app(service=None):
             allow_test_client=True,
         ),
     )
-    install_order_workflow_api(app, service=service or _service())
+    install_order_workflow_api(app, service=service or _service(), ai_ask=ai_ask)
     app.include_router(router)
     return app
 
@@ -357,6 +357,52 @@ def test_unknown_order_and_internal_errors_are_sanitized():
     assert raw.status_code == 500
     assert raw.json()["detail"]["code"] == "internal_error"
     assert "secret-value" not in raw.text
+
+
+def test_autopilot_reaches_handoff_ready_using_the_injected_ai_ask():
+    crm_payload = _order_payload(title="CRM", description="Create a CRM for tracking clients, leads, pipeline and deals with task activity tracking.")
+
+    def fake_ai_ask(_prompt: str) -> str:
+        return "Track clients, leads, pipeline stages, and deal activity."
+
+    app = _app(ai_ask=fake_ai_ask)
+    client = _client(app)
+    created = client.post("/api/orders", json=crm_payload)
+    assert created.status_code == 200, created.text
+    order_id = created.json()["order"]["id"]
+
+    response = client.post(f"/api/orders/{order_id}/autopilot", json={})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["handoff_ready"] is True
+    assert body["brief"] is not None
+    assert body["approval"] is not None and body["approval"]["approved"] is True
+
+
+def test_autopilot_uses_the_real_default_ai_ask_when_none_is_installed():
+    app = _app()  # no ai_ask override -- falls back to _default_ai_ask
+    client = _client(app)
+    created = client.post("/api/orders", json=_order_payload())
+    assert created.status_code == 200, created.text
+    order_id = created.json()["order"]["id"]
+
+    response = client.post(f"/api/orders/{order_id}/autopilot", json={})
+
+    # PDF-signal description resolves without any free-text clarification answer,
+    # so the real default ai_ask is never actually invoked here -- this only proves
+    # the fallback wiring doesn't error out when no test override is installed.
+    assert response.status_code == 200, response.text
+    assert response.json()["handoff_ready"] is True
+
+
+def test_autopilot_propagates_order_workflow_errors_through_the_status_table():
+    client = _client(_app())
+
+    response = client.post("/api/orders/order_missing/autopilot", json={})
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "order_not_found"
 
 
 def test_order_routes_are_registered_through_system_router_seam():

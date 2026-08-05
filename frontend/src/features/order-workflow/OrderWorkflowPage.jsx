@@ -126,6 +126,14 @@ export default function OrderWorkflowPage({ active }) {
     run(() => orderWorkflowApi.createOrder(asOrderPayload(form)));
   };
 
+  const submitOrderAutomatically = event => {
+    event.preventDefault();
+    run(async () => {
+      const created = await orderWorkflowApi.createOrder(asOrderPayload(form));
+      return orderWorkflowApi.runAutopilot(created.order.id);
+    });
+  };
+
   const submitAnswers = () => {
     const payload = Object.entries(answers).map(([question_id, value]) => ({ question_id, value }));
     if (!payload.length) { setError('Choose at least one answer or use recommended defaults.'); return; }
@@ -174,7 +182,7 @@ export default function OrderWorkflowPage({ active }) {
       <nav className="ow-steps" aria-label="Order workflow steps">
         {['new-order', 'clarification', 'brief', 'execution', 'result'].map(item => <button type="button" key={item} className={step === item ? 'active' : ''} onClick={() => setStep(item)}>{item.replace('-', ' ')}</button>)}
       </nav>
-      {step === 'new-order' && <OrderCreatePanel form={form} setForm={setForm} pending={pending} onSubmit={submitOrder} />}
+      {step === 'new-order' && <OrderCreatePanel form={form} setForm={setForm} pending={pending} onSubmit={submitOrder} onAutoSubmit={submitOrderAutomatically} />}
       {step === 'clarification' && <ClarificationPanel state={state} answers={answers} setAnswers={setAnswers} pending={pending} onSubmit={submitAnswers} onDefaults={() => run(() => orderWorkflowApi.applyDefaults(state.order.id))} onBack={() => setStep('new-order')} />}
       {step === 'brief' && <ProjectBriefPanel state={state} pending={pending} onGenerate={() => run(() => orderWorkflowApi.generateBrief(state.order.id))} onApprove={approveBrief} onRevise={reviseBrief} onGeneratePreview={generateDesignPreview} onApprovePreview={approveDesignPreview} onRevisePreview={reviseDesignPreview} onBack={() => setStep('clarification')} />}
       {step === 'execution' && <ExecutionDashboard state={state} readiness={readiness} pending={pending} canStart={canStartExecution} canDryRun={Boolean(readiness?.can_prepare_dry_run && canStartExecution)} canLive={Boolean(readiness?.can_run_live && canStartExecution)} liveConfirm={liveConfirm} setLiveConfirm={setLiveConfirm} onStart={() => startExecution('fake')} onDryRun={startDryRun} onLive={startLive} onCancel={() => run(() => orderWorkflowApi.cancelExecution(state.order.id))} onRefresh={() => loadOrder(state.order.id).catch(err => setError(cleanError(err)))} onRefreshReadiness={() => loadReadiness(state.order.id).catch(err => setError(cleanError(err)))} />}

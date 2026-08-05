@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
+from ai_utils import ask_studio_ai_with_history
 from order_workflow import ExecutionMode
 from order_workflow.api_models import (
     AnswersRequest,
@@ -15,6 +18,8 @@ from order_workflow.api_models import (
     ReviseBriefRequest,
     StartExecutionRequest,
 )
+from order_workflow.autopilot import run_order_to_handoff_automatically
+from order_workflow.execution_config import ExecutionConfigurationProvider
 from order_workflow.service import OrderWorkflowError, OrderWorkflowService
 
 
@@ -54,9 +59,20 @@ def get_order_workflow_service(request: Request) -> OrderWorkflowService:
     return service
 
 
-def install_order_workflow_api(app, *, service: OrderWorkflowService | None = None) -> OrderWorkflowService:
+def _default_ai_ask(prompt: str) -> str:
+    snapshot = ExecutionConfigurationProvider().snapshot()
+    return ask_studio_ai_with_history(snapshot.provider.provider, snapshot.model.model, prompt, [], temperature=0.3)
+
+
+def get_order_autopilot_ai_ask(request: Request) -> Callable[[str], str]:
+    return getattr(request.app.state, "order_workflow_ai_ask", None) or _default_ai_ask
+
+
+def install_order_workflow_api(app, *, service: OrderWorkflowService | None = None, ai_ask: Callable[[str], str] | None = None) -> OrderWorkflowService:
     active = service or OrderWorkflowService()
     app.state.order_workflow_service = active
+    if ai_ask is not None:
+        app.state.order_workflow_ai_ask = ai_ask
     return active
 
 
@@ -116,6 +132,11 @@ async def answer_questions(order_id: str, request: Request):
 async def apply_defaults(order_id: str, request: Request):
     await _body(request, DefaultsRequest)
     return _call(get_order_workflow_service(request).defaults, order_id)
+
+
+@router.post("/{order_id}/autopilot")
+def run_autopilot(order_id: str, request: Request):
+    return _call(run_order_to_handoff_automatically, get_order_workflow_service(request), order_id, get_order_autopilot_ai_ask(request))
 
 
 @router.get("/{order_id}/brief")
