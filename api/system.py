@@ -12,6 +12,7 @@ import claude_bridge
 import config_storage
 from backend_security import StrictRequestModel, get_app_security_context
 
+from api.collaboration import router as collaboration_router
 from api.embeddings import router as embeddings_router
 from api.marketplace import router as marketplace_router
 from api.orders import router as orders_router
@@ -30,6 +31,7 @@ from system_settings import (
 router = APIRouter()
 # Temporary router-composition seam while main.py remains a monolithic explicit registrar.
 router.include_router(orders_router)
+router.include_router(collaboration_router)
 router.include_router(marketplace_router)
 router.include_router(embeddings_router)
 router.include_router(video_router)
