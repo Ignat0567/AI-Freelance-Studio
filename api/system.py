@@ -15,6 +15,7 @@ from backend_security import StrictRequestModel, get_app_security_context
 from api.embeddings import router as embeddings_router
 from api.marketplace import router as marketplace_router
 from api.orders import router as orders_router
+from api.presentation import router as presentation_router
 from api.video import router as video_router
 from requirements_checker import check_all, get_components
 from system_settings import (
@@ -32,6 +33,7 @@ router.include_router(orders_router)
 router.include_router(marketplace_router)
 router.include_router(embeddings_router)
 router.include_router(video_router)
+router.include_router(presentation_router)
 SYSTEM_CONFIG_DEFAULTS = DEFAULT_SYSTEM_SETTINGS
 SYSTEM_CONFIG_ALLOWED_KEYS = ALLOWED_SYSTEM_KEYS
 STORAGE_PATH_KEYS = {

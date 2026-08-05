@@ -1,0 +1,11 @@
+.pg-page { display: grid; gap: 18px; }
+.pg-hero { padding: 20px; border: 1px solid var(--fs-border); border-radius: 28px; background: linear-gradient(135deg, rgba(99, 132, 255, .18), rgba(255,255,255,.08)); box-shadow: var(--fs-shadow); backdrop-filter: blur(18px); }
+.pg-hero h2 { margin: 4px 0; font-size: clamp(1.8rem, 3vw, 3rem); }
+.pg-hero p { color: var(--fs-muted); margin: 0; }
+.pg-card { display: grid; gap: 12px; border: 1px solid var(--fs-border); border-radius: 20px; padding: 16px; background: rgba(255,255,255,.045); }
+.pg-card h3 { margin: 0; }
+.pg-card input { width: 100%; border: 1px solid var(--fs-border); color: var(--fs-text); background: var(--fs-input-bg, rgba(255,255,255,.08)); border-radius: 16px; padding: 10px 12px; }
+.pg-card button { justify-self: start; border: none; border-radius: 999px; padding: 10px 18px; background: var(--fs-accent); color: white; font-weight: 700; }
+.pg-card button:disabled { opacity: .5; }
+.pg-error { color: #ff8a8a; margin: 0; }
+.pg-success { color: #7fe0a8; margin: 0; }
