@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from threading import RLock
 from typing import Literal
@@ -20,6 +21,8 @@ from .models import (
 from .store import CollaborationStore, InMemoryCollaborationStore
 
 _EVENT_MESSAGE_MAX_LENGTH = 240
+PRESENCE_IDLE_AFTER_SECONDS = 60
+PRESENCE_OFFLINE_AFTER_SECONDS = 900
 
 
 def _event_snippet(text: str) -> str:
@@ -30,9 +33,10 @@ def _event_snippet(text: str) -> str:
 
 
 class CollaborationService:
-    def __init__(self, *, store: CollaborationStore | None = None) -> None:
+    def __init__(self, *, store: CollaborationStore | None = None, clock: Callable[[], datetime] | None = None) -> None:
         self._store = store or InMemoryCollaborationStore()
         self._presence: dict[str, AgentPresence] = {}
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = RLock()
 
     def channels(self) -> tuple[Channel, ...]:
@@ -126,14 +130,29 @@ class CollaborationService:
                 agent=agent,
                 status=status,
                 last_message=_event_snippet(last_message) if last_message else None,
-                updated_at=datetime.now(timezone.utc),
+                updated_at=self._clock(),
             )
             self._presence[agent] = presence
             return presence
 
     def list_presence(self) -> tuple[AgentPresence, ...]:
         with self._lock:
-            return tuple(sorted(self._presence.values(), key=lambda item: item.agent))
+            now = self._clock()
+            stored = sorted(self._presence.values(), key=lambda item: item.agent)
+            return tuple(self._decayed(item, now) for item in stored)
+
+    @staticmethod
+    def _decayed(presence: AgentPresence, now: datetime) -> AgentPresence:
+        """Staleness is computed fresh on every read against the real stored
+        updated_at, never mutated in place - an agent with no new events just
+        reads as progressively more idle/offline over time, it never gets
+        stuck showing a stage it finished long ago."""
+        elapsed = (now - presence.updated_at).total_seconds()
+        if elapsed >= PRESENCE_OFFLINE_AFTER_SECONDS and presence.status is not PresenceStatus.OFFLINE:
+            return presence.model_copy(update={"status": PresenceStatus.OFFLINE})
+        if elapsed >= PRESENCE_IDLE_AFTER_SECONDS and presence.status not in {PresenceStatus.IDLE, PresenceStatus.OFFLINE}:
+            return presence.model_copy(update={"status": PresenceStatus.IDLE})
+        return presence
 
 
 def get_or_create_collaboration_service(app) -> CollaborationService:
