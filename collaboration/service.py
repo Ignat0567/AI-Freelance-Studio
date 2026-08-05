@@ -9,11 +9,13 @@ from order_workflow.models import new_public_id
 from .models import (
     DEFAULT_CHANNEL_IDS,
     DEFAULT_CHANNELS,
+    AgentPresence,
     Channel,
     ChatMessage,
     CollaborationError,
     CollaborationEvent,
     CollaborationEventKind,
+    PresenceStatus,
 )
 from .store import CollaborationStore, InMemoryCollaborationStore
 
@@ -30,6 +32,7 @@ def _event_snippet(text: str) -> str:
 class CollaborationService:
     def __init__(self, *, store: CollaborationStore | None = None) -> None:
         self._store = store or InMemoryCollaborationStore()
+        self._presence: dict[str, AgentPresence] = {}
         self._lock = RLock()
 
     def channels(self) -> tuple[Channel, ...]:
@@ -116,6 +119,21 @@ class CollaborationService:
             self._require_known_channel(channel_id)
         events = self._store.list_events(channel_id)
         return tuple(sorted(events, key=lambda item: item.created_at))
+
+    def set_presence(self, *, agent: str, status: PresenceStatus, last_message: str | None = None) -> AgentPresence:
+        with self._lock:
+            presence = AgentPresence(
+                agent=agent,
+                status=status,
+                last_message=_event_snippet(last_message) if last_message else None,
+                updated_at=datetime.now(timezone.utc),
+            )
+            self._presence[agent] = presence
+            return presence
+
+    def list_presence(self) -> tuple[AgentPresence, ...]:
+        with self._lock:
+            return tuple(sorted(self._presence.values(), key=lambda item: item.agent))
 
 
 def get_or_create_collaboration_service(app) -> CollaborationService:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from collaboration.models import CollaborationEventKind, DEFAULT_CHANNEL_IDS
+from collaboration.models import CollaborationEventKind, DEFAULT_CHANNEL_IDS, PresenceStatus
 from collaboration.service import CollaborationError, CollaborationService
 
 pytestmark = pytest.mark.unit
@@ -88,3 +88,27 @@ def test_messages_are_isolated_per_channel():
     assert len(service.list_messages("backend")) == 1
     assert len(service.list_messages("frontend")) == 1
     assert service.list_messages("backend")[0].message == "backend note"
+
+
+def test_set_presence_records_status_and_snippeted_last_message():
+    service = CollaborationService()
+
+    presence = service.set_presence(agent="Codex", status=PresenceStatus.CODING, last_message="x" * 500)
+
+    assert presence.agent == "Codex"
+    assert presence.status == PresenceStatus.CODING
+    assert len(presence.last_message) <= 240
+
+
+def test_list_presence_returns_the_latest_status_per_agent_sorted_by_name():
+    service = CollaborationService()
+    service.set_presence(agent="Codex", status=PresenceStatus.CODING, last_message="writing code")
+    service.set_presence(agent="Alex", status=PresenceStatus.THINKING, last_message="reviewing requirements")
+    service.set_presence(agent="Codex", status=PresenceStatus.TESTING, last_message="now testing")
+
+    presence = service.list_presence()
+
+    assert [item.agent for item in presence] == ["Alex", "Codex"]
+    codex = next(item for item in presence if item.agent == "Codex")
+    assert codex.status == PresenceStatus.TESTING
+    assert codex.last_message == "now testing"

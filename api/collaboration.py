@@ -83,3 +83,9 @@ def list_events(request: Request, channel_id: str | None = None) -> dict:
     except CollaborationError as exc:
         _handle_error(exc)
     return {"events": [event.to_dict() for event in events]}
+
+
+@router.get("/presence")
+def list_presence(request: Request) -> dict:
+    service = get_collaboration_service(request)
+    return {"presence": [item.to_dict() for item in service.list_presence()]}

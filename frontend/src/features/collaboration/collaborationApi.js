@@ -30,4 +30,5 @@ export const collaborationApi = {
       body: JSON.stringify({ sender, message }),
     }),
   getEvents: (channelId) => requestJson(`/api/collaboration/events${channelId ? `?channel_id=${channelId}` : ''}`),
+  getPresence: () => requestJson('/api/collaboration/presence'),
 };

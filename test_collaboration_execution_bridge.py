@@ -12,7 +12,7 @@ from api.collaboration import router as collaboration_router
 from api.orders import router as orders_router
 from backend_security import LocalSecurityContext, LocalSecurityMiddleware, set_app_security_context
 from collaboration.execution_bridge import publish_execution_event
-from collaboration.models import CollaborationEventKind
+from collaboration.models import CollaborationEventKind, PresenceStatus
 from collaboration.service import CollaborationService
 from order_workflow import (
     AgentHandoffService,
@@ -181,6 +181,55 @@ def test_execution_id_becomes_the_event_task_id():
     assert service.list_events()[-1].task_id == "execution_real123"
 
 
+@pytest.mark.parametrize(
+    "stage,expected_status",
+    [
+        (ExecutionStage.REQUIREMENTS, PresenceStatus.THINKING),
+        (ExecutionStage.DESIGN, PresenceStatus.REVIEWING),
+        (ExecutionStage.PLANNING, PresenceStatus.THINKING),
+        (ExecutionStage.IMPLEMENTATION, PresenceStatus.CODING),
+        (ExecutionStage.VERIFICATION, PresenceStatus.TESTING),
+        (ExecutionStage.REPAIR, PresenceStatus.CODING),
+        (ExecutionStage.PACKAGING, PresenceStatus.REVIEWING),
+        (ExecutionStage.COMPLETED, PresenceStatus.IDLE),
+    ],
+)
+def test_activity_event_sets_presence_from_stage(stage, expected_status):
+    service = CollaborationService()
+
+    publish_execution_event(service, _event(kind=EventKind.ACTIVITY, stage=stage, agent="Codex"))
+
+    presence = service.list_presence()
+    assert len(presence) == 1
+    assert presence[0].status == expected_status
+
+
+def test_blocker_event_sets_presence_to_waiting_regardless_of_stage():
+    service = CollaborationService()
+
+    publish_execution_event(service, _event(kind=EventKind.BLOCKER, stage=ExecutionStage.IMPLEMENTATION, agent="BugCatcher", level=EventLevel.WARNING))
+
+    presence = service.list_presence()
+    assert presence[0].status == PresenceStatus.WAITING
+
+
+def test_result_event_sets_presence_to_idle():
+    service = CollaborationService()
+
+    publish_execution_event(service, _event(kind=EventKind.RESULT, stage=ExecutionStage.IMPLEMENTATION, agent="Product Judge", level=EventLevel.INFO))
+
+    presence = service.list_presence()
+    assert presence[0].status == PresenceStatus.IDLE
+
+
+def test_studio_agent_never_gets_a_presence_entry():
+    service = CollaborationService()
+
+    publish_execution_event(service, _event(agent="Studio"))
+
+    assert service.list_presence() == ()
+
+
 # --- real ProjectExecutionService integration -------------------------------
 
 
@@ -327,3 +376,10 @@ def test_a_real_order_executed_through_the_http_api_reaches_the_collaboration_ti
     assert len(events) >= 4
     assert any(event["kind"] == "task_completed" for event in events)
     assert {"backend", "qa"}.issubset({event["channel_id"] for event in events})
+
+    presence = client.get("/api/collaboration/presence")
+    assert presence.status_code == 200
+    presence_by_agent = {item["agent"]: item["status"] for item in presence.json()["presence"]}
+    assert presence_by_agent["Codex"] == "coding"
+    assert presence_by_agent["BugCatcher"] == "testing"
+    assert presence_by_agent["Product Judge"] == "idle"

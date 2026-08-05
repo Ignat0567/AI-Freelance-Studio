@@ -68,6 +68,23 @@ class CollaborationEvent(StrictDomainModel):
     created_at: datetime
 
 
+class PresenceStatus(str, Enum):
+    IDLE = "idle"
+    THINKING = "thinking"
+    CODING = "coding"
+    TESTING = "testing"
+    REVIEWING = "reviewing"
+    WAITING = "waiting"
+    OFFLINE = "offline"
+
+
+class AgentPresence(StrictDomainModel):
+    agent: ShortText
+    status: PresenceStatus
+    last_message: ShortText | None = None
+    updated_at: datetime
+
+
 class CollaborationError(ValueError):
     def __init__(self, code: str, message: str | None = None) -> None:
         super().__init__(code)

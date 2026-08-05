@@ -19,9 +19,16 @@ def test_api_client_uses_relative_routes_and_no_renderer_token_storage():
     page = _read("TeamChatPage.jsx")
     assert "/api/collaboration/channels" in api
     assert "/api/collaboration/events" in api
+    assert "/api/collaboration/presence" in api
     combined = api + page
     assert "X-FreelancerStudio-Token" not in combined
     assert "backend_token" not in combined
+
+
+def test_page_renders_presence_strip():
+    page = _read("TeamChatPage.jsx")
+    for expected in ["presence", "tc-presence-badge", "getPresence"]:
+        assert expected in page
 
 
 def test_page_renders_channels_messages_composer_and_timeline():
