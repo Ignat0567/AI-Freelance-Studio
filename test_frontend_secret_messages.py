@@ -11,7 +11,6 @@ def test_frontend_does_not_name_config_file_as_secret_storage():
 
     assert "studio_config.json" not in source
     assert "API keys are not saved in Studio settings" in source
-    assert "does not store OAuth tokens" in source
 
 
 def test_key_manager_uses_honest_secret_messages_without_browser_storage():

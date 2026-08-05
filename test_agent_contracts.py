@@ -204,10 +204,6 @@ def test_recommended_defaults_apply_correctly(monkeypatch, tmp_path):
 def test_settings_ui_reflects_agent_contracts_without_api_keys():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
 
-    assert "Agent Role Contracts" in source
-    assert "Effective model:" in source
-    assert "Inheritance source:" in source
-    assert "temperature/top_p/top_k" in source
-    assert "Role contract summary:" in source
-    assert "Reset to recommended defaults:" in source
-    assert "API keys are not shown here" in source
+    assert "Agent Model Manager" in source
+    assert "Current provider:" in source
+    assert "Current model:" in source

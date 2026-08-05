@@ -4,7 +4,6 @@ export default function GoldieChat({ activePort, onClose, addLog, project }) {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [searchResults, setSearchResults] = useState(null);
     const scrollRef = useRef(null);
 
     useEffect(() => {

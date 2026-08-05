@@ -7,7 +7,6 @@ import AgentChat from './components/AgentChat.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import FileBrowserModal from './components/FileBrowserModal.jsx';
 import InfoModal from './components/InfoModal.jsx';
-import PipelineDetailModal from './components/PipelineDetailModal.jsx';
 import GoldieChat from './components/GoldieChat.jsx';
 import QuestionAnswerModal from './components/QuestionAnswerModal.jsx';
 import StudioDashboard from './components/StudioDashboard.jsx';
@@ -25,7 +24,6 @@ function App() {
     const [isKeyManagerOpen, setIsKeyManagerOpen] = useState(false);
     const [activeAgentChat, setActiveAgentChat] = useState(null);
     const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(false);
-    const [isPipelineDetailOpen, setIsPipelineDetailOpen] = useState(false);
     const [agentStatuses, setAgentStatuses] = useState({});
     const [allProjects, setAllProjects] = useState([]);
     const [agentList, setAgentList] = useState({});
@@ -436,8 +434,7 @@ function App() {
     const isGenerating = activeProject && !['created', 'completed', 'failed', 'failed_qa', 'failed_final_audit', 'blocked', 'needs_credentials', 'cancelled', 'awaiting_input', 'needs_user_input'].includes(activeStatus);
     const t = (key) => tr(language, key);
 
-    // The dashboard is the primary workspace; existing dialogs below remain mounted by state.
-    if (true) return (
+    return (
         <>
             <StudioDashboard
                 activePort={activePort}
@@ -478,7 +475,6 @@ function App() {
             {isKeyManagerOpen && <KeyManagerModal activePort={activePort} onClose={() => setIsKeyManagerOpen(false)} addLog={addLog} />}
             {activeAgentChat && activeAgentChat === 'goldie' ? <GoldieChat activePort={activePort} onClose={() => setActiveAgentChat(null)} addLog={addLog} project={activeProject} /> : activeAgentChat && <AgentChat agentId={activeAgentChat} activePort={activePort} onClose={() => setActiveAgentChat(null)} addLog={addLog} project={activeProject} />}
             {isFileBrowserOpen && activeProject && <FileBrowserModal activePort={activePort} projectId={activeProject.project_id} projectTitle={activeProject.title} onClose={() => setIsFileBrowserOpen(false)} addLog={addLog} />}
-            {isPipelineDetailOpen && activeProject && <PipelineDetailModal project={activeProject} agentStatuses={agentStatuses} agents={agentList} pipelineMetadata={pipelineMetadata} onClose={() => setIsPipelineDetailOpen(false)} />}
             {isQuestionOpen && activeProject && <QuestionAnswerModal activePort={activePort} projectId={activeProject.project_id} onClose={() => setIsQuestionOpen(false)} />}
         </>
     );

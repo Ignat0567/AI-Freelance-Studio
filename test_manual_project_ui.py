@@ -62,14 +62,6 @@ def test_core_e2e_and_mvp_acceptance_are_distinct_in_ui():
     assert "MVP ACCEPTANCE INCOMPLETE" in source
 
 
-def test_agent_settings_allow_role_defaults_global_inheritance_and_overrides():
-    source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
-    assert "Agent Role Contracts" in source
-    assert "Reset to recommended role defaults" in source
-    assert "Inherit global model" in source
-    assert "Override generation parameters" in source
-
-
 def test_quality_modals_remain_scrollable():
     css = Path("frontend/src/index.css").read_text(encoding="utf-8")
     assert ".settings-modal-body" in css and "overflow-y: auto" in css

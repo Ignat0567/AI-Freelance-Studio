@@ -390,7 +390,7 @@ def test_legacy_global_provider_model_is_displayed_safely(monkeypatch, tmp_path)
 
 def test_settings_global_ai_ui_uses_styled_cards_and_no_raw_checkboxes():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
-    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function AgentAIOverridesSettings", 1)[0]
+    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function AgentModelManagerSettings", 1)[0]
     assert 'input type="checkbox"' not in global_section
     assert "Provider connection" in global_section
     assert "Default model" in global_section
@@ -428,8 +428,8 @@ def test_ai_connections_exposes_subscription_provider_templates():
 
 def test_settings_agent_override_fields_are_labeled_and_model_temp_separated():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
-    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function AgentAIOverridesSettings", 1)[0]
-    agent_section = source.split("function AgentModelManagerSettings", 1)[1].split("function AgentRoleContractsSettings", 1)[0]
+    global_section = source.split("function GlobalAIInheritanceSettings", 1)[1].split("function AgentModelManagerSettings", 1)[0]
+    agent_section = source.split("function AgentModelManagerSettings", 1)[1].split("function ProductJudgeSettings", 1)[0]
     for label in ("temperature", "top_p", "top_k", "max tokens"):
         assert f"<label>Default {label}" in global_section
     for label in ("Temperature", "Top_p", "Top_k", "Max tokens"):
