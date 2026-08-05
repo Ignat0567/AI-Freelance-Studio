@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from collaboration.models import CollaborationEventKind, DEFAULT_CHANNEL_IDS, PresenceStatus
-from collaboration.service import CollaborationError, CollaborationService
+from collaboration.service import (
+    PRESENCE_IDLE_AFTER_SECONDS,
+    PRESENCE_OFFLINE_AFTER_SECONDS,
+    CollaborationError,
+    CollaborationService,
+)
 
 pytestmark = pytest.mark.unit
+NOW = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
+
+
+class MutableClock:
+    def __init__(self, start: datetime) -> None:
+        self.current = start
+
+    def __call__(self) -> datetime:
+        return self.current
+
+    def advance(self, seconds: float) -> None:
+        self.current += timedelta(seconds=seconds)
 
 
 def test_channels_returns_the_nine_default_channels():
@@ -112,3 +131,67 @@ def test_list_presence_returns_the_latest_status_per_agent_sorted_by_name():
     codex = next(item for item in presence if item.agent == "Codex")
     assert codex.status == PresenceStatus.TESTING
     assert codex.last_message == "now testing"
+
+
+def test_fresh_presence_is_reported_as_is():
+    clock = MutableClock(NOW)
+    service = CollaborationService(clock=clock)
+    service.set_presence(agent="Codex", status=PresenceStatus.CODING)
+
+    clock.advance(5)
+
+    assert service.list_presence()[0].status == PresenceStatus.CODING
+
+
+def test_presence_decays_to_idle_after_the_idle_threshold():
+    clock = MutableClock(NOW)
+    service = CollaborationService(clock=clock)
+    service.set_presence(agent="Codex", status=PresenceStatus.CODING)
+
+    clock.advance(PRESENCE_IDLE_AFTER_SECONDS)
+
+    assert service.list_presence()[0].status == PresenceStatus.IDLE
+
+
+def test_presence_decays_to_offline_after_the_offline_threshold():
+    clock = MutableClock(NOW)
+    service = CollaborationService(clock=clock)
+    service.set_presence(agent="Codex", status=PresenceStatus.CODING)
+
+    clock.advance(PRESENCE_OFFLINE_AFTER_SECONDS)
+
+    assert service.list_presence()[0].status == PresenceStatus.OFFLINE
+
+
+def test_already_idle_presence_does_not_spuriously_flip_to_offline_before_its_own_threshold():
+    clock = MutableClock(NOW)
+    service = CollaborationService(clock=clock)
+    service.set_presence(agent="Product Judge", status=PresenceStatus.IDLE)
+
+    clock.advance(PRESENCE_IDLE_AFTER_SECONDS + 1)
+
+    assert service.list_presence()[0].status == PresenceStatus.IDLE
+
+
+def test_decay_never_mutates_the_stored_presence_so_a_new_event_still_resets_the_clock():
+    clock = MutableClock(NOW)
+    service = CollaborationService(clock=clock)
+    service.set_presence(agent="Codex", status=PresenceStatus.CODING)
+    clock.advance(PRESENCE_IDLE_AFTER_SECONDS)
+    assert service.list_presence()[0].status == PresenceStatus.IDLE
+
+    service.set_presence(agent="Codex", status=PresenceStatus.TESTING)
+
+    assert service.list_presence()[0].status == PresenceStatus.TESTING
+
+
+def test_waiting_presence_also_decays_to_idle_then_offline():
+    clock = MutableClock(NOW)
+    service = CollaborationService(clock=clock)
+    service.set_presence(agent="BugCatcher", status=PresenceStatus.WAITING)
+
+    clock.advance(PRESENCE_IDLE_AFTER_SECONDS)
+    assert service.list_presence()[0].status == PresenceStatus.IDLE
+
+    clock.advance(PRESENCE_OFFLINE_AFTER_SECONDS)
+    assert service.list_presence()[0].status == PresenceStatus.OFFLINE
