@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import IsoOffice from './components/IsoOffice.jsx';
 import SearchHub from './components/SearchHub.jsx';
 import ModelSelector from './components/ModelSelector.jsx';
 import NewProjectModal from './components/NewProjectModal.jsx';
@@ -912,8 +911,6 @@ function App() {
                             </button>
                         </div>
                     </div>
-
-                    <IsoOffice activeProject={activeProject} activePort={activePort} agentStatuses={agentStatuses} />
                 </section>
 
                 {isLogPanelOpen ? (
