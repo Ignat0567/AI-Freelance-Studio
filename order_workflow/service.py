@@ -197,6 +197,7 @@ class OrderWorkflowService:
         configuration_provider: ExecutionConfigurationProvider | None = None,
         opencode_client: OpenCodeExecutionClient | None = None,
         website_section_ai_ask: Callable[[str], str] | None = None,
+        collaboration_sink: Callable[[ExecutionEvent], None] | None = None,
     ) -> None:
         self._id_factory = id_factory
         self._clock = clock
@@ -210,6 +211,7 @@ class OrderWorkflowService:
             clock=clock,
             production_adapter=ConfigurationBackedExecutionAdapter(self._configuration),
             live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask),
+            collaboration_sink=collaboration_sink,
         )
         self._orders: dict[str, UserOrder] = {}
         self._sessions: dict[str, ClarificationSession] = {}

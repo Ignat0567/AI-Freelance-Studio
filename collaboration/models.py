@@ -23,6 +23,7 @@ class CollaborationEventKind(str, Enum):
     BUILD_FINISHED = "build_finished"
     TEST_PASSED = "test_passed"
     TEST_FAILED = "test_failed"
+    AGENT_ACTIVITY = "agent_activity"
 
 
 class Channel(StrictDomainModel):
