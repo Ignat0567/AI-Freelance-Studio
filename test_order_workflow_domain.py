@@ -201,6 +201,19 @@ def test_execution_state_and_stage_transitions_include_repair_loop():
         validate_execution_stage_transition(ExecutionStage.PLANNING, ExecutionStage.COMPLETED)
 
 
+def test_phased_pipeline_stage_transitions():
+    validate_execution_stage_transition(ExecutionStage.PLANNING, ExecutionStage.UI_SHELL)
+    validate_execution_stage_transition(ExecutionStage.UI_SHELL, ExecutionStage.CORE_FEATURE)
+    validate_execution_stage_transition(ExecutionStage.CORE_FEATURE, ExecutionStage.BACKEND_DECISION)
+    validate_execution_stage_transition(ExecutionStage.BACKEND_DECISION, ExecutionStage.COMPLETED)
+    validate_execution_stage_transition(ExecutionStage.BACKEND_DECISION, ExecutionStage.IMPLEMENTATION)
+
+    with pytest.raises(InvalidWorkflowTransition):
+        validate_execution_stage_transition(ExecutionStage.UI_SHELL, ExecutionStage.BACKEND_DECISION)
+    with pytest.raises(InvalidWorkflowTransition):
+        validate_execution_stage_transition(ExecutionStage.CORE_FEATURE, ExecutionStage.COMPLETED)
+
+
 def test_bounded_events_keep_newest_immutable_records():
     execution_id = "execution_fixed"
     events = ()

@@ -50,15 +50,17 @@ def build_production_execution_package(
         workspace_root=workspace.root_reference,
         project_path=workspace.project_reference,
         qa_commands=qa_commands,
-        prompt=_build_prompt(brief, handoff, qa_commands),
+        prompt=build_prompt(brief, handoff, qa_commands),
     )
 
 
-def _build_prompt(brief: ProjectBrief, handoff: AgentHandoff, qa_commands: tuple[str, ...]) -> str:
+def build_prompt(brief: ProjectBrief, handoff: AgentHandoff, qa_commands: tuple[str, ...], *, extra_preamble: str = "") -> str:
     design_lines = tuple(f"- {item}" for item in handoff.design_preview_summary) or ("- No approved Elena preview was attached.",)
+    preamble_lines = [extra_preamble, ""] if extra_preamble else []
     lines = [
         "Implement the approved AI Freelancer Studio project brief.",
         "",
+        *preamble_lines,
         f"Goal: {brief.goal}",
         f"Context: {handoff.context_summary}",
         "",

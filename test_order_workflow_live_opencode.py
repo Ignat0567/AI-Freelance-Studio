@@ -275,6 +275,9 @@ def _no_network_ai_ask(_prompt: str) -> str:
 
 
 def _configured_workflow(tmp_path, *, config=None, opt_in=False, client=None, website_section_ai_ask=None):
+    # This whole file is the LiveOpenCodeExecutionAdapter-specific regression suite,
+    # so it explicitly pins the legacy pipeline -- the phased pipeline (default since
+    # its own introduction) has its own dedicated test file, test_order_workflow_phased_adapter.py.
     ids = SequenceIds()
     return OrderWorkflowService(
         id_factory=ids,
@@ -282,6 +285,7 @@ def _configured_workflow(tmp_path, *, config=None, opt_in=False, client=None, we
         configuration_provider=_configuration(tmp_path, config=config, opt_in=opt_in),
         opencode_client=client or FakeOpenCodeClient(),
         website_section_ai_ask=website_section_ai_ask or _no_network_ai_ask,
+        environ={"FREELANCERSTUDIO_EXECUTION_PIPELINE": "legacy"},
     )
 
 

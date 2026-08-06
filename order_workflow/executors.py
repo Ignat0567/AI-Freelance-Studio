@@ -44,6 +44,7 @@ class ExecutionEventSink(Protocol):
         message: str,
         level: EventLevel = EventLevel.INFO,
         details: tuple[str, ...] = (),
+        kind: EventKind = EventKind.ACTIVITY,
     ) -> None: ...
 
     def artifact(self, *, kind: ArtifactKind, name: str, summary: str, reference: str) -> ExecutionArtifact: ...

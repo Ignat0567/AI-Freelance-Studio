@@ -9,6 +9,9 @@ _STAGE_CHANNELS: dict[ExecutionStage, str] = {
     ExecutionStage.REQUIREMENTS: "general",
     ExecutionStage.DESIGN: "design",
     ExecutionStage.PLANNING: "architecture",
+    ExecutionStage.UI_SHELL: "frontend",
+    ExecutionStage.CORE_FEATURE: "backend",
+    ExecutionStage.BACKEND_DECISION: "architecture",
     ExecutionStage.IMPLEMENTATION: "backend",
     ExecutionStage.VERIFICATION: "qa",
     ExecutionStage.REPAIR: "backend",
@@ -20,6 +23,9 @@ _STAGE_PRESENCE: dict[ExecutionStage, PresenceStatus] = {
     ExecutionStage.REQUIREMENTS: PresenceStatus.THINKING,
     ExecutionStage.DESIGN: PresenceStatus.REVIEWING,
     ExecutionStage.PLANNING: PresenceStatus.THINKING,
+    ExecutionStage.UI_SHELL: PresenceStatus.CODING,
+    ExecutionStage.CORE_FEATURE: PresenceStatus.CODING,
+    ExecutionStage.BACKEND_DECISION: PresenceStatus.THINKING,
     ExecutionStage.IMPLEMENTATION: PresenceStatus.CODING,
     ExecutionStage.VERIFICATION: PresenceStatus.TESTING,
     ExecutionStage.REPAIR: PresenceStatus.CODING,
@@ -41,6 +47,8 @@ def _kind_for(event: ExecutionEvent) -> CollaborationEventKind:
         return CollaborationEventKind.FILE_MODIFIED
     if event.kind is EventKind.RESULT:
         return CollaborationEventKind.TASK_COMPLETED if event.level is EventLevel.INFO else CollaborationEventKind.ERROR_DETECTED
+    if event.kind is EventKind.MILESTONE:
+        return CollaborationEventKind.MILESTONE_REACHED
     return CollaborationEventKind.AGENT_ACTIVITY
 
 

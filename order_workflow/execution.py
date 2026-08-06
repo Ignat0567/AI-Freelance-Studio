@@ -79,10 +79,11 @@ class _Sink(ExecutionEventSink):
         message: str,
         level: EventLevel = EventLevel.INFO,
         details: tuple[str, ...] = (),
+        kind: EventKind = EventKind.ACTIVITY,
     ) -> None:
         self._service._emit(
             self._execution_id,
-            kind=EventKind.ACTIVITY,
+            kind=kind,
             stage=stage,
             agent=agent,
             progress=progress,
