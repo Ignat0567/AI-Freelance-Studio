@@ -299,6 +299,7 @@ def _run_owned_capture(command: list[str], timeout: int, cwd: str) -> tuple[int 
 def _safe_cli_invocation(binary: str, model: str, attachment_count: int, *, workspace_bound: bool = False) -> list[str]:
     invocation = [binary, "run", "<prompt>", "--model", model, "--format", "json"]
     if workspace_bound:
+        invocation.append("--dangerously-skip-permissions")
         invocation.extend(["--dir", "<workspace>"])
     invocation.extend(["--file", "<attachment>"] * attachment_count)
     return invocation
@@ -467,6 +468,14 @@ class OpenCodeBridgeConnection:
             return {"status": "error", "failure_stage": "before_invocation", "error_category": "workspace_unavailable", "errors": ["Workspace path is not available"], "text": "", "attachment_count": len(attachments)}
         command = [binary, "run", prompt, "--model", model, "--format", "json"]
         if workdir:
+            # Owned-workspace invocations are non-interactive (no TTY, no stdin channel for a
+            # human to approve a permission prompt) -- without this flag, opencode run hangs
+            # indefinitely the moment it needs approval for a gated action (e.g. running a
+            # shell command to scaffold a project), producing zero stdout until the CLI-level
+            # timeout kills it. Safe here specifically because the workdir is always an
+            # app-owned, freshly reserved workspace (see workspace.py's ownership marker), not
+            # an arbitrary path, and live execution itself is already behind an explicit opt-in.
+            command.append("--dangerously-skip-permissions")
             command.extend(["--dir", workdir])
         for path in attachments:
             command.extend(["--file", path])

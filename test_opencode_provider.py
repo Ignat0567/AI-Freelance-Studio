@@ -100,6 +100,28 @@ def test_workspace_bound_request_runs_in_owned_workspace_with_dir_argument(monke
     assert captured["cwd"] == str(tmp_path.resolve())
     assert captured["command"][-2:] == ["--dir", str(tmp_path.resolve())]
     assert result["cli_invocation"][-2:] == ["--dir", "<workspace>"]
+    # Regression test: a real live run hung indefinitely (zero stdout for the full 900s
+    # timeout, across two different models) because this flag was missing -- opencode run
+    # blocks on an unanswerable interactive permission prompt without it, and this bridge
+    # invocation has no TTY/stdin channel for a human to approve one.
+    assert "--dangerously-skip-permissions" in captured["command"]
+
+
+def test_non_workspace_bound_request_does_not_skip_permissions(monkeypatch):
+    """The temp-workdir path (e.g. the product judge) isn't a code-writing session -- the
+    auto-approve flag is scoped to owned-workspace invocations only, not applied blanket."""
+    captured = {}
+    connection = _connection(executable_path="opencode")
+
+    def run(command, timeout, cwd=None):
+        captured["command"] = command
+        return 0, '{"type":"step_finish","part":{"reason":"stop"}}', ""
+
+    monkeypatch.setattr(opencode_provider, "_run_capture", run)
+
+    connection.execute({"user_content": "Judge this", "timeout": 5})
+
+    assert "--dangerously-skip-permissions" not in captured["command"]
 
 
 def test_timeout_is_not_request_rejection(monkeypatch):
