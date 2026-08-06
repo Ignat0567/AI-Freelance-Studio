@@ -75,6 +75,8 @@ from .models import (
     utc_now,
 )
 from .persistence import ExecutionStateStore, InMemoryExecutionStateStore
+from .phase_context import PhaseContext, build_phase_context
+from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, resolve_execution_pipeline_mode
 from .production_adapter import ProductionProjectExecutionAdapter
 from .production_adapter import LiveOpenCodeExecutionAdapter, OpenCodeExecutionClient, OpenCodeExecutionResult, live_opencode_execution_enabled
 from .readiness import ReadinessResult, readiness_blocker
@@ -144,6 +146,8 @@ __all__ = [
     "ProductionProjectExecutionAdapter",
     "OrderWorkflowError",
     "OrderWorkflowService",
+    "PhaseContext",
+    "PhasedLiveOpenCodeExecutionAdapter",
     "ProductType",
     "PreviewLayout",
     "PreviewScreen",
@@ -159,12 +163,14 @@ __all__ = [
     "UserOrderStatus",
     "append_bounded_event",
     "design_preview_handoff_lines",
+    "build_phase_context",
     "build_production_execution_package",
     "detect_requirement_gaps",
     "infer_requirement_signals",
     "live_opencode_execution_enabled",
     "new_public_id",
     "readiness_blocker",
+    "resolve_execution_pipeline_mode",
     "utc_now",
     "validate_execution_stage_transition",
     "validate_execution_transition",

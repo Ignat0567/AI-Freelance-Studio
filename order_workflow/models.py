@@ -78,6 +78,9 @@ class ExecutionStage(str, Enum):
     REQUIREMENTS = "requirements"
     DESIGN = "design"
     PLANNING = "planning"
+    UI_SHELL = "ui_shell"
+    CORE_FEATURE = "core_feature"
+    BACKEND_DECISION = "backend_decision"
     IMPLEMENTATION = "implementation"
     VERIFICATION = "verification"
     REPAIR = "repair"
@@ -91,6 +94,7 @@ class EventKind(str, Enum):
     BLOCKER = "blocker"
     ARTIFACT = "artifact"
     RESULT = "result"
+    MILESTONE = "milestone"
 
 
 class EventLevel(str, Enum):

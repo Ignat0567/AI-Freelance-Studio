@@ -279,7 +279,7 @@ def _terminate_owned_process_tree(process: subprocess.Popen) -> bool:
 def _run_owned_capture(command: list[str], timeout: int, cwd: str) -> tuple[int | None, str, str, bool, bool]:
     process = None
     try:
-        process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        process = subprocess.Popen(_opencode_command(command), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         try:
             stdout, stderr = process.communicate(timeout=timeout)
             return process.returncode, stdout or "", stderr or "", False, False

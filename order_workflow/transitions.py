@@ -29,7 +29,10 @@ _EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
 _STAGE_TRANSITIONS: dict[ExecutionStage, frozenset[ExecutionStage]] = {
     ExecutionStage.REQUIREMENTS: frozenset({ExecutionStage.DESIGN, ExecutionStage.PLANNING}),
     ExecutionStage.DESIGN: frozenset({ExecutionStage.PLANNING}),
-    ExecutionStage.PLANNING: frozenset({ExecutionStage.IMPLEMENTATION}),
+    ExecutionStage.PLANNING: frozenset({ExecutionStage.IMPLEMENTATION, ExecutionStage.UI_SHELL}),
+    ExecutionStage.UI_SHELL: frozenset({ExecutionStage.CORE_FEATURE}),
+    ExecutionStage.CORE_FEATURE: frozenset({ExecutionStage.BACKEND_DECISION}),
+    ExecutionStage.BACKEND_DECISION: frozenset({ExecutionStage.COMPLETED, ExecutionStage.IMPLEMENTATION}),
     ExecutionStage.IMPLEMENTATION: frozenset({ExecutionStage.VERIFICATION}),
     ExecutionStage.VERIFICATION: frozenset({ExecutionStage.REPAIR, ExecutionStage.PACKAGING, ExecutionStage.COMPLETED}),
     ExecutionStage.REPAIR: frozenset({ExecutionStage.VERIFICATION, ExecutionStage.PACKAGING}),

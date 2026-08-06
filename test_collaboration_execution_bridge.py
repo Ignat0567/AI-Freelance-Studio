@@ -108,6 +108,9 @@ def _event(**overrides) -> ExecutionEvent:
         (ExecutionStage.REQUIREMENTS, "general"),
         (ExecutionStage.DESIGN, "design"),
         (ExecutionStage.PLANNING, "architecture"),
+        (ExecutionStage.UI_SHELL, "frontend"),
+        (ExecutionStage.CORE_FEATURE, "backend"),
+        (ExecutionStage.BACKEND_DECISION, "architecture"),
         (ExecutionStage.IMPLEMENTATION, "backend"),
         (ExecutionStage.VERIFICATION, "qa"),
         (ExecutionStage.REPAIR, "backend"),
@@ -187,6 +190,9 @@ def test_execution_id_becomes_the_event_task_id():
         (ExecutionStage.REQUIREMENTS, PresenceStatus.THINKING),
         (ExecutionStage.DESIGN, PresenceStatus.REVIEWING),
         (ExecutionStage.PLANNING, PresenceStatus.THINKING),
+        (ExecutionStage.UI_SHELL, PresenceStatus.CODING),
+        (ExecutionStage.CORE_FEATURE, PresenceStatus.CODING),
+        (ExecutionStage.BACKEND_DECISION, PresenceStatus.THINKING),
         (ExecutionStage.IMPLEMENTATION, PresenceStatus.CODING),
         (ExecutionStage.VERIFICATION, PresenceStatus.TESTING),
         (ExecutionStage.REPAIR, PresenceStatus.CODING),
@@ -383,3 +389,19 @@ def test_a_real_order_executed_through_the_http_api_reaches_the_collaboration_ti
     assert presence_by_agent["Codex"] == "coding"
     assert presence_by_agent["BugCatcher"] == "testing"
     assert presence_by_agent["Product Judge"] == "idle"
+
+
+def test_milestone_event_maps_to_milestone_reached_kind():
+    service = CollaborationService()
+
+    publish_execution_event(service, _event(kind=EventKind.MILESTONE, stage=ExecutionStage.BACKEND_DECISION, agent="Alex"))
+
+    assert service.list_events()[-1].kind == CollaborationEventKind.MILESTONE_REACHED
+
+
+def test_every_execution_stage_has_a_channel_and_presence_mapping():
+    from collaboration.execution_bridge import _STAGE_CHANNELS, _STAGE_PRESENCE
+
+    for stage in ExecutionStage:
+        assert stage in _STAGE_CHANNELS, f"{stage} is missing a channel mapping"
+        assert stage in _STAGE_PRESENCE, f"{stage} is missing a presence mapping"

@@ -12,6 +12,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_rea
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventLevel, ProjectBrief, TestSummary
+from .phase_repair import run_qa_repair_loop
 from .qa_runner import QAOutcome, run_qa_commands
 from .readiness import (
     MODEL_NOT_SELECTED,
@@ -221,49 +222,28 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             cancelled = _cancelled_result(request)
             return cancelled.model_copy(update={"warnings": (*cancelled.warnings, "OpenCode cancellation was requested; no unrelated processes were terminated.")})
 
-        qa_outcome: QAOutcome | None = None
-        qa_attempts = 0
-        if result.success:
-            qa_cwd = workspace.project_path / "frontend" if detect_cinematic_website_intent(request.brief) else workspace.project_path
-            event_sink.emit(stage=ExecutionStage.VERIFICATION, agent="BugCatcher", progress=60, message="Running QA commands")
-            qa_outcome = self._qa_runner(package.qa_commands, qa_cwd)
-            while not qa_outcome.passed and qa_attempts < MAX_QA_REPAIR_ATTEMPTS and not cancellation.is_cancelled():
-                qa_attempts += 1
-                event_sink.emit(
-                    stage=ExecutionStage.VERIFICATION,
-                    agent="BugCatcher",
-                    progress=65,
-                    message=f"QA failed; asking Codex to fix (attempt {qa_attempts} of {MAX_QA_REPAIR_ATTEMPTS})",
-                    level=EventLevel.WARNING,
-                    details=(qa_outcome.failure_summary()[:2000],),
-                )
-                try:
-                    fix_result = self._opencode_client.execute_project_prompt(_build_qa_fix_prompt(qa_outcome), workspace.project_path, event_sink, cancellation)
-                except Exception:
-                    break
-                if not fix_result.success:
-                    break
-                qa_outcome = self._qa_runner(package.qa_commands, qa_cwd)
-            if cancellation.is_cancelled():
-                cancelled = _cancelled_result(request)
-                return cancelled.model_copy(update={"warnings": (*cancelled.warnings, "OpenCode cancellation was requested; no unrelated processes were terminated.")})
-
-        qa_passed = qa_outcome.passed if qa_outcome is not None else False
-        if qa_outcome is None:
-            qa_status_message = "QA not run because OpenCode execution did not succeed."
-        elif not package.qa_commands:
-            qa_status_message = "No QA commands were configured; nothing to verify."
-        elif qa_outcome.passed:
-            qa_status_message = "QA passed." if qa_attempts == 0 else f"QA passed after {qa_attempts} repair attempt(s)."
-        else:
-            qa_status_message = f"QA failed after {qa_attempts} repair attempt(s)."
-        event_sink.emit(
+        qa_cwd = workspace.project_path / "frontend" if detect_cinematic_website_intent(request.brief) else workspace.project_path
+        repair = run_qa_repair_loop(
+            opencode_client=self._opencode_client,
+            opencode_succeeded=result.success,
+            workspace_path=workspace.project_path,
+            qa_commands=package.qa_commands,
+            qa_cwd=qa_cwd,
+            qa_runner=self._qa_runner,
+            event_sink=event_sink,
+            cancellation=cancellation,
             stage=ExecutionStage.VERIFICATION,
             agent="BugCatcher",
-            progress=80,
-            message=qa_status_message,
-            level=EventLevel.INFO if qa_passed else EventLevel.ERROR if qa_outcome is not None else EventLevel.WARNING,
+            max_attempts=MAX_QA_REPAIR_ATTEMPTS,
+            fix_prompt_builder=_build_qa_fix_prompt,
         )
+        if repair.cancelled:
+            cancelled = _cancelled_result(request)
+            return cancelled.model_copy(update={"warnings": (*cancelled.warnings, "OpenCode cancellation was requested; no unrelated processes were terminated.")})
+        qa_outcome = repair.qa_outcome
+        qa_attempts = repair.attempts
+        qa_status_message = repair.qa_status_message
+        qa_passed = qa_outcome.passed if qa_outcome is not None else False
 
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)

@@ -44,6 +44,7 @@ from .models import (
 )
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
+from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
     OpenCodeExecutionClient,
@@ -157,11 +158,13 @@ class ConfigurationBackedExecutionAdapter:
         live: bool = False,
         opencode_client: OpenCodeExecutionClient | None = None,
         website_section_ai_ask: Callable[[str], str] | None = None,
+        environ: dict[str, str] | None = None,
     ) -> None:
         self._configuration_provider = configuration_provider
         self._live = live
         self._opencode_client = opencode_client
         self._website_section_ai_ask = website_section_ai_ask
+        self._environ = environ
 
     def check_readiness(self, brief: ProjectBrief) -> ReadinessResult:
         return self._adapter().check_readiness(brief)
@@ -176,13 +179,27 @@ class ConfigurationBackedExecutionAdapter:
         workspace_root = self._configuration_provider.workspace_root
         if self._live:
             environ = {"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if snapshot.live_opt_in.enabled else {}
-            return LiveOpenCodeExecutionAdapter(
+            opencode_client = self._opencode_client or ConfiguredOpenCodeExecutionClient()
+            if resolve_execution_pipeline_mode(self._environ) == "legacy":
+                return LiveOpenCodeExecutionAdapter(
+                    provider_name=provider,
+                    model_name=model,
+                    workspace_root=workspace_root,
+                    opencode_client=opencode_client,
+                    environ=environ,
+                    website_section_ai_ask=self._website_section_ai_ask,
+                )
+            return PhasedLiveOpenCodeExecutionAdapter(
                 provider_name=provider,
                 model_name=model,
                 workspace_root=workspace_root,
-                opencode_client=self._opencode_client or ConfiguredOpenCodeExecutionClient(),
+                opencode_client=opencode_client,
                 environ=environ,
-                website_section_ai_ask=self._website_section_ai_ask,
+                ai_ask=self._website_section_ai_ask,
+                # environ above is a synthetic live-opt-in-only dict (see the LiveOpenCodeExecutionAdapter
+                # branch just above); the QA backend must be resolved from the real env source instead,
+                # or a real FREELANCERSTUDIO_PHASED_QA_BACKEND=host setting would be silently ignored.
+                qa_runner=_select_qa_runner(self._environ),
             )
         return ProductionProjectExecutionAdapter(provider_name=provider, model_name=model, workspace_root=workspace_root)
 
@@ -198,6 +215,7 @@ class OrderWorkflowService:
         opencode_client: OpenCodeExecutionClient | None = None,
         website_section_ai_ask: Callable[[str], str] | None = None,
         collaboration_sink: Callable[[ExecutionEvent], None] | None = None,
+        environ: dict[str, str] | None = None,
     ) -> None:
         self._id_factory = id_factory
         self._clock = clock
@@ -210,7 +228,7 @@ class OrderWorkflowService:
             id_factory=id_factory,
             clock=clock,
             production_adapter=ConfigurationBackedExecutionAdapter(self._configuration),
-            live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask),
+            live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask, environ=environ),
             collaboration_sink=collaboration_sink,
         )
         self._orders: dict[str, UserOrder] = {}
