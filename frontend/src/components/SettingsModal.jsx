@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { tr } from '../i18n.js';
 import { applyStudioTheme } from '../theme.js';
 import OpenCodeConnectionSetup from './OpenCodeConnectionSetup.jsx';
+import ClaudeCodeConnectionSetup from './ClaudeCodeConnectionSetup.jsx';
 
 const ACCENT_COLORS = [
   { name: 'Sky', color: '#0ea5e9' },
@@ -437,6 +438,7 @@ function AIProviderSettings({ activePort, addLog }) {
     <div className="space-y-5" data-testid="settings-last-ai">
       <div className="ai-settings-section-label">Connections</div>
       <OpenCodeConnectionSetup activePort={activePort} addLog={addLog} />
+      <ClaudeCodeConnectionSetup activePort={activePort} addLog={addLog} />
       <UniversalProviderConnectionsSettings activePort={activePort} addLog={addLog} />
       <div className="ai-settings-section-label">Agents</div>
       <GlobalAIInheritanceSettings activePort={activePort} cfg={{}} reload={() => {}} addLog={addLog} />

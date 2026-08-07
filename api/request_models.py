@@ -131,6 +131,14 @@ class OpenCodeConnectionPayload(BaseModel):
     last_checked_at: str = ""
 
 
+class ClaudeCodeConnectionPayload(BaseModel):
+    connection_id: str = ""
+    name: str = "My Claude Code"
+    configured_model: str = "claude/default"
+    executable_path: str = ""
+    enabled: bool = True
+
+
 class ProposalGeneratePayload(BaseModel):
     job_description: str
 

@@ -62,6 +62,7 @@ from pipeline_stage_metadata import AGENT_STAGE_METADATA
 from api.request_models import (
     AISettingsPayload,
     AgentAIConfigPayload,
+    ClaudeCodeConnectionPayload,
     GlobalAIConfigPayload,
     KeysUpdatePayload,
     OpenCodeConnectionPayload,
@@ -91,6 +92,8 @@ try:
     _HAS_OPENCODE = True
 except ImportError:
     _HAS_OPENCODE = False
+
+from claude_bridge import get_claude_onboarding_dependencies as get_claude_code_onboarding_dependencies, test_claude_readiness as test_claude_code_readiness
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.environ.get("FREELANCERSTUDIO_HOME") or BASE_DIR
@@ -249,6 +252,7 @@ from provider_config import (
     AI_PROVIDER_MODELS,
     MODEL_CAPABILITY_OVERRIDES,
     PRODUCT_JUDGE_STATUS_REASONS,
+    _CLI_SUBSCRIPTION_MODEL_CATALOG,
     _PROVIDER_CONNECTION_CREDENTIAL_FIELDS,
     _canonical_connection_type,
     _cleanup_connection_assignments,
@@ -621,6 +625,190 @@ def create_universal_provider_connection(payload: UniversalProviderConnectionPay
     save_studio_keys(data)
     return {"status": "created", "connection": connection.to_dict()}
 
+@app.post("/api/provider-connections/opencode")
+def save_opencode_connection(payload: OpenCodeConnectionPayload):
+    if payload.transport_type not in {"auto", "cli", "local_service"}:
+        raise HTTPException(400, "Unsupported OpenCode transport")
+    selected_model = str(_normalize_model_for_connection(payload.configured_model.strip(), payload.connection_id).get("model_id") or payload.configured_model.strip())
+    valid_model, invalid_reason = validate_native_model_id(selected_model, "opencode")
+    if not valid_model:
+        raise HTTPException(400, {"error_code": invalid_reason, "message": "OpenCode model must use native provider/model format."})
+    result = test_opencode_readiness(payload.executable_path.strip(), selected_model, payload.local_endpoint.strip())
+    if result.get("ready") is not True:
+        raise HTTPException(409, {"error_code": result.get("error_code", "readiness_failed"), "message": result.get("message", "OpenCode readiness check failed"), "checks": result.get("checks", {})})
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    selection = result["checks"]["selection"]
+    server_url = result.get("server_url", "")
+    connection = {
+        "connection_id": payload.connection_id.strip() or f"opencode-{uuid.uuid4().hex[:12]}",
+        "connection_type": "opencode_oauth_bridge",
+        "name": payload.name.strip() or "My OpenCode",
+        "enabled": bool(payload.enabled),
+        "executable_path": result["executable_path"],
+        "local_endpoint": server_url,
+        "server_port": int(server_url.rsplit(":", 1)[1]) if server_url else None,
+        "configured_provider": selection["provider"],
+        "configured_model": selection["model"],
+        "auth_type": (result.get("selected_auth_types") or ["configured"])[0],
+        "auth_status": "authenticated",
+        "readiness_status": "ready",
+        "last_checked_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
+    data = load_studio_keys()
+    connections = _load_provider_connections(data)
+    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection["connection_id"]), None)
+    if existing is None:
+        connections.append(connection)
+    else:
+        connections[existing] = {**connections[existing], **connection}
+    _store_provider_connections(data, connections)
+    data["_global_ai"] = {
+        "connection_id": connection["connection_id"],
+        "connection_type": "opencode_oauth_bridge",
+        "provider": "opencode_bridge",
+        "model": connection["configured_model"],
+        "enabled": bool(payload.enabled),
+        "updated_at": now,
+    }
+    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
+    system["global_provider"] = "opencode_bridge"
+    system["global_model"] = connection["configured_model"]
+    data["_system"] = system
+    SYSTEM_SETTINGS["global_provider"] = "opencode_bridge"
+    SYSTEM_SETTINGS["global_model"] = connection["configured_model"]
+    save_studio_keys(data)
+    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "effective_execution_config": build_effective_execution_config(data).to_dict(), "message": "OpenCode authentication remains owned by OpenCode; only verified connection metadata was stored."}
+
+
+@app.post("/api/provider-connections/opencode/detect")
+def detect_opencode_connection(payload: OpenCodeConnectionPayload):
+    """Discover a local bridge without persisting or inspecting OpenCode credentials."""
+    dependencies = get_opencode_onboarding_dependencies()
+    opencode_dependency = dependencies["components"]["opencode"]
+    connection = OpenCodeBridgeConnection(
+        connection_id=payload.connection_id.strip() or "transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
+        configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
+        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
+        local_endpoint=payload.local_endpoint.strip(), executable_path=opencode_dependency["path"],
+    )
+    binary = connection.executable_path
+    report = connection.capability_report()
+    return {
+        "status": "detected" if binary else "executable_not_found",
+        "executable_path": binary,
+        "version": opencode_dependency["version"],
+        "available_models": connection.available_models() if binary else [],
+        "capabilities": report,
+        "dependencies": dependencies,
+        "authentication": "Authentication is owned by OpenCode and is verified only by Test Connection.",
+    }
+
+
+@app.post("/api/provider-connections/opencode/test")
+def test_transient_opencode_connection(payload: OpenCodeConnectionPayload):
+    """Verify local OpenCode readiness without invoking a paid model request."""
+    connection = OpenCodeBridgeConnection(
+        connection_id=payload.connection_id.strip() or "transient-opencode-test", name=payload.name.strip() or "My OpenCode",
+        configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
+        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
+        local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
+    )
+    result = test_opencode_readiness(connection.executable_path, connection.configured_model, connection.local_endpoint)
+    connection.executable_path = result.get("executable_path", connection.executable_path)
+    connection.local_endpoint = result.get("server_url", connection.local_endpoint)
+    connection.configured_provider = connection.configured_model.split("/", 1)[0] if "/" in connection.configured_model else ""
+    connection.last_checked_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {**result, "connection": connection.to_dict()}
+
+
+@app.post("/api/provider-connections/claude/detect")
+def detect_claude_code_connection(payload: ClaudeCodeConnectionPayload):
+    """Discover the Claude Code CLI and Node/npm without touching its OAuth session."""
+    dependencies = get_claude_code_onboarding_dependencies()
+    claude_dependency = dependencies["components"]["claude"]
+    binary = claude_dependency["path"]
+    catalog = _CLI_SUBSCRIPTION_MODEL_CATALOG.get("claude_subscription", {})
+    return {
+        "status": "detected" if binary else "executable_not_found",
+        "executable_path": binary,
+        "version": claude_dependency["version"],
+        "available_models": [{"id": model_id, "display_name": label} for model_id, label in catalog.items()],
+        "dependencies": dependencies,
+        "authentication": "Authentication is owned by the official Claude Code CLI and is verified only by Test Connection.",
+    }
+
+
+@app.post("/api/provider-connections/claude/test")
+def test_transient_claude_code_connection(payload: ClaudeCodeConnectionPayload):
+    """Verify the Claude Code CLI is installed and logged in, without invoking a paid request."""
+    result = test_claude_code_readiness(payload.executable_path.strip())
+    return {
+        **result,
+        "connection": {
+            "connection_id": payload.connection_id.strip() or "claude-subscription",
+            "name": payload.name.strip() or "My Claude Code",
+            "configured_model": payload.configured_model.strip() or "claude/default",
+            "executable_path": result.get("executable_path", payload.executable_path),
+            "last_checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        },
+    }
+
+
+@app.post("/api/provider-connections/claude")
+def save_claude_code_connection(payload: ClaudeCodeConnectionPayload):
+    selected_model = str(_normalize_model_for_connection(payload.configured_model.strip() or "claude/default", payload.connection_id).get("model_id") or payload.configured_model.strip() or "claude/default")
+    result = test_claude_code_readiness(payload.executable_path.strip())
+    if result.get("ready") is not True:
+        raise HTTPException(409, {"error_code": result.get("error_code", "readiness_failed"), "message": result.get("message", "Claude Code readiness check failed")})
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    connection = {
+        "connection_id": payload.connection_id.strip() or "claude-subscription",
+        "connection_type": "claude_subscription",
+        "name": payload.name.strip() or "My Claude Code",
+        "provider": "anthropic",
+        "enabled": bool(payload.enabled),
+        "executable_path": result["executable_path"],
+        "configured_provider": "anthropic",
+        "configured_model": selected_model,
+        "auth_type": "delegated_cli_login",
+        "auth_status": "authenticated",
+        "readiness_status": "ready",
+        "priority": 30,
+        "last_checked_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
+    data = load_studio_keys()
+    connections = _load_provider_connections(data)
+    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection["connection_id"]), None)
+    if existing is None:
+        connections.append(connection)
+    else:
+        connections[existing] = {**connections[existing], **connection}
+    _store_provider_connections(data, connections)
+    data["_global_ai"] = {
+        "connection_id": connection["connection_id"],
+        "connection_type": "claude_subscription",
+        "provider": "anthropic",
+        "model": selected_model,
+        "enabled": bool(payload.enabled),
+        "updated_at": now,
+    }
+    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
+    system["global_provider"] = "anthropic"
+    system["global_model"] = selected_model
+    data["_system"] = system
+    SYSTEM_SETTINGS["global_provider"] = "anthropic"
+    SYSTEM_SETTINGS["global_model"] = selected_model
+    save_studio_keys(data)
+    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "effective_execution_config": build_effective_execution_config(data).to_dict(), "message": "Claude Code authentication remains owned by the official CLI; only verified connection metadata was stored."}
+
+
+
 
 @app.get("/api/provider-connections/{connection_id}")
 async def get_universal_provider_connection(connection_id: str):
@@ -795,105 +983,6 @@ def refresh_provider_connection_models(connection_id: str):
     _store_provider_connections(data, connections)
     save_studio_keys(data)
     return {"status": "refreshed", "connection": _sanitize_provider_connection(connection)}
-
-
-@app.post("/api/provider-connections/opencode")
-def save_opencode_connection(payload: OpenCodeConnectionPayload):
-    if payload.transport_type not in {"auto", "cli", "local_service"}:
-        raise HTTPException(400, "Unsupported OpenCode transport")
-    selected_model = str(_normalize_model_for_connection(payload.configured_model.strip(), payload.connection_id).get("model_id") or payload.configured_model.strip())
-    valid_model, invalid_reason = validate_native_model_id(selected_model, "opencode")
-    if not valid_model:
-        raise HTTPException(400, {"error_code": invalid_reason, "message": "OpenCode model must use native provider/model format."})
-    result = test_opencode_readiness(payload.executable_path.strip(), selected_model, payload.local_endpoint.strip())
-    if result.get("ready") is not True:
-        raise HTTPException(409, {"error_code": result.get("error_code", "readiness_failed"), "message": result.get("message", "OpenCode readiness check failed"), "checks": result.get("checks", {})})
-
-    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    selection = result["checks"]["selection"]
-    server_url = result.get("server_url", "")
-    connection = {
-        "connection_id": payload.connection_id.strip() or f"opencode-{uuid.uuid4().hex[:12]}",
-        "connection_type": "opencode_oauth_bridge",
-        "name": payload.name.strip() or "My OpenCode",
-        "enabled": bool(payload.enabled),
-        "executable_path": result["executable_path"],
-        "local_endpoint": server_url,
-        "server_port": int(server_url.rsplit(":", 1)[1]) if server_url else None,
-        "configured_provider": selection["provider"],
-        "configured_model": selection["model"],
-        "auth_type": (result.get("selected_auth_types") or ["configured"])[0],
-        "auth_status": "authenticated",
-        "readiness_status": "ready",
-        "last_checked_at": now,
-        "created_at": now,
-        "updated_at": now,
-    }
-    data = load_studio_keys()
-    connections = _load_provider_connections(data)
-    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection["connection_id"]), None)
-    if existing is None:
-        connections.append(connection)
-    else:
-        connections[existing] = {**connections[existing], **connection}
-    _store_provider_connections(data, connections)
-    data["_global_ai"] = {
-        "connection_id": connection["connection_id"],
-        "connection_type": "opencode_oauth_bridge",
-        "provider": "opencode_bridge",
-        "model": connection["configured_model"],
-        "enabled": bool(payload.enabled),
-        "updated_at": now,
-    }
-    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
-    system["global_provider"] = "opencode_bridge"
-    system["global_model"] = connection["configured_model"]
-    data["_system"] = system
-    SYSTEM_SETTINGS["global_provider"] = "opencode_bridge"
-    SYSTEM_SETTINGS["global_model"] = connection["configured_model"]
-    save_studio_keys(data)
-    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "effective_execution_config": build_effective_execution_config(data).to_dict(), "message": "OpenCode authentication remains owned by OpenCode; only verified connection metadata was stored."}
-
-
-@app.post("/api/provider-connections/opencode/detect")
-def detect_opencode_connection(payload: OpenCodeConnectionPayload):
-    """Discover a local bridge without persisting or inspecting OpenCode credentials."""
-    dependencies = get_opencode_onboarding_dependencies()
-    opencode_dependency = dependencies["components"]["opencode"]
-    connection = OpenCodeBridgeConnection(
-        connection_id=payload.connection_id.strip() or "transient-opencode-detect", name=payload.name.strip() or "My OpenCode",
-        configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
-        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
-        local_endpoint=payload.local_endpoint.strip(), executable_path=opencode_dependency["path"],
-    )
-    binary = connection.executable_path
-    report = connection.capability_report()
-    return {
-        "status": "detected" if binary else "executable_not_found",
-        "executable_path": binary,
-        "version": opencode_dependency["version"],
-        "available_models": connection.available_models() if binary else [],
-        "capabilities": report,
-        "dependencies": dependencies,
-        "authentication": "Authentication is owned by OpenCode and is verified only by Test Connection.",
-    }
-
-
-@app.post("/api/provider-connections/opencode/test")
-def test_transient_opencode_connection(payload: OpenCodeConnectionPayload):
-    """Verify local OpenCode readiness without invoking a paid model request."""
-    connection = OpenCodeBridgeConnection(
-        connection_id=payload.connection_id.strip() or "transient-opencode-test", name=payload.name.strip() or "My OpenCode",
-        configured_model=str(_normalize_model_for_connection(payload.configured_model.strip()).get("model_id") or payload.configured_model.strip()), enabled=payload.enabled,
-        transport_type="cli" if payload.transport_type == "auto" else payload.transport_type,
-        local_endpoint=payload.local_endpoint.strip(), executable_path=payload.executable_path.strip(),
-    )
-    result = test_opencode_readiness(connection.executable_path, connection.configured_model, connection.local_endpoint)
-    connection.executable_path = result.get("executable_path", connection.executable_path)
-    connection.local_endpoint = result.get("server_url", connection.local_endpoint)
-    connection.configured_provider = connection.configured_model.split("/", 1)[0] if "/" in connection.configured_model else ""
-    connection.last_checked_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    return {**result, "connection": connection.to_dict()}
 
 
 @app.post("/api/provider-connections/{connection_id}/legacy-test")

@@ -8,6 +8,7 @@ separately by ClaudeSubscriptionAdapter in provider_adapters.py).
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -94,6 +95,84 @@ def _open_visible_terminal(binary: str, args: list[str], title: str, workdir: Op
             "message": "The Claude Code terminal could not be opened. Run the command shown below in a terminal.",
             "manual_command": manual_command,
         }
+
+
+def _standard_windows_tool_paths(tool: str) -> list[str]:
+    """Mirrors opencode_bridge.py's _standard_windows_tool_paths -- same shared node/npm
+    locations, plus claude's own standard npm-global install spots."""
+    if os.name != "nt":
+        return []
+    program_files = [os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
+    app_data = os.environ.get("APPDATA", os.path.expanduser(r"~\AppData\Roaming"))
+    local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local"))
+    if tool == "node":
+        return [os.path.join(root, "nodejs", "node.exe") for root in program_files] + [os.path.join(local_app_data, "Programs", "nodejs", "node.exe")]
+    if tool == "npm":
+        return [os.path.join(root, "nodejs", "npm.cmd") for root in program_files] + [os.path.join(local_app_data, "Programs", "nodejs", "npm.cmd")]
+    if tool == "claude":
+        return [
+            os.path.join(app_data, "npm", "claude.cmd"),
+            os.path.join(app_data, "npm", "claude.exe"),
+            *[os.path.join(root, "nodejs", "claude.cmd") for root in program_files],
+        ]
+    return []
+
+
+def _detect_onboarding_tool(tool: str) -> dict:
+    """Mirrors opencode_bridge.py's _detect_onboarding_tool for node/npm/claude."""
+    command_names = {
+        "node": ["node.exe", "node"],
+        "npm": ["npm.cmd", "npm"],
+        "claude": ["claude.cmd", "claude.exe", "claude"],
+    }[tool]
+    path = ""
+    for name in command_names:
+        path = shutil.which(name) or ""
+        if path:
+            break
+    found_via_standard_path = False
+    if not path:
+        path = next((candidate for candidate in _standard_windows_tool_paths(tool) if os.path.isfile(candidate)), "")
+        found_via_standard_path = bool(path)
+    if not path:
+        return {"installed": False, "version": "", "path": "", "path_refresh_recommended": False}
+    code, stdout, stderr = _run_capture([path, "--version"], timeout=10)
+    if code != 0:
+        return {"installed": False, "version": "", "path": "", "path_refresh_recommended": found_via_standard_path}
+    return {
+        "installed": True,
+        "version": _strip_ansi(stdout or stderr).strip(),
+        "path": path,
+        "path_refresh_recommended": found_via_standard_path,
+    }
+
+
+def get_claude_onboarding_dependencies() -> dict:
+    components = {tool: _detect_onboarding_tool(tool) for tool in ("node", "npm", "claude")}
+    restart_recommended = any(item["path_refresh_recommended"] for item in components.values())
+    return {
+        "components": components,
+        "restart_recommended": restart_recommended,
+        "restart_message": "A dependency was found in a standard Windows install location but is not visible on Studio's current PATH. Restart Studio, then select Detect Again." if restart_recommended else "",
+    }
+
+
+def test_claude_readiness(executable_path: str) -> dict:
+    """Verify the Claude Code CLI is installed and its own `claude auth login` session is
+    active. Studio never reads or stores the OAuth token itself -- only this loggedIn flag."""
+    binary = executable_path.strip() if executable_path and os.path.isfile(executable_path) else _discover_claude()
+    if not binary:
+        return {"ready": False, "error_code": "claude_code_unavailable", "message": "Claude Code CLI was not found.", "executable_path": ""}
+    code, stdout, _stderr = _run_capture([binary, "auth", "status"], timeout=15)
+    if code != 0:
+        return {"ready": False, "error_code": "claude_code_unavailable", "message": "Claude Code CLI did not respond to `claude auth status`.", "executable_path": binary}
+    try:
+        status = json.loads(_strip_ansi(stdout))
+    except ValueError:
+        return {"ready": False, "error_code": "claude_code_unavailable", "message": "Claude Code CLI returned an unexpected auth status response.", "executable_path": binary}
+    if not status.get("loggedIn"):
+        return {"ready": False, "error_code": "claude_code_not_logged_in", "message": "Run `claude auth login` in a terminal, then select Test Connection again.", "executable_path": binary}
+    return {"ready": True, "error_code": "", "message": "Claude Code CLI is installed and logged in.", "executable_path": binary, "account": status.get("email") or status.get("account") or ""}
 
 
 def start_claude_workspace_terminal(workdir: str) -> dict:
