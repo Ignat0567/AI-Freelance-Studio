@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import config_storage
 from api.collaboration import router as collaboration_router
 from api.orders import router as orders_router
 from backend_security import LocalSecurityContext, LocalSecurityMiddleware, set_app_security_context
@@ -352,7 +353,11 @@ def _order_payload():
     }
 
 
-def test_a_real_order_executed_through_the_http_api_reaches_the_collaboration_timeline():
+def test_a_real_order_executed_through_the_http_api_reaches_the_collaboration_timeline(monkeypatch, tmp_path):
+    # api/orders.py's real lazy wiring now persists order/execution state to
+    # config_storage.DATA_DIR (see order_workflow/order_store.py); isolate it here so this
+    # HTTP-integration test doesn't write real files into the repo working tree.
+    monkeypatch.setattr(config_storage, "DATA_DIR", str(tmp_path))
     client = _client(_app_without_any_override())
 
     created = client.post("/api/orders", json=_order_payload())

@@ -137,7 +137,7 @@ def test_orders_api_requires_existing_local_security_boundary():
 def test_mutations_require_post_strict_json_and_reject_extra_fields():
     client = _client(_app())
 
-    assert client.get("/api/orders").status_code == 405
+    assert client.get("/api/orders").status_code == 200  # listing orders is a real, read-only GET endpoint
     wrong_content = _client(_app(), content_type="text/plain").post("/api/orders", content='{"title":"x"}')
     assert wrong_content.status_code in {400, 415}
     extra = client.post("/api/orders", json={**_order_payload(), "command": "rm -rf ."})

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
+import config_storage
 from ai_utils import ask_studio_ai_with_history
 from collaboration.execution_bridge import publish_execution_event
 from collaboration.service import get_or_create_collaboration_service
 from order_workflow import ExecutionMode
+from order_workflow.order_store import JsonExecutionStore, JsonOrderStore
 from order_workflow.api_models import (
     AnswersRequest,
     ApproveBriefRequest,
@@ -62,9 +65,19 @@ def get_order_workflow_service(request: Request) -> OrderWorkflowService:
         def _collaboration_sink(event) -> None:
             publish_execution_event(get_or_create_collaboration_service(app), event)
 
-        service = OrderWorkflowService(collaboration_sink=_collaboration_sink)
+        service = OrderWorkflowService(
+            collaboration_sink=_collaboration_sink,
+            store=JsonOrderStore(Path(config_storage.DATA_DIR) / "orders_state.json"),
+            execution_state_store=JsonExecutionStore(Path(config_storage.DATA_DIR) / "order_executions_state.json"),
+        )
         request.app.state.order_workflow_service = service
     return service
+
+
+@router.get("")
+def list_orders(request: Request):
+    service = get_order_workflow_service(request)
+    return {"orders": service.list_orders()}
 
 
 def _default_ai_ask(prompt: str) -> str:

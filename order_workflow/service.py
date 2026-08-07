@@ -21,8 +21,9 @@ from .brief_service import (
 )
 from .clarification import AlexClarificationService, ClarificationError, ClarificationSession
 from .design_preview import DesignPreview, DesignPreviewError, DesignPreviewService
-from .execution import ExecutionServiceError, ProjectExecutionService
+from .execution import ExecutionServiceError, ExecutionStateStore, ProjectExecutionService
 from .execution_config import ExecutionConfigurationProvider
+from .order_store import InMemoryOrderStore, OrderStateStore, dump_order_workflow_state, load_order_workflow_state
 from .execution_readiness import ExecutionReadinessView, readiness_blocker_view, readiness_check
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .handoffs import AgentHandoffService
@@ -217,6 +218,8 @@ class OrderWorkflowService:
         website_section_ai_ask: Callable[[str], str] | None = None,
         collaboration_sink: Callable[[ExecutionEvent], None] | None = None,
         environ: dict[str, str] | None = None,
+        store: OrderStateStore | None = None,
+        execution_state_store: ExecutionStateStore | None = None,
     ) -> None:
         self._id_factory = id_factory
         self._clock = clock
@@ -231,15 +234,59 @@ class OrderWorkflowService:
             production_adapter=ConfigurationBackedExecutionAdapter(self._configuration),
             live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask, environ=environ),
             collaboration_sink=collaboration_sink,
+            state_store=execution_state_store,
         )
-        self._orders: dict[str, UserOrder] = {}
-        self._sessions: dict[str, ClarificationSession] = {}
-        self._brief_versions: dict[str, list[ProjectBrief]] = {}
-        self._design_previews: dict[str, list[DesignPreview]] = {}
-        self._approval_bindings: dict[str, BriefApprovalBinding] = {}
-        self._handoff_by_order: dict[str, AgentHandoff] = {}
-        self._execution_by_order: dict[str, str] = {}
+        self._store = store or InMemoryOrderStore()
         self._lock = RLock()
+        restored = load_order_workflow_state(self._store.load())
+        self._orders: dict[str, UserOrder] = restored["orders"]
+        self._sessions: dict[str, ClarificationSession] = restored["sessions"]
+        self._brief_versions: dict[str, list[ProjectBrief]] = restored["brief_versions"]
+        self._design_previews: dict[str, list[DesignPreview]] = restored["design_previews"]
+        self._approval_bindings: dict[str, BriefApprovalBinding] = restored["approval_bindings"]
+        self._handoff_by_order: dict[str, AgentHandoff] = restored["handoff_by_order"]
+        self._execution_by_order: dict[str, str] = restored["execution_by_order"]
+
+    def _persist(self) -> None:
+        with self._lock:
+            state = dump_order_workflow_state(
+                orders=self._orders,
+                sessions=self._sessions,
+                brief_versions=self._brief_versions,
+                design_previews=self._design_previews,
+                approval_bindings=self._approval_bindings,
+                handoff_by_order=self._handoff_by_order,
+                execution_by_order=self._execution_by_order,
+            )
+        self._store.save(state)
+
+    def list_orders(self) -> list[dict[str, Any]]:
+        """Summary rows for a Projects list -- id/title/status/timestamps only, cheap to
+        compute and stable even if an order's deeper state (brief/preview/handoff) fails
+        to load for some reason."""
+        with self._lock:
+            orders = list(self._orders.values())
+            execution_by_order = dict(self._execution_by_order)
+        rows = []
+        for order in sorted(orders, key=lambda item: item.created_at, reverse=True):
+            execution_id = execution_by_order.get(order.id)
+            result = None
+            if execution_id:
+                try:
+                    result = self._executions.snapshot(execution_id)
+                except ExecutionServiceError:
+                    result = None
+            rows.append({
+                "id": order.id,
+                "title": order.title,
+                "status": order.status.value,
+                "created_at": order.created_at.isoformat(),
+                "updated_at": order.updated_at.isoformat(),
+                "execution_status": result.status.value if result else None,
+                "execution_stage": result.stage.value if result else None,
+                "execution_progress": result.progress if result else None,
+            })
+        return rows
 
     def create_order(self, request: CreateOrderRequest) -> dict[str, Any]:
         if request.product_type != "web_app":
@@ -263,6 +310,7 @@ class OrderWorkflowService:
         with self._lock:
             self._orders[result.order.id] = result.order
             self._sessions[result.order.id] = result.session
+        self._persist()
         return self.snapshot(result.order.id)
 
     def snapshot(self, order_id: str) -> dict[str, Any]:
@@ -307,6 +355,7 @@ class OrderWorkflowService:
         with self._lock:
             self._orders[order_id] = result.order
             self._sessions[order_id] = result.session
+        self._persist()
         return self.snapshot(order_id)
 
     def defaults(self, order_id: str) -> dict[str, Any]:
@@ -320,6 +369,7 @@ class OrderWorkflowService:
         with self._lock:
             self._orders[order_id] = result.order
             self._sessions[order_id] = result.session
+        self._persist()
         return self.snapshot(order_id)
 
     def get_brief(self, order_id: str) -> dict[str, Any]:
@@ -355,6 +405,7 @@ class OrderWorkflowService:
                 if preview is not None:
                     self._design_previews.setdefault(order_id, []).append(preview)
                 self._orders[order_id] = order.model_copy(update={"brief_id": brief.id, "status": UserOrderStatus.AWAITING_APPROVAL})
+            self._persist()
         return self.snapshot(order_id)
 
     def revise_brief(self, order_id: str, operations: tuple[RevisionOperationRequest, ...]) -> dict[str, Any]:
@@ -382,6 +433,7 @@ class OrderWorkflowService:
             self._approval_bindings.pop(order_id, None)
             self._handoff_by_order.pop(order_id, None)
             self._orders[order_id] = self._orders[order_id].model_copy(update={"brief_id": revised.id, "status": UserOrderStatus.AWAITING_APPROVAL})
+        self._persist()
         return self.snapshot(order_id)
 
     def approve_brief(self, order_id: str, *, revision: int, fingerprint: str | None) -> dict[str, Any]:
@@ -406,6 +458,7 @@ class OrderWorkflowService:
             if handoff is not None:
                 self._handoff_by_order[order_id] = handoff
             self._orders[order_id] = self._orders[order_id].model_copy(update={"status": UserOrderStatus.APPROVED})
+        self._persist()
         return self.snapshot(order_id)
 
     def get_design_preview(self, order_id: str) -> dict[str, Any]:
@@ -428,6 +481,7 @@ class OrderWorkflowService:
         with self._lock:
             self._design_previews.setdefault(order_id, []).append(preview)
             self._handoff_by_order.pop(order_id, None)
+        self._persist()
         return self.snapshot(order_id)
 
     def revise_design_preview(self, order_id: str, note: str) -> dict[str, Any]:
@@ -442,6 +496,7 @@ class OrderWorkflowService:
         with self._lock:
             self._design_previews.setdefault(order_id, []).append(regenerated)
             self._handoff_by_order.pop(order_id, None)
+        self._persist()
         return self.snapshot(order_id)
 
     def approve_design_preview(self, order_id: str, *, preview_id: str, brief_version: int) -> dict[str, Any]:
@@ -460,6 +515,7 @@ class OrderWorkflowService:
         with self._lock:
             self._design_previews[order_id][-1] = approved_preview
             self._handoff_by_order[order_id] = handoff
+        self._persist()
         return self.snapshot(order_id)
 
     def handoff(self, order_id: str) -> dict[str, Any]:
@@ -485,6 +541,7 @@ class OrderWorkflowService:
             self._execution_by_order[order_id] = execution.id
             next_status = UserOrderStatus.AWAITING_USER if execution.blockers else UserOrderStatus.QUEUED
             self._orders[order_id] = order.model_copy(update={"execution_id": execution.id, "status": next_status})
+        self._persist()
         return self.snapshot(order_id)
 
     def execution_readiness(self, order_id: str, mode: ExecutionMode = ExecutionMode.PRODUCTION) -> dict[str, Any]:
@@ -563,6 +620,7 @@ class OrderWorkflowService:
         with self._lock:
             if execution.status.value == "cancelled":
                 self._orders[order_id] = self._orders[order_id].model_copy(update={"status": UserOrderStatus.CANCELLED})
+        self._persist()
         return self.snapshot(order_id)
 
     def events(self, order_id: str) -> tuple[ExecutionEvent, ...]:
