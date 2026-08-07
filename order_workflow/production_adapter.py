@@ -105,7 +105,7 @@ class ProductionProjectExecutionAdapter:
     def prepare_execution(self, request: ExecutionRequest) -> ProductionExecutionPackage:
         if self.workspace_root is None:
             raise RuntimeError("workspace root is not configured")
-        workspace = plan_project_workspace(self.workspace_root, order_id=request.brief.order_id, brief_id=request.brief.id)
+        workspace = plan_project_workspace(self.workspace_root, order_id=request.brief.order_id, brief_id=request.brief.id, title=request.title)
         return build_production_execution_package(
             execution_id=request.execution_id,
             brief=request.brief,
@@ -188,7 +188,7 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return _cancelled_result(request)
         event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=10, message="Preparing live OpenCode execution")
         event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=20, message="Creating project workspace")
-        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint)
+        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint, title=request.title)
         if detect_cinematic_website_intent(request.brief):
             event_sink.emit(stage=ExecutionStage.PLANNING, agent="Elena", progress=25, message="Selecting cinematic website sections")
             # website_sections' scaffold package.json has no "test" script (it's a

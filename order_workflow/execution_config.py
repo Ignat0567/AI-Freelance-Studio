@@ -149,6 +149,12 @@ def _selected_provider(config: dict | None, active_backend_probe: Callable[[], s
         return ""
     system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
     global_ai = config.get("_global_ai", {}) if isinstance(config.get("_global_ai"), dict) else {}
+    if global_ai.get("connection_type") == "claude_subscription":
+        # The claude-subscription connection template stores provider_id "anthropic" (the
+        # vendor identity, shared with the plain API-key connection) even though it
+        # authenticates via delegated `claude` CLI login and needs no API key. Normalize to
+        # order_workflow's own "claude_code" identity so execution readiness reflects reality.
+        return "claude_code"
     provider = str(system.get("global_provider") or global_ai.get("provider") or config.get("global_provider") or "").strip().lower()
     if provider:
         return provider

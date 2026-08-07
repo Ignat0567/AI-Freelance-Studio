@@ -36,17 +36,17 @@ class ProjectWorkspace:
         return self.project_path.name
 
 
-def plan_project_workspace(root: str | Path, *, order_id: str, brief_id: str) -> ProjectWorkspace:
+def plan_project_workspace(root: str | Path, *, order_id: str, brief_id: str, title: str = "") -> ProjectWorkspace:
     root_path = Path(root).expanduser().resolve()
-    project_name = _safe_path_part(f"{order_id}-{brief_id}")
+    project_name = _workspace_slug(order_id, brief_id, title)
     return ProjectWorkspace(root=root_path, project_path=root_path / project_name)
 
 
-def reserve_owned_project_workspace(root: str | Path, *, order_id: str, execution_id: str, brief_fingerprint: str | None) -> ProjectWorkspace:
+def reserve_owned_project_workspace(root: str | Path, *, order_id: str, execution_id: str, brief_fingerprint: str | None, title: str = "") -> ProjectWorkspace:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir() or any(part == ".." for part in root_path.parts):
         raise ValueError("unsafe_workspace_path")
-    slug = _safe_path_part(f"{order_id}-{execution_id}")
+    slug = _workspace_slug(order_id, execution_id, title)
     project_path = (root_path / slug).resolve()
     if root_path not in project_path.parents:
         raise ValueError("unsafe_workspace_path")
@@ -141,7 +141,19 @@ def summarize_generated_workspace(workspace: ProjectWorkspace, *, limit: int = 5
     return {"files_created": files_created, "top_level_entries": entries, "workspace_path": workspace.project_reference}
 
 
-def _safe_path_part(value: str) -> str:
+def _safe_path_part(value: str, *, max_length: int = 80) -> str:
     safe = "".join(char if char.isalnum() or char in "-_" else "-" for char in value.strip())
     safe = "-".join(part for part in safe.split("-") if part)
-    return safe[:80] or "generated-project"
+    return safe[:max_length] or "generated-project"
+
+
+def _workspace_slug(order_id: str, execution_id: str, title: str = "") -> str:
+    """Folder name for a reserved workspace: a human-readable title prefix (when available)
+    ahead of the order/execution identity, so `generated_projects/` entries can be told apart
+    at a glance instead of by matching raw UUIDs. The identity portion keeps the exact
+    pre-existing format/truncation so ownership-marker validation is unaffected by title."""
+    identity = _safe_path_part(f"{order_id}-{execution_id}")
+    title_slug = _safe_path_part(title, max_length=40) if title else ""
+    if not title_slug or title_slug == "generated-project":
+        return identity
+    return f"{title_slug}-{identity}"

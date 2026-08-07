@@ -55,6 +55,7 @@ class ExecutionRequest:
     brief: ProjectBrief
     handoff: AgentHandoff
     execution_id: str
+    title: str = ""
 
 
 class ProjectExecutionAdapter(Protocol):

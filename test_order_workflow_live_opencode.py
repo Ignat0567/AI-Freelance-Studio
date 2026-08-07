@@ -398,8 +398,8 @@ def test_crm_prompt_differs_and_has_no_pdf_panels(tmp_path):
     pdf_client = FakeOpenCodeClient()
     crm_client = FakeOpenCodeClient()
     env = {"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"}
-    LiveOpenCodeExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path, opencode_client=pdf_client, environ=env).execute(type("R", (), {"brief": pdf_brief, "handoff": pdf_handoff, "execution_id": "execution_pdf"})(), _NoopSink(), _Token())
-    LiveOpenCodeExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path, opencode_client=crm_client, environ=env).execute(type("R", (), {"brief": crm_brief, "handoff": crm_handoff, "execution_id": "execution_crm"})(), _NoopSink(), _Token())
+    LiveOpenCodeExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path, opencode_client=pdf_client, environ=env).execute(type("R", (), {"brief": pdf_brief, "handoff": pdf_handoff, "execution_id": "execution_pdf", "title": ""})(), _NoopSink(), _Token())
+    LiveOpenCodeExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path, opencode_client=crm_client, environ=env).execute(type("R", (), {"brief": crm_brief, "handoff": crm_handoff, "execution_id": "execution_crm", "title": ""})(), _NoopSink(), _Token())
     assert "left pdf library panel" in pdf_client.prompt.casefold()
     assert "pipeline board" in crm_client.prompt.casefold()
     assert "left pdf library panel" not in crm_client.prompt.casefold()

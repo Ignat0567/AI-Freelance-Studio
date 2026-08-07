@@ -161,6 +161,7 @@ class ProjectExecutionService:
         *,
         mode: ExecutionMode | None = None,
         live: bool = False,
+        title: str = "",
     ) -> ProjectExecution:
         active_mode = mode or self._mode
         self._validate_handoff(brief, handoff)
@@ -200,13 +201,13 @@ class ProjectExecutionService:
         record = _ExecutionRecord(execution, CancellationToken())
         with self._lock:
             if key in self._by_approval:
-                return self.start(brief, handoff, mode=active_mode, live=live)
+                return self.start(brief, handoff, mode=active_mode, live=live, title=title)
             self._records[execution.id] = record
             self._by_approval[key] = execution.id
             self._save(record.snapshot)
             worker = self._thread_factory(
                 target=self._run,
-                args=(execution.id, brief, handoff, adapter),
+                args=(execution.id, brief, handoff, adapter, title),
                 name=f"order-execution-{execution.id}",
                 daemon=True,
             )
@@ -301,6 +302,7 @@ class ProjectExecutionService:
         brief: ProjectBrief,
         handoff: AgentHandoff,
         adapter: ProjectExecutionAdapter,
+        title: str = "",
     ) -> None:
         with self._lock:
             record = self._records[execution_id]
@@ -311,7 +313,7 @@ class ProjectExecutionService:
                 return
             record.started_monotonic = monotonic()
             self._set_running_locked(record, ExecutionStage.REQUIREMENTS, "Alex", 5, "Starting execution")
-            request = ExecutionRequest(brief=brief, handoff=handoff, execution_id=execution_id)
+            request = ExecutionRequest(brief=brief, handoff=handoff, execution_id=execution_id, title=title)
         try:
             result = adapter.execute(request, _Sink(self, execution_id), record.token)
             status = ExecutionStatus.SUCCEEDED if result.success else ExecutionStatus.FAILED

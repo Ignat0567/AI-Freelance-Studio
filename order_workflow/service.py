@@ -478,7 +478,7 @@ class OrderWorkflowService:
         if handoff is None:
             raise OrderWorkflowError("design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved", "Approve the current brief and Elena preview before execution.")
         try:
-            execution = self._executions.start(brief, handoff, mode=mode, live=live)
+            execution = self._executions.start(brief, handoff, mode=mode, live=live, title=order.title)
         except ExecutionServiceError as exc:
             raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
         with self._lock:

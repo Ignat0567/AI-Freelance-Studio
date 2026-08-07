@@ -72,20 +72,25 @@ function App() {
         prevConfigOpen.current = isModelSelectorOpen;
     }, [isModelSelectorOpen]);
 
-    // Persist system logs to localStorage
+    // Persist system logs to localStorage. logSchemaVersion guards against stale entries
+    // surviving a backend refactor: the classic project-generation pipeline was deleted
+    // 2026-08-07, but logs it had written earlier stayed cached here forever with no way
+    // to tell they were dead. Bump this constant whenever a change makes old persisted
+    // log text meaningless, so it gets dropped instead of haunting the activity feed.
+    const LOG_SCHEMA_VERSION = 2;
     useEffect(() => {
         try {
             const saved = localStorage.getItem('studio_session');
             if (saved) {
                 const data = JSON.parse(saved);
-                if (data.studioLogs) setLogs(data.studioLogs);
+                if (data.studioLogs && data.logSchemaVersion === LOG_SCHEMA_VERSION) setLogs(data.studioLogs);
             }
         } catch { }
     }, []);
 
     useEffect(() => {
         try {
-            localStorage.setItem('studio_session', JSON.stringify({ studioLogs: logs }));
+            localStorage.setItem('studio_session', JSON.stringify({ studioLogs: logs, logSchemaVersion: LOG_SCHEMA_VERSION }));
         } catch { }
     }, [logs]);
 

@@ -128,7 +128,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return self._legacy_fallback.execute(request, event_sink, cancellation)
 
         event_sink.emit(stage=ExecutionStage.PLANNING, agent="Studio", progress=5, message="Preparing phased execution")
-        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint)
+        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint, title=request.title)
         if cancellation.is_cancelled():
             return _cancelled_result(request)
         validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)

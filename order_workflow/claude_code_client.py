@@ -77,8 +77,13 @@ class ConfiguredClaudeCodeExecutionClient:
         # prompt. _ensure_isolated_git_repo() above already stops `git diff`/`git status`
         # (which --bare would otherwise be needed to guard against) from walking up to
         # Studio's own repo, so --bare's CLAUDE.md/auto-memory isolation is redundant here.
+        # The prompt is sent over stdin, not as a command-line argument: prompts routinely
+        # exceed cmd.exe's ~8191-character command-line limit on Windows (claude.cmd is a
+        # batch wrapper, so every invocation goes through cmd.exe), which previously made
+        # every non-trivial execution fail immediately with a garbled shell-level error
+        # before Claude Code CLI itself ever ran.
         cmd = [
-            binary, "-p", prompt,
+            binary, "-p",
             "--output-format", "json",
             "--dangerously-skip-permissions",
             "--allow-dangerously-skip-permissions",
@@ -89,6 +94,7 @@ class ConfiguredClaudeCodeExecutionClient:
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(Path(workspace_path)),
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -108,8 +114,17 @@ class ConfiguredClaudeCodeExecutionClient:
             except Exception:
                 pass
 
+        def _feed_stdin() -> None:
+            try:
+                proc.stdin.write(prompt)
+                proc.stdin.close()
+            except (OSError, ValueError):
+                pass
+
+        stdin_thread = threading.Thread(target=_feed_stdin, daemon=True)
         stdout_thread = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks), daemon=True)
         stderr_thread = threading.Thread(target=_drain, args=(proc.stderr, stderr_chunks), daemon=True)
+        stdin_thread.start()
         stdout_thread.start()
         stderr_thread.start()
 
