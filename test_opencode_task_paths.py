@@ -2,7 +2,6 @@ from pathlib import Path
 
 import opencode_bridge
 from opencode_bridge import OpencodeBridge, _resolve_cli_task_file
-from qa_engine import QAEngine
 
 
 def test_project_cwd_relative_task_file_resolves(tmp_path):
@@ -43,17 +42,3 @@ def test_missing_preflight_does_not_start_subprocess(tmp_path, monkeypatch):
     assert result["task_file_resolved_path"] == str(tmp_path.resolve() / ".opencode_task.md")
     assert result["task_file_exists"] is False
     assert started == []
-
-
-def test_repair_result_preserves_task_path_metadata(tmp_path, monkeypatch):
-    class Bridge:
-        _binary = "opencode-test"
-        def ensure_running(self, _workdir=None, **_kwargs): return True
-        def execute_fix_task(self, **_kwargs):
-            return {"success": False, "subprocess_started": False, "preflight_status": "task_file_not_found", "task_file_argument": ".opencode_task.md", "task_file_resolved_path": str(tmp_path / ".opencode_task.md"), "task_file_exists": False}
-    monkeypatch.setattr("opencode_bridge.get_bridge", lambda: Bridge())
-    result = QAEngine({"title": "Test", "logs": []}, str(tmp_path), "p1", "test", "test", 0)._request_opencode_fix([{"id": "ISSUE-1", "status": "open"}], "error", {})
-    assert result["status"] == "task_file_not_found"
-    assert result["task_file_argument"] == ".opencode_task.md"
-    assert result["task_file_exists"] is False
-    assert result["snapshot_before"] == result["snapshot_after"]

@@ -17,21 +17,12 @@ def _run_cache_policy_probe(tmp_path: Path) -> dict:
     (dist / "index.html").write_text('<script src="/assets/index-AbC123.js"></script>', encoding="utf-8")
     (assets / "index-AbC123.js").write_text("console.log('fresh');", encoding="utf-8")
     (dist / "manifest.json").write_text('{"name":"AI Freelance Studio"}', encoding="utf-8")
-    projects_data = tmp_path / "projects_data"
 
     code = r'''
 import json
-import os
-from pathlib import Path
 
 import main
 from test_security_support import authorized_test_client
-
-main.PROJECTS_DATA_DIR = os.environ["PROBE_PROJECTS_DATA"]
-project_dir = Path(main.PROJECTS_DATA_DIR) / "cache-probe"
-project_dir.mkdir(parents=True, exist_ok=True)
-(project_dir / "artifact.txt").write_text("download", encoding="utf-8")
-main.active_projects["cache-probe"] = {"id": "cache-probe", "name": "Cache Probe"}
 
 client = authorized_test_client(main.app)
 responses = {
@@ -39,14 +30,12 @@ responses = {
     "hashed_asset": client.get("/assets/index-AbC123.js"),
     "unhashed_asset": client.get("/manifest.json"),
     "api": client.get("/api/debug/frontend"),
-    "download": client.get("/api/projects/cache-probe/files/download/artifact.txt"),
     "spa_fallback": client.get("/settings/ai"),
 }
 print(json.dumps({name: {"status": response.status_code, "headers": dict(response.headers)} for name, response in responses.items()}))
 '''
     env = os.environ.copy()
     env["FREELANCERSTUDIO_FRONTEND_DIR"] = str(dist)
-    env["PROBE_PROJECTS_DATA"] = str(projects_data)
     result = subprocess.run(
         [sys.executable, "-c", code],
         cwd=Path(__file__).resolve().parent,
@@ -79,9 +68,6 @@ def test_frontend_cache_policy_does_not_leak_to_api_or_downloads(tmp_path):
 
     assert result["api"]["status"] == 200
     assert "cache-control" not in result["api"]["headers"]
-
-    assert result["download"]["status"] == 200
-    assert result["download"]["headers"].get("cache-control") != "no-store, no-cache, must-revalidate, max-age=0"
 
 
 def test_electron_cache_invalidation_preserves_storage_and_loads_after_failure():

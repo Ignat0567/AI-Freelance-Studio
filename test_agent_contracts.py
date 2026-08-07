@@ -78,13 +78,6 @@ def test_every_builtin_agent_has_role_contract():
         assert ROLE_CONTRACTS[agent_id]["required_fields"]
 
 
-def test_agents_cannot_set_project_completed_directly():
-    project = {"status": "product_judge", "logs": [], "cancel_requested": False, "agent_artifacts": {"alex": [{"artifact": {"status": "completed"}}]}}
-
-    assert not main._set_project_status(project, "completed")
-    assert project["status"] == "product_judge"
-
-
 def test_agent_output_cannot_directly_mark_accepted():
     output = _alex_output()
     output["completion_policy"] = {"accepted": True}

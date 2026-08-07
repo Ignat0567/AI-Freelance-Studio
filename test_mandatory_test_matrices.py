@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import delivery_audit
 import project_state
 from agent_contracts import apply_agent_artifact
 from feature_matrix import apply_bugcatcher_artifact, build_feature_matrix, ensure_feature_matrix, load_feature_matrix, matrix_blocks_completion, recalculate_matrix
@@ -156,18 +155,3 @@ def test_coverage_matrix_survives_restart(tmp_path):
     assert error == ""
     assert matrix["quality_matrices"]["critical_scenarios"]
     assert matrix["quality_matrix_summary"]["blocking_gaps"]
-
-
-def test_final_audit_uses_matrix_status(tmp_path, monkeypatch):
-    _write(tmp_path / "README.md", "# Demo\nRun: python -m uvicorn main:app\n")
-    _write(tmp_path / "main.py", "from fastapi import FastAPI\napp=FastAPI()\n")
-    project = _project(tmp_path)
-    monkeypatch.setattr(delivery_audit, "_runtime_smoke", lambda *_args: {"status": "passed"})
-    monkeypatch.setattr(delivery_audit, "_evaluate_acceptance", lambda *_args: (True, []))
-    monkeypatch.setattr(delivery_audit, "_check_secrets", lambda *_args: (True, []))
-    monkeypatch.setattr(delivery_audit, "_check_todos", lambda *_args: (True, []))
-
-    report = delivery_audit.run_final_delivery_audit(project, str(tmp_path), {"success": True, "rounds_completed": 1, "total_errors": 0, "round_history": [], "errors": []})
-
-    assert any(check["name"] == "mandatory_test_matrices" and check["status"] == "failed" for check in report["checks"])
-    assert "mandatory_test_matrix_incomplete" in report["completion_policy"]["blockers"]

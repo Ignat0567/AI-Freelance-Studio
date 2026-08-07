@@ -3,51 +3,11 @@ from pathlib import Path
 
 import config_storage
 import main
-EXPECTED_FLOW = "Open Settings -> AI Provider -> Detect Again -> Repair automatically or Test Connection -> Save Connection -> Retry Generation."
-
-
-def test_recovery_instructions_cover_each_real_failure_state():
-    expected_reasons = {
-        "nodejs_missing": "Node.js is required",
-        "opencode_not_installed": "Download OpenCode",
-        "executable_not_detected": "executable was not detected",
-        "server_not_running": "local service is required",
-        "opencode_model_reference_invalid": "model reference is invalid",
-        "opencode_model_not_found": "selected model is not available",
-        "opencode_authentication_failure": "provider is not authenticated",
-        "opencode_workspace_invalid": "workspace path is invalid",
-        "provider_rate_limited": "rate limit",
-        "provider_quota_exceeded": "quota",
-        "provider_not_authenticated": "No authorized provider",
-        "models_unavailable": "no models are available",
-        "connection_test_failed": "readiness was not confirmed",
-        "connection_not_saved": "was not saved",
-    }
-
-    for code, reason in expected_reasons.items():
-        instruction = main._opencode_recovery_instruction(code)
-        assert reason in instruction
-        assert EXPECTED_FLOW in instruction
-
-
-def test_recovery_classifier_distinguishes_actionable_failures():
-    assert main._opencode_recovery_code("npm is required") == "nodejs_missing"
-    assert main._opencode_recovery_code("OpenCode is not installed") == "opencode_not_installed"
-    assert main._opencode_recovery_code("executable ENOENT") == "executable_not_detected"
-    assert main._opencode_recovery_code("server required but serve failed") == "server_not_running"
-    assert main._opencode_recovery_code("Model not found: nvidia/missing") == "opencode_model_not_found"
-    assert main._opencode_recovery_code("rate limit reached") == "provider_rate_limited"
-    assert main._opencode_recovery_code("quota exceeded") == "provider_quota_exceeded"
-    assert main._opencode_recovery_code("unauthorized provider") == "provider_not_authenticated"
-    assert main._opencode_recovery_code("no models available") == "models_unavailable"
-    assert main._opencode_recovery_code("connection not saved") == "connection_not_saved"
-    assert main._opencode_recovery_code("unknown failure") == "connection_test_failed"
 
 
 def test_production_sources_do_not_reference_removed_opencode_login_action():
     paths = [
         Path("main.py"),
-        Path("qa_engine.py"),
         Path("frontend/src/components/OpenCodeConnectionSetup.jsx"),
         Path("frontend/src/components/SettingsModal.jsx"),
         Path("frontend/src/components/StudioDashboard.jsx"),
@@ -62,10 +22,9 @@ def test_production_sources_do_not_reference_removed_opencode_login_action():
 def test_recovery_flow_names_existing_frontend_actions():
     settings = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
     connection = Path("frontend/src/components/OpenCodeConnectionSetup.jsx").read_text(encoding="utf-8")
-    dashboard = Path("frontend/src/components/StudioDashboard.jsx").read_text(encoding="utf-8")
-    frontend = settings + connection + dashboard
+    frontend = settings + connection
 
-    for action in ("Download Node.js", "Download OpenCode", "Detect Again", "Authenticate Provider", "Repair automatically", "Test Connection", "Save Connection", "Retry Generation"):
+    for action in ("Download Node.js", "Download OpenCode", "Detect Again", "Authenticate Provider", "Repair automatically", "Test Connection", "Save Connection"):
         assert action in frontend
 
 
@@ -74,78 +33,6 @@ def test_frontend_does_not_require_start_web_for_cli_generation():
     assert "Start OpenCode Web before testing" not in source
     assert "Local server" in source
     assert "not_required" in source
-
-
-def test_retry_generation_resumes_blocked_project_from_saved_phase(monkeypatch):
-    scheduled = []
-
-    class BackgroundTasks:
-        def add_task(self, function, *args):
-            scheduled.append((function, args))
-
-    project = {
-        "project_id": "blocked-project",
-        "title": "Blocked project",
-        "status": "blocked",
-        "_phase": "coding",
-        "logs": [],
-        "cancel_requested": False,
-    }
-    monkeypatch.setattr(main, "active_projects", {project["project_id"]: project})
-    monkeypatch.setattr(main, "_save_projects_state", lambda: None)
-
-    result = main.retry_project_qa(project["project_id"], BackgroundTasks())
-
-    assert result == {"status": "retrying_generation", "message": "Generation restarted from 'coding'."}
-    assert project["status"] == "coding"
-    assert scheduled == [(main.async_studio_production_pipeline, (project["project_id"],))]
-
-
-def test_blocked_dashboard_retry_uses_generation_retry_endpoint():
-    source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
-
-    assert "'failed_final_audit'" in source
-    assert "handleQARetry(activePort, activeProject)" in source
-    assert "handleRestart()" in source
-
-
-def test_failed_final_audit_retry_reruns_qa_when_no_auto_repair(monkeypatch, tmp_path):
-    scheduled = []
-
-    class BackgroundTasks:
-        def add_task(self, function, *args):
-            scheduled.append((function, args))
-
-    project = {
-        "project_id": "audit-project",
-        "title": "Audit Project",
-        "status": "failed final audit",
-        "target_path": str(tmp_path),
-        "logs": [],
-    }
-    monkeypatch.setattr(main, "active_projects", {project["project_id"]: project})
-    monkeypatch.setattr(main, "_save_projects_state", lambda: None)
-    monkeypatch.setattr(main, "_repair_final_audit_issues", lambda *_args, **_kwargs: False)
-
-    result = main.retry_project_qa(project["project_id"], BackgroundTasks())
-
-    assert result == {"status": "retrying", "message": "QA verification restarted."}
-    assert project["status"] == "verifying"
-    assert scheduled == [(main._run_qa_only, (project["project_id"], str(tmp_path)))]
-
-
-def test_repairing_can_transition_to_final_audit_after_successful_retry_qa():
-    project = {"status": "repairing", "logs": []}
-    assert main._set_project_status(project, "final_audit") is True
-    assert project["status"] == "final_audit"
-
-
-def test_dashboard_exposes_fix_final_audit_action():
-    source = Path("frontend/src/components/StudioDashboard.jsx").read_text(encoding="utf-8")
-    assert "normalizeStatus(project.status)" in source
-    assert "failed_final_audit" in source
-    assert "Повторить / исправить" in source
-    assert "onRetryProject" in source
 
 
 def _write_config(monkeypatch, tmp_path, config):

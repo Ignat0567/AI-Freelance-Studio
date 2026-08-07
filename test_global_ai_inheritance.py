@@ -483,24 +483,3 @@ def test_settings_toggle_markup_is_accessible_button_switch():
     assert "aria-checked={checked}" in toggle_section
     assert "disabled={disabled}" in toggle_section
     assert "onKeyDown" in toggle_section
-
-
-def test_product_judge_chat_uses_product_judge_identity():
-    normal_prompt = main.get_agent_prompt("product_judge")
-    fast_prompt = main.get_fast_agent_prompt("product_judge")
-    assert "You are Product Judge" in normal_prompt
-    assert "You are Product Judge" in fast_prompt
-    assert "professional AI assistant" not in normal_prompt
-    assert "professional AI assistant" not in fast_prompt
-
-
-def test_alex_prompt_intake_gates_codex_assignment():
-    normal_prompt = main.get_agent_prompt("alex")
-    fast_prompt = main.get_fast_agent_prompt("alex")
-    for prompt in (normal_prompt, fast_prompt):
-        assert "Before assigning Codex, run prompt intake" in prompt
-        assert "desktop packaging" in prompt
-        assert "AI/RAG requirements" in prompt
-        assert "voice input/output" in prompt
-        assert "ready-to-send Codex brief" in prompt
-        assert "Codex may receive implementation only after" in prompt

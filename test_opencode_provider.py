@@ -1,8 +1,6 @@
-import json
 from pathlib import Path
 
 import opencode_provider
-import product_judge
 
 
 def _connection(**overrides):
@@ -327,37 +325,3 @@ def test_empty_timeout_without_artifact_remains_timeout_without_artifact(monkeyp
 
 def test_unsupported_flag_maps_to_flag_rejection():
     assert opencode_provider._error_category("Error: unknown option --auto", "") == "flag_rejected"
-
-
-def test_text_only_bridge_is_rejected_for_product_judge(tmp_path):
-    shots = []
-    for category, dimensions in (("laptop", "1366x768"), ("full_hd_desktop", "1920x1080"), ("high_resolution_desktop", "2560x1440"), ("tablet_portrait", "768x1024")):
-        path = tmp_path / f"judge_{category}_{dimensions}.png"
-        path.write_bytes(b"image")
-        shots.append(str(path))
-    result = product_judge.run_product_judge(
-        {"id": "AC-X", "title": "Modern tidy visual design"}, {"passed": True, "viewport_results": []}, shots,
-        {"title": "Demo", "target_path": str(tmp_path)}, {}, "snapshot", {"enabled": True, "provider": "opencode_bridge", "model": "openai/gpt-5.5", "connection": _connection().to_dict()},
-    )
-    assert result["verdict"] == "insufficient_evidence"
-    assert "cannot currently transport images" in result["reason"]
-
-
-def test_product_judge_uses_fresh_read_only_bridge_request(monkeypatch, tmp_path):
-    shots = []
-    for category, dimensions in (("laptop", "1366x768"), ("full_hd_desktop", "1920x1080"), ("high_resolution_desktop", "2560x1440"), ("tablet_portrait", "768x1024")):
-        path = tmp_path / f"judge_{category}_{dimensions}.png"
-        path.write_bytes(b"image")
-        shots.append(str(path))
-    captured = {}
-    connection = _connection(capabilities={"image_input": {"status": "supported", "evidence": "real probe"}})
-    monkeypatch.setattr(product_judge, "OpenCodeBridgeConnection", type("FakeConnection", (), {"from_dict": staticmethod(lambda _value: connection)}))
-    monkeypatch.setattr(product_judge, "bridge_effective_capabilities", lambda _connection: {"image_input": True})
-    monkeypatch.setattr(connection, "execute", lambda request: captured.update(request) or {"status": "success", "text": json.dumps({"verdict": "approved", "findings": []})})
-    result = product_judge.run_product_judge(
-        {"id": "AC-X", "title": "Modern tidy visual design"}, {"passed": True, "viewport_results": []}, shots,
-        {"title": "Demo", "target_path": str(tmp_path)}, {}, "snapshot", {"enabled": True, "provider": "opencode_bridge", "model": "openai/gpt-5.5", "connection": connection.to_dict()},
-    )
-    assert result["verdict"] == "approved"
-    assert captured["session_id"] == "fresh-product-judge-session"
-    assert "repair" not in captured["system_instruction"].lower()

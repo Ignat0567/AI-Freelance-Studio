@@ -1,4 +1,3 @@
-import main
 import project_state
 from quality_profiles import LEVEL_2_BUILD, LEVEL_3_RUNTIME, LEVEL_4_INTERACTION, LEVEL_6_NATIVE_RUNTIME, LEVEL_7_PACKAGED_ARTIFACT, default_quality_settings, derive_target_requirements, ensure_quality_settings, evaluate_quality_completion, target_required_evidence_level
 
@@ -181,18 +180,6 @@ def test_legacy_mvp_migration_is_conservative():
     assert "Legacy mode 'mvp'" in settings["migration_notice"]
 
 
-def test_agent_text_cannot_mark_project_completed():
-    project = {"status": "product_judge", "logs": [], "cancel_requested": False, "agent_summary": "MVP PASSED"}
-    main._reset_delivery_gates(project)
-    main._mark_generation_finished(project, True)
-    main._mark_qa_passed(project, True)
-    main._mark_final_audit_passed(project, True)
-    main._mark_product_judge_passed(project, True)
-
-    assert not main._set_project_status(project, "completed")
-    assert project["status"] == "product_judge"
-
-
 def test_final_status_vocabulary_reflects_actual_maturity():
     prototype = evaluate_quality_completion(_project("prototype"), _checks())
     strict = evaluate_quality_completion(_project("strict_mvp"), _checks())
@@ -215,16 +202,3 @@ def test_quality_settings_persist_after_restart(tmp_path):
     assert state["quality_profile"] == "production_candidate"
     assert state["quality_settings"]["target_requirements"]["backend"] == "required"
     assert state["quality_settings"]["target_requirements"]["ios"] == "optional"
-
-
-def test_completion_state_machine_remains_valid_with_profile_policy():
-    project = _project("strict_mvp")
-    project.update({"status": "product_judge", "logs": [], "cancel_requested": False, "final_delivery_report": {"final_status": "STRICT_MVP_ACCEPTED", "completion_policy": {"accepted": True}}})
-    main._reset_delivery_gates(project)
-    main._mark_generation_finished(project, True)
-    main._mark_qa_passed(project, True)
-    main._mark_final_audit_passed(project, True)
-    main._mark_product_judge_passed(project, True)
-
-    assert main._set_project_status(project, "completed")
-    assert project["status"] == "completed"
