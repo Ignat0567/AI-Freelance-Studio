@@ -10,7 +10,8 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from .brief_service import BriefServiceError, sanitize_public_text, verify_brief_approval
-from .models import ProductType, ProjectBrief, StrictDomainModel, new_public_id, utc_now
+from .models import LongText, ProductType, ProjectBrief, ShortText, StrictDomainModel, new_public_id, utc_now
+from .style_library import STYLE_LIBRARY, StylePack
 
 
 class DesignPreviewError(ValueError):
@@ -67,6 +68,8 @@ class DesignPreview(StrictDomainModel):
     concept_name: str
     layout_type: LayoutArchetype
     visual_direction: str
+    style_name: ShortText
+    style_spec: LongText
     screens: tuple[PreviewScreen, ...]
     user_flows: tuple[str, ...]
     empty_states: tuple[str, ...]
@@ -110,6 +113,9 @@ class DesignPreviewService:
             raise DesignPreviewError("design_preview_brief_mismatch")
         kind = _select_layout(brief)
         spec = _preview_spec(kind, brief)
+        style_pack = _style_by_name(previous.style_name) if previous else None
+        if style_pack is None:
+            style_pack = _select_style(brief)
         notes = tuple(previous.revision_notes if previous else ())
         if revision_note and revision_note.strip():
             notes = (*notes, sanitize_public_text(revision_note)[:240])
@@ -122,6 +128,8 @@ class DesignPreviewService:
             concept_name=spec["concept_name"],
             layout_type=kind,
             visual_direction=spec["visual_direction"],
+            style_name=style_pack.name,
+            style_spec=style_pack.spec,
             screens=spec["screens"],
             user_flows=spec["user_flows"],
             empty_states=spec["empty_states"],
@@ -189,11 +197,33 @@ def design_preview_approval_fingerprint(preview: DesignPreview, brief: ProjectBr
     return hashlib.sha256(f"{brief.approval_fingerprint}:{unapproved.to_json()}".encode("utf-8")).hexdigest()
 
 
+def _wrap_text(text: str, limit: int = 220) -> list[str]:
+    """Word-wrap into <=limit-length chunks -- design_preview_handoff_lines()'s output
+    ultimately becomes AgentHandoff.constraints (tuple[ShortText, ...], 240 chars each), so
+    a rich multi-paragraph style spec must be split rather than truncated to survive."""
+    chunks: list[str] = []
+    for paragraph in text.split("\n\n"):
+        words = paragraph.split()
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if len(candidate) > limit and current:
+                chunks.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+    return chunks
+
+
 def design_preview_handoff_lines(preview: DesignPreview) -> tuple[str, ...]:
     lines = [
         f"Design preview {preview.preview_id}: {preview.concept_name}",
         f"Layout archetype: {preview.layout_type.value}",
         f"Visual direction: {preview.visual_direction}",
+        f"Visual style: {preview.style_name}",
+        *[f"Style spec: {chunk}" for chunk in _wrap_text(preview.style_spec)],
     ]
     for screen in preview.screens:
         lines.append(f"Screen {screen.name}: {screen.purpose}")
@@ -241,6 +271,22 @@ def _select_layout(brief: ProjectBrief) -> LayoutArchetype:
     if _has(text, "step", "onboarding", "wizard"):
         return LayoutArchetype.WIZARD_FLOW
     return LayoutArchetype.DASHBOARD
+
+
+def _style_by_name(name: str) -> StylePack | None:
+    return next((style for style in STYLE_LIBRARY if style.name == name), None)
+
+
+def _select_style(brief: ProjectBrief) -> StylePack:
+    text = _brief_text(brief)
+    best_style: StylePack | None = None
+    best_score = 0
+    for style in STYLE_LIBRARY:
+        score = sum(1 for keyword in style.when_to_use if keyword in text)
+        if score > best_score:
+            best_score = score
+            best_style = style
+    return best_style or STYLE_LIBRARY[0]
 
 
 def _has(text: str, *needles: str) -> bool:

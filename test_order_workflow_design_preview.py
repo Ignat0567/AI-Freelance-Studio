@@ -17,8 +17,11 @@ from order_workflow import (
     ProjectBrief,
     ProjectBriefService,
     RecommendedStack,
+    design_preview_handoff_lines,
     verify_design_preview_approval,
 )
+from order_workflow.phase_prompts import build_ui_shell_prompt
+from order_workflow.style_library import STYLE_LIBRARY
 
 
 pytestmark = pytest.mark.unit
@@ -182,3 +185,54 @@ def test_prompts_differ_between_pdf_crm_and_booking(tmp_path):
     assert "pipeline board" in prompts[1]
     assert "calendar and time slots" in prompts[2]
     assert len(set(prompts)) == 3
+
+
+def test_style_selection_matches_brief_keywords():
+    gaming = _preview(_brief(goal="A dark, high-energy leaderboard for a hacker/tech esports tournament with a cyberpunk feel.", core_features=("Live rankings", "Match schedule")))
+    wellness = _preview(_brief(goal="A calm yoga and meditation booking app with a wellness, health-focused feel.", core_features=("Class schedule", "Booking")))
+    saas = _preview(_brief(goal="A modern SaaS product dashboard for a B2B startup.", core_features=("Metrics", "Settings")))
+
+    assert gaming.style_name == "Cyberpunk Neon"
+    assert wellness.style_name in {"Organic Wellness", "Soft Neumorphism"}
+    assert saas.style_name == "Corporate Gradient Mesh"
+
+
+def test_no_keyword_match_falls_back_to_liquid_glass():
+    preview = _preview(_brief(goal="Create a simple internal tool for tracking work items.", core_features=("Track work items",)))
+
+    assert preview.style_name == "Liquid Glass"
+
+
+def test_style_choice_is_stable_across_a_revision_of_the_same_brief():
+    brief = _brief(goal="A dark, hacker/tech esports leaderboard site.", core_features=("Live rankings",))
+    first = _preview(brief)
+    design_service = DesignPreviewService(id_factory=SequenceIds(), clock=_clock)
+    revised = design_service.generate(brief, previous=first)
+
+    assert revised.style_name == first.style_name == "Cyberpunk Neon"
+
+
+def test_style_spec_survives_the_240_char_handoff_line_limit_without_truncation_loss():
+    preview = _preview(_brief(goal="A dark, hacker/tech esports leaderboard site.", core_features=("Live rankings",)))
+    style = next(item for item in STYLE_LIBRARY if item.name == preview.style_name)
+    lines = design_preview_handoff_lines(preview)
+
+    style_lines = [line for line in lines if line.startswith("Style spec: ")]
+    assert all(len(line) <= 240 for line in lines)
+    reconstructed = " ".join(line[len("Style spec: "):] for line in style_lines)
+    for word in style.spec.split():
+        assert word in reconstructed, f"lost word {word!r} from style spec when wrapping into handoff lines"
+
+
+def test_ui_shell_prompt_includes_the_visual_style_section():
+    brief = _brief(goal="A dark, hacker/tech esports leaderboard site.", core_features=("Live rankings",))
+    design_service = DesignPreviewService(id_factory=SequenceIds(), clock=_clock)
+    handoffs = AgentHandoffService(id_factory=SequenceIds(), clock=_clock)
+    preview = design_service.approve(design_service.generate(brief), brief)
+    handoff = handoffs.create_implementation_handoff(brief, preview)
+
+    prompt = build_ui_shell_prompt(brief, handoff)
+
+    assert "Visual design direction" in prompt
+    assert "Cyberpunk Neon" in prompt
+    assert "neon" in prompt.casefold()
