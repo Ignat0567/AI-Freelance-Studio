@@ -450,7 +450,13 @@ def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, A
             "authentication_owner": "official_cli" if item.get("auth_method") == "delegated_cli_login" else item.get("auth_method", ""),
             "supports_provider_auth": item.get("auth_method") == "delegated_cli_login" or ctype == "opencode_provider",
         }))
-    return legacy + universal
+    # OAuth/CLI-subscription connections must surface ahead of API-key ones everywhere
+    # this list is consumed (provider cards, Global AI picker, Product Judge picker).
+    # `universal` template connections already carry a real priority (10-40 for
+    # subscriptions vs 100-110 for API keys); `legacy` entries -- including the synthetic
+    # "<PROVIDER> API key" connection auto-upserted on every Global AI save -- have none,
+    # so they must not simply be prepended ahead of a lower (better) explicit priority.
+    return sorted(legacy + universal, key=lambda item: int(item.get("priority") or 100))
 
 
 def _default_global_ai_config(data: dict | None = None) -> dict[str, Any]:
