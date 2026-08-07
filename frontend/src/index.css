@@ -500,13 +500,30 @@ html,
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
-.fs-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 20px; }
+.fs-hero { display: flex; flex-direction: column; gap: 16px; padding: 20px; }
+.fs-hero-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; }
 .fs-hero h1 { margin: 5px 0 8px; max-width: 980px; font-size: clamp(22px, 2.4vw, 34px); line-height: 1.08; letter-spacing: -0.04em; }
 .fs-hero p { max-width: 880px; margin: 0; color: var(--fs-muted); font-size: 13px; line-height: 1.55; }
 .fs-meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .fs-meta-row span, .fs-compact-facts span { border: 1px solid var(--fs-border); border-radius: 999px; padding: 6px 9px; color: var(--fs-muted); background: var(--fs-panel-subtle); font-size: 11px; }
 .fs-meta-row b, .fs-compact-facts b { color: var(--fs-text); font-weight: 700; }
 .fs-hero-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
+.fs-hero-recent { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--fs-border); }
+.fs-hero-recent-row, .fs-hero-recent-more { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--fs-border); border-radius: 12px; padding: 8px 12px; background: var(--fs-panel-subtle); color: var(--fs-text); text-align: left; min-width: 140px; }
+.fs-hero-recent-row strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.fs-hero-recent-row span { font-size: 10px; color: var(--fs-muted); text-transform: capitalize; }
+.fs-hero-recent-more { justify-content: center; align-items: center; color: var(--fs-accent); font-size: 12px; font-weight: 700; }
+
+.fs-projects-list { display: flex; flex-direction: column; gap: 8px; }
+.fs-project-row { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--fs-border); border-radius: 12px; padding: 11px 14px; background: var(--fs-panel-subtle); color: var(--fs-text); text-align: left; }
+.fs-project-row:hover { background: var(--fs-surface-hover); }
+.fs-project-row-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fs-project-row-main strong { font-size: 13px; }
+.fs-project-row-meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--fs-muted); font-size: 11px; text-transform: capitalize; }
+.fs-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fs-dim); flex-shrink: 0; }
+.fs-status-dot.success { background: var(--fs-success); box-shadow: 0 0 10px color-mix(in srgb, var(--fs-success) 70%, transparent); }
+.fs-status-dot.danger { background: var(--fs-danger); }
+.fs-status-dot.active { background: var(--fs-accent); box-shadow: 0 0 10px color-mix(in srgb, var(--fs-accent) 70%, transparent); }
 .fs-primary, .fs-secondary, .fs-danger-button, .fs-panel-title button, .fs-alert button, .fs-chat-header button, .fs-chat-input button { border: 1px solid var(--fs-border); border-radius: 999px; padding: 9px 13px; font-size: 12px; }
 .fs-secondary, .fs-panel-title button, .fs-alert button, .fs-chat-header button, .fs-chat-input button { background: var(--fs-surface-hover); color: var(--fs-muted); }
 .fs-danger-button { border-color: color-mix(in srgb, var(--fs-danger) 42%, transparent); background: color-mix(in srgb, var(--fs-danger) 12%, transparent); color: var(--fs-danger); }
@@ -898,7 +915,7 @@ html,
   .fs-header { gap: 10px; }
   .fs-header-actions { gap: 6px; }
   .fs-pill, .fs-compact-toggle { padding: 7px 9px; font-size: 10px; }
-  .fs-hero { grid-template-columns: minmax(0, 1fr); }
+  .fs-hero-top { grid-template-columns: minmax(0, 1fr); }
   .fs-hero-actions { justify-content: flex-start; }
   .fs-chat-input { grid-template-columns: minmax(0, 1fr) auto; }
   .fs-chat-input span { display: none; }
@@ -926,7 +943,7 @@ html,
   .fs-project-context strong { max-width: 100%; }
   .fs-body { height: auto; display: block; overflow: visible; padding: 10px; }
   .fs-workspace { overflow: visible; }
-  .fs-hero { grid-template-columns: 1fr; }
+  .fs-hero-top { grid-template-columns: 1fr; }
   .fs-hero-actions { justify-content: flex-start; }
   .fs-pipeline { grid-template-columns: 1fr; }
   .fs-chat-panel { display: flex; min-height: 420px; margin-top: 12px; }

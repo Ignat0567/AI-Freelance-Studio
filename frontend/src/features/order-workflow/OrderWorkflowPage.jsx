@@ -8,7 +8,7 @@ import { orderWorkflowApi } from './orderWorkflowApi.js';
 import { cleanError, isTerminalExecution, nextStepFromState } from './orderWorkflowState.js';
 import './OrderWorkflow.css';
 
-const STORAGE_KEY = 'studio_order_workflow_last_order_id_v1';
+export const STORAGE_KEY = 'studio_order_workflow_last_order_id_v1';
 
 const emptyForm = {
   title: '',

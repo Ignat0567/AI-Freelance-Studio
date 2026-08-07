@@ -25,6 +25,7 @@ const post = (path, body = {}) => requestJson(path, { method: 'POST', body: JSON
 
 export const orderWorkflowApi = {
   createOrder: payload => post('/api/orders', payload),
+  listOrders: () => requestJson('/api/orders'),
   getOrder: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}`),
   getQuestions: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/questions`),
   answerQuestions: (orderId, answers) => post(`/api/orders/${encodeURIComponent(orderId)}/answers`, { answers }),

@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import OrderWorkflowPage from '../features/order-workflow/OrderWorkflowPage.jsx';
+import React, { useEffect, useState } from 'react';
+import OrderWorkflowPage, { STORAGE_KEY as ORDER_STORAGE_KEY } from '../features/order-workflow/OrderWorkflowPage.jsx';
+import ProjectsListPage from '../features/order-workflow/ProjectsListPage.jsx';
+import { orderWorkflowApi } from '../features/order-workflow/orderWorkflowApi.js';
 import SandboxTestLabPage from '../features/sandbox-test-lab/SandboxTestLabPage.jsx';
 import KnowledgeBasePage from '../features/knowledge-base/KnowledgeBasePage.jsx';
 import MarketplacePage from '../features/marketplace/MarketplacePage.jsx';
@@ -10,6 +12,7 @@ import TeamChatPage from '../features/collaboration/TeamChatPage.jsx';
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'OV' },
   { id: 'create-project', label: 'Create Project', icon: 'CP' },
+  { id: 'projects', label: 'Projects', icon: 'PR' },
   { id: 'team', label: 'AI Team', icon: 'AI' },
   { id: 'mobile', label: 'Mobile Preview', icon: 'MB' },
   { id: 'logs', label: 'Logs', icon: 'LG' },
@@ -57,9 +60,20 @@ export default function StudioDashboard({
 }) {
   const [activeView, setActiveView] = useState('overview');
   const [sandboxOpened, setSandboxOpened] = useState(false);
+  const [recentOrders, setRecentOrders] = useState(null);
   const agentEntries = getAgentEntries(agents);
 
   const eventRows = (logs || []).slice(0, 7);
+
+  useEffect(() => {
+    if (activeView !== 'overview') return;
+    orderWorkflowApi.listOrders().then(data => setRecentOrders(data?.orders || [])).catch(() => setRecentOrders([]));
+  }, [activeView]);
+
+  const openProject = (orderId) => {
+    localStorage.setItem(ORDER_STORAGE_KEY, orderId);
+    setActiveView('create-project');
+  };
 
   const selectNav = (id) => {
     setActiveView(id);
@@ -119,12 +133,13 @@ export default function StudioDashboard({
           <main className={`fs-workspace ${activeView === 'overview' ? 'fs-overview-workspace' : ''} ${activeView === 'settings' ? 'fs-settings-workspace' : ''} ${activeView === 'info' ? 'fs-info-workspace' : ''}`} tabIndex={0} aria-label="Central workspace content">
             {activeView === 'overview' && (
               <>
-                <OverviewHero onNewProject={() => setActiveView('create-project')} />
+                <OverviewHero onNewProject={() => setActiveView('create-project')} orders={recentOrders} onOpenProject={openProject} onViewAllProjects={() => setActiveView('projects')} />
                 <AgentActivity agents={agentEntries} statuses={statuses} />
                 <ActivityPanel logs={eventRows} onOpenLogs={() => setActiveView('logs')} />
               </>
             )}
             {activeView === 'create-project' && <OrderWorkflowPage active={activeView === 'create-project'} />}
+            {activeView === 'projects' && <ProjectsListPage active={activeView === 'projects'} onOpenProject={() => setActiveView('create-project')} />}
             {activeView === 'knowledge-base' && <KnowledgeBasePage active={activeView === 'knowledge-base'} />}
             {activeView === 'marketplace' && <MarketplacePage active={activeView === 'marketplace'} />}
             {activeView === 'video-generation' && <VideoGenerationPage active={activeView === 'video-generation'} />}
@@ -144,17 +159,32 @@ export default function StudioDashboard({
   );
 }
 
-function OverviewHero({ onNewProject }) {
+function OverviewHero({ onNewProject, orders, onOpenProject, onViewAllProjects }) {
+  const hasOrders = Array.isArray(orders) && orders.length > 0;
+  const recent = hasOrders ? orders.slice(0, 5) : [];
   return (
     <section className="fs-hero">
-      <div>
-        <span className="fs-eyebrow">Workspace Overview</span>
-        <h1>Start a project to activate the studio</h1>
-        <p>Create an AI order to generate a new project, or use Knowledge Base, Marketplace, AI Video, and AI Presentations from the sidebar.</p>
+      <div className="fs-hero-top">
+        <div>
+          <span className="fs-eyebrow">Workspace Overview</span>
+          <h1>{hasOrders ? `${orders.length} project${orders.length === 1 ? '' : 's'} in this workspace` : 'Start a project to activate the studio'}</h1>
+          <p>{hasOrders ? 'Pick up where you left off, or start a new AI order.' : 'Create an AI order to generate a new project, or use Knowledge Base, Marketplace, AI Video, and AI Presentations from the sidebar.'}</p>
+        </div>
+        <div className="fs-hero-actions">
+          <button type="button" className="fs-primary" onClick={onNewProject}>Create Project</button>
+        </div>
       </div>
-      <div className="fs-hero-actions">
-        <button type="button" className="fs-primary" onClick={onNewProject}>Create Project</button>
-      </div>
+      {hasOrders && (
+        <div className="fs-hero-recent">
+          {recent.map(order => (
+            <button type="button" className="fs-hero-recent-row" key={order.id} onClick={() => onOpenProject(order.id)}>
+              <strong>{order.title}</strong>
+              <span>{String(order.execution_status || order.status || '').replace(/_/g, ' ')}</span>
+            </button>
+          ))}
+          {orders.length > recent.length && <button type="button" className="fs-hero-recent-more" onClick={onViewAllProjects}>View all {orders.length} projects</button>}
+        </div>
+      )}
     </section>
   );
 }
