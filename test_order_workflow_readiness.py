@@ -71,6 +71,7 @@ def _config(tmp_path=None, provider="", model="", secret=False, opencode=True, o
         config_loader=lambda: config,
         secret_lookup=lambda name, _config=None: "configured-secret" if secret else "",
         opencode_version_probe=lambda: (opencode, "1.17.11" if opencode else "", "opencode.cmd" if opencode else ""),
+        active_backend_probe=lambda: "",
         workspace_root=tmp_path or __import__("pathlib").Path(__file__).resolve().parent,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if opt_in else {},
     )

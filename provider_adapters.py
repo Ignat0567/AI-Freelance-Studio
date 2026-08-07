@@ -134,7 +134,9 @@ class CLISubscriptionAdapter(ProviderAdapter):
     status_args: list[str] = ["status"]
     run_args_prefix: list[str] = []
     default_models: list[str] = []
-    capability = _cap(coding=True, chat=True, code_generation=True, tools=True, native_tool_calling=True, repository_access=True, file_editing=True, command_execution=True, streaming=True, model_listing=False, cancellation=True, tool_calling="native")
+    # Friendly labels for default_models entries; falls back to the raw id when absent.
+    model_display_names: dict[str, str] = {}
+    capability = _cap(coding=True, chat=True, code_generation=True, tools=True, native_tool_calling=True, repository_access=True, file_editing=True, command_execution=True, streaming=True, model_listing=True, cancellation=True, tool_calling="native")
 
     def __init__(self, connection: ProviderConnection):
         super().__init__(connection)
@@ -172,7 +174,7 @@ class CLISubscriptionAdapter(ProviderAdapter):
             await run_command([binary, *self.logout_args], str(Path.cwd()), timeout_seconds=30)
 
     async def list_models(self) -> list[ModelDescriptor]:
-        return [ModelDescriptor(model, model, self.capability) for model in self.default_models]
+        return [ModelDescriptor(model, self.model_display_names.get(model, model), self.capability) for model in self.default_models]
 
     async def get_capabilities(self) -> ProviderCapabilities:
         return self.capability
@@ -270,15 +272,31 @@ class CodexChatGPTSubscriptionAdapter(CLISubscriptionAdapter):
     login_args = ["login"]
     status_args = ["auth", "status"]
     run_args_prefix = ["exec"]
-    default_models = ["codex/default"]
+    default_models = ["codex/default", "codex/gpt-5.5", "codex/gpt-5.5-codex"]
+    model_display_names = {
+        "codex/default": "Default (CLI-selected)",
+        "codex/gpt-5.5": "GPT-5.5",
+        "codex/gpt-5.5-codex": "GPT-5.5 Codex",
+    }
 
 
 class ClaudeSubscriptionAdapter(CLISubscriptionAdapter):
     cli_names = ["claude.cmd", "claude.exe", "claude"]
-    login_args = ["login"]
-    status_args = ["status"]
+    login_args = ["auth", "login"]
+    logout_args = ["auth", "logout"]
+    status_args = ["auth", "status"]
     run_args_prefix = []
-    default_models = ["claude/default"]
+    # Bare aliases the official `claude` CLI itself accepts via --model (see `claude --help`);
+    # keep the "claude/" prefix for Studio's own connection-scoped model-id convention, and
+    # strip it back off before invoking the CLI.
+    default_models = ["claude/default", "claude/opus", "claude/sonnet", "claude/fable", "claude/haiku"]
+    model_display_names = {
+        "claude/default": "Default (CLI-selected)",
+        "claude/opus": "Claude Opus (alias)",
+        "claude/sonnet": "Claude Sonnet (alias)",
+        "claude/fable": "Claude Fable (alias)",
+        "claude/haiku": "Claude Haiku (alias)",
+    }
 
 
 class GeminiGoogleAccountAdapter(CLISubscriptionAdapter):
@@ -286,7 +304,12 @@ class GeminiGoogleAccountAdapter(CLISubscriptionAdapter):
     login_args = ["auth", "login"]
     status_args = ["auth", "status"]
     run_args_prefix = []
-    default_models = ["gemini/default"]
+    default_models = ["gemini/default", "gemini/pro", "gemini/flash"]
+    model_display_names = {
+        "gemini/default": "Default (CLI-selected)",
+        "gemini/pro": "Gemini Pro",
+        "gemini/flash": "Gemini Flash",
+    }
 
     async def test_connection(self) -> ConnectionTestResult:
         detected = await self.detect()

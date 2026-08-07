@@ -260,6 +260,7 @@ def _configuration(tmp_path, *, config=None, opt_in=False):
         config_loader=lambda: config or {},
         secret_lookup=lambda name, _config=None: "",
         opencode_version_probe=lambda: (True, "1.17.11", "opencode.cmd"),
+        active_backend_probe=lambda: "",
         workspace_root=tmp_path,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if opt_in else {},
     )

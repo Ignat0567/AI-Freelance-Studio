@@ -1,10 +1,9 @@
-"""Bridge to the Claude Code CLI for status checks and interactive login.
+"""Bridge to the Claude Code CLI for opening a project workspace terminal.
 
-Mirrors opencode_bridge.py's discovery/status/terminal-launch pattern so
-Claude Code can be connected the same way OpenCode is: a status check and
-a visible interactive terminal for the official CLI's own login flow.
-Studio never emulates or stores Claude Code's OAuth/session credentials
-itself -- it only launches the official CLI and lets it own auth.
+Mirrors opencode_bridge.py's discovery/terminal-launch pattern. Studio never
+emulates or stores Claude Code's OAuth/session credentials itself -- it only
+launches the official CLI and lets it own auth (subscription login is handled
+separately by ClaudeSubscriptionAdapter in provider_adapters.py).
 """
 
 from __future__ import annotations
@@ -69,24 +68,6 @@ def _discover_claude() -> Optional[str]:
     return None
 
 
-def get_claude_status() -> dict:
-    """Return safe Claude Code CLI install/version status. Never returns secrets."""
-    binary = _discover_claude()
-    status = {
-        "installed": bool(binary),
-        "binary": binary or "",
-        "version": "",
-    }
-    if not binary:
-        return status
-    try:
-        _returncode, stdout, stderr = _run_capture([binary, "--version"], timeout=10)
-        status["version"] = _strip_ansi((stdout or stderr or "").strip())
-    except Exception:
-        pass
-    return status
-
-
 def _open_visible_terminal(binary: str, args: list[str], title: str, workdir: Optional[str], manual_command: str) -> dict:
     """Spawn a real, visible cmd.exe window running `binary *args` in workdir."""
     if os.name != "nt":
@@ -113,24 +94,6 @@ def _open_visible_terminal(binary: str, args: list[str], title: str, workdir: Op
             "message": "The Claude Code terminal could not be opened. Run the command shown below in a terminal.",
             "manual_command": manual_command,
         }
-
-
-def start_claude_auth_terminal(workdir: Optional[str] = None) -> dict:
-    """Open the interactive Claude Code CLI-owned login flow."""
-    manual_command = "claude login"
-    binary = _discover_claude()
-    if not binary:
-        return {
-            "status": "error", "error_code": "executable_missing",
-            "message": "Claude Code executable was not found. Install the Claude Code CLI first.",
-            "manual_command": manual_command,
-        }
-    result = _open_visible_terminal(binary, ["login"], "Claude Code Authentication", workdir, manual_command)
-    if result["status"] == "started":
-        result["message"] = "Complete the login steps in the Claude Code terminal. When finished, return here and select Test Connection."
-    elif "message" not in result:
-        result["message"] = "Open a terminal and run the command shown below."
-    return result
 
 
 def start_claude_workspace_terminal(workdir: str) -> dict:

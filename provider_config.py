@@ -389,6 +389,33 @@ def _sanitize_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
+# Mirrors provider_adapters.py's CLISubscriptionAdapter subclasses' default_models /
+# model_display_names. Duplicated here because this module is synchronous and can't
+# await the real adapter's list_models(); without this, the synthesized connection
+# below would only ever expose the single model_id last saved on the connection,
+# so picking any other real alias (e.g. claude/sonnet) would fail capability
+# validation with "Model is not available on the selected connection."
+_CLI_SUBSCRIPTION_MODEL_CATALOG: dict[str, dict[str, str]] = {
+    "claude_subscription": {
+        "claude/default": "Default (CLI-selected)",
+        "claude/opus": "Claude Opus (alias)",
+        "claude/sonnet": "Claude Sonnet (alias)",
+        "claude/fable": "Claude Fable (alias)",
+        "claude/haiku": "Claude Haiku (alias)",
+    },
+    "codex_chatgpt_subscription": {
+        "codex/default": "Default (CLI-selected)",
+        "codex/gpt-5.5": "GPT-5.5",
+        "codex/gpt-5.5-codex": "GPT-5.5 Codex",
+    },
+    "gemini_google_account": {
+        "gemini/default": "Default (CLI-selected)",
+        "gemini/pro": "Gemini Pro",
+        "gemini/flash": "Gemini Flash",
+    },
+}
+
+
 def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, Any]]:
     source = data if data is not None else load_studio_keys()
     _ensure_provider_connection_records(source)
@@ -403,6 +430,12 @@ def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, A
         provider = str(item.get("provider_id") or item.get("provider") or "")
         ctype = str(item.get("connection_type") or "")
         display = str(item.get("display_name") or cid)
+        catalog = _CLI_SUBSCRIPTION_MODEL_CATALOG.get(ctype)
+        if catalog:
+            model_ids = list(catalog.keys()) if model_id in catalog or not model_id else [model_id, *catalog.keys()]
+        else:
+            model_ids = [model_id] if model_id else []
+        default_caps = {"text_input": True, "image_input": None, "structured_output": None, "streaming": None, "tool_use": None}
         universal.append(_sanitize_provider_connection({
             **item,
             "name": display,
@@ -412,8 +445,8 @@ def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, A
             "configured_provider": provider,
             "configured_status": "configured" if item.get("enabled", True) else "disabled",
             "tested_status": "not_tested",
-            "available_models": [{"id": model_id, "capabilities": {"text_input": True, "image_input": None, "structured_output": None, "streaming": None, "tool_use": None}}] if model_id else [],
-            "capability_metadata": {model_id: {"text_input": True, "image_input": None, "structured_output": None, "streaming": None, "tool_use": None}} if model_id else {},
+            "available_models": [{"id": mid, "display_name": catalog.get(mid, mid) if catalog else mid, "capabilities": default_caps} for mid in model_ids],
+            "capability_metadata": {mid: default_caps for mid in model_ids},
             "authentication_owner": "official_cli" if item.get("auth_method") == "delegated_cli_login" else item.get("auth_method", ""),
             "supports_provider_auth": item.get("auth_method") == "delegated_cli_login" or ctype == "opencode_provider",
         }))

@@ -40,6 +40,11 @@ OPENCODE_UNAVAILABLE = readiness_blocker(
     "OpenCode is not available.",
 )
 
+CLAUDE_CODE_UNAVAILABLE = readiness_blocker(
+    "claude_code_unavailable",
+    "Claude Code CLI is not installed or not logged in.",
+)
+
 WORKSPACE_UNAVAILABLE = readiness_blocker(
     "workspace_unavailable",
     "A writable project workspace is not available.",

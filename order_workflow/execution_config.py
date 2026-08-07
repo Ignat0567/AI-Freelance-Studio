@@ -11,7 +11,7 @@ from .models import StrictDomainModel
 from .production_adapter import live_opencode_execution_enabled
 
 
-LOCAL_NO_KEY_PROVIDERS = frozenset({"ollama", "opencode", "opencode_bridge"})
+LOCAL_NO_KEY_PROVIDERS = frozenset({"ollama", "opencode", "opencode_bridge", "claude_code"})
 SUPPORTED_EXECUTION_PROVIDERS = frozenset({*secret_store.PROVIDER_ENV_NAMES, *LOCAL_NO_KEY_PROVIDERS})
 
 
@@ -75,12 +75,14 @@ class ExecutionConfigurationProvider:
         config_loader: Callable[[], dict] = config_storage.load_studio_keys,
         secret_lookup: Callable[[str, dict | None], str] = secret_store.get_secret,
         opencode_version_probe: Callable[[], tuple[bool, str, str]] | None = None,
+        active_backend_probe: Callable[[], str] | None = None,
         workspace_root: str | Path | None = None,
         environ: dict[str, str] | None = None,
     ) -> None:
         self._config_loader = config_loader
         self._secret_lookup = secret_lookup
         self._opencode_version_probe = opencode_version_probe or _probe_opencode_version
+        self._active_backend_probe = active_backend_probe or _active_cli_backend
         self._workspace_root = Path(workspace_root).resolve() if workspace_root is not None else Path(config_storage.DATA_DIR, "generated_projects").resolve()
         self._environ = environ
 
@@ -100,7 +102,7 @@ class ExecutionConfigurationProvider:
 
     def get_provider_status(self, config: dict | None = None) -> ProviderStatus:
         config = config if config is not None else self._config_loader()
-        provider = _selected_provider(config)
+        provider = _selected_provider(config, self._active_backend_probe)
         if not provider:
             return ProviderStatus(code="provider_not_configured", provider="", configured=False, secret_required=True, secret_present=False, message="No provider is configured.")
         if provider not in SUPPORTED_EXECUTION_PROVIDERS:
@@ -113,7 +115,7 @@ class ExecutionConfigurationProvider:
 
     def get_model_status(self, config: dict | None = None) -> ModelStatus:
         config = config if config is not None else self._config_loader()
-        model = _selected_model(config)
+        model = _selected_model(config, self._active_backend_probe)
         if not model:
             return ModelStatus(code="model_not_selected", model="", selected=False, supported=False, message="No model is selected.")
         supported = len(model) <= 160 and not any(part in model for part in ("..", "\x00"))
@@ -142,7 +144,7 @@ class ExecutionConfigurationProvider:
         return LiveOptInStatus(code="live_execution_opt_in_required", enabled=False, message="Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio.")
 
 
-def _selected_provider(config: dict | None) -> str:
+def _selected_provider(config: dict | None, active_backend_probe: Callable[[], str] = None) -> str:
     if not isinstance(config, dict):
         return ""
     system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
@@ -151,10 +153,12 @@ def _selected_provider(config: dict | None) -> str:
     if provider:
         return provider
     bridge = _selected_opencode_bridge(config)
-    return "opencode_bridge" if bridge else ""
+    if bridge:
+        return "opencode_bridge"
+    return (active_backend_probe or _active_cli_backend)()
 
 
-def _selected_model(config: dict | None) -> str:
+def _selected_model(config: dict | None, active_backend_probe: Callable[[], str] = None) -> str:
     if not isinstance(config, dict):
         return ""
     system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
@@ -163,7 +167,15 @@ def _selected_model(config: dict | None) -> str:
     if model:
         return model
     bridge = _selected_opencode_bridge(config)
-    return str(bridge.get("configured_model") or "").strip() if bridge else ""
+    if bridge:
+        return str(bridge.get("configured_model") or "").strip()
+    return "claude/default" if (active_backend_probe or _active_cli_backend)() == "claude_code" else ""
+
+
+def _active_cli_backend() -> str:
+    from .claude_code_client import active_coding_backend  # local import: avoids a claude_code_client<->execution_config import cycle
+
+    return active_coding_backend()
 
 
 def _selected_opencode_bridge(config: dict) -> dict:

@@ -8,7 +8,7 @@ from order_workflow.execution_config import ExecutionConfigurationProvider
 pytestmark = pytest.mark.unit
 
 
-def _provider(config, *, secrets=(), opencode=(True, "1.17.11", "opencode.cmd"), workspace_root=None, environ=None):
+def _provider(config, *, secrets=(), opencode=(True, "1.17.11", "opencode.cmd"), active_backend="", workspace_root=None, environ=None):
     secret_values = set(secrets)
 
     def lookup(name, _config=None):
@@ -18,6 +18,7 @@ def _provider(config, *, secrets=(), opencode=(True, "1.17.11", "opencode.cmd"),
         config_loader=lambda: config,
         secret_lookup=lookup,
         opencode_version_probe=lambda: opencode,
+        active_backend_probe=lambda: active_backend,
         workspace_root=workspace_root,
         environ=environ or {},
     )
@@ -106,6 +107,20 @@ def test_model_missing_selected_and_unsupported(tmp_path):
 
     unsupported = _provider({"_system": {"global_provider": "ollama", "global_model": "../bad"}}, workspace_root=tmp_path).snapshot()
     assert unsupported.model.code == "model_unsupported_for_execution"
+
+
+def test_active_claude_code_cli_satisfies_provider_and_model_with_no_stored_config(tmp_path):
+    snapshot = _provider({}, active_backend="claude_code", workspace_root=tmp_path).snapshot()
+
+    assert snapshot.provider.code == "provider_configured"
+    assert snapshot.provider.provider == "claude_code"
+    assert snapshot.provider.secret_required is False
+    assert snapshot.model.code == "model_selected"
+    assert snapshot.model.model == "claude/default"
+
+    absent = _provider({}, active_backend="", workspace_root=tmp_path).snapshot()
+    assert absent.provider.code == "provider_not_configured"
+    assert absent.model.code == "model_not_selected"
 
 
 def test_opencode_workspace_and_live_opt_in_statuses(tmp_path):

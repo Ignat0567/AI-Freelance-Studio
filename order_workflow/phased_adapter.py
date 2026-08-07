@@ -206,7 +206,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
         workspace_path = workspace.project_path
         (workspace_path / f"execution_prompt_{stage.value}.md").write_text(prompt, encoding="utf-8")
-        event_sink.emit(stage=stage, agent="Codex", progress=10, message=f"Sending {stage.value} prompt to OpenCode")
+        event_sink.emit(stage=stage, agent="Codex", progress=10, message=f"Sending {stage.value} prompt to the coding CLI")
         try:
             result = self._opencode_client.execute_project_prompt(prompt, workspace_path, event_sink, cancellation)
         except Exception:

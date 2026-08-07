@@ -44,6 +44,7 @@ from .models import (
 )
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
+from .claude_code_client import select_coding_execution_client
 from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
@@ -179,7 +180,7 @@ class ConfigurationBackedExecutionAdapter:
         workspace_root = self._configuration_provider.workspace_root
         if self._live:
             environ = {"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if snapshot.live_opt_in.enabled else {}
-            opencode_client = self._opencode_client or ConfiguredOpenCodeExecutionClient()
+            opencode_client = self._opencode_client or select_coding_execution_client()
             if resolve_execution_pipeline_mode(self._environ) == "legacy":
                 return LiveOpenCodeExecutionAdapter(
                     provider_name=provider,

@@ -61,7 +61,6 @@ from api.goldie import build_goldie_router
 from api.proposals import build_proposals_router
 from api.discovery import build_discovery_router
 from api.opencode_routes import build_opencode_status_router
-from api.claude_routes import build_claude_status_router
 from pipeline_stage_metadata import _STATE_DISPLAY, AGENT_STAGE_METADATA
 from project_task_store import PROJECT_TASKS
 from api.request_models import (
@@ -407,7 +406,6 @@ app.include_router(build_opencode_status_router(
     start_opencode_auth_terminal if _HAS_OPENCODE else None,
     BASE_DIR,
 ))
-app.include_router(build_claude_status_router(BASE_DIR))
 
 
 def _project_from_durable_state(state: dict[str, Any]) -> dict[str, Any]:
