@@ -178,3 +178,46 @@ def test_google_advertises_openai_compatible_sampling_support():
     assert capabilities["top_p"] is True
     assert capabilities["top_k"] is False
     assert capabilities["image_input"] is True
+
+
+def test_claude_code_provider_routes_through_the_cli_not_a_missing_endpoint(monkeypatch):
+    """Regression guard: "claude_code" is order_workflow's CLI-routing identity (see
+    execution_config.py's provider normalization), not a real API-key provider, so it has
+    no entry in PROVIDERS_URLS. Any caller resolving the global provider through
+    ExecutionConfigurationProvider (chat, presentations, proposals -- anything using
+    ask_studio_ai_with_history with the current global provider/model) must reach the CLI,
+    not fall into the generic "no configured endpoint" path, which returns a plain English
+    sentence that then fails JSON parsing wherever the caller expects structured output."""
+    monkeypatch.setattr("claude_bridge._discover_claude", lambda: "claude.cmd")
+
+    captured = {}
+
+    class _FakeProc:
+        returncode = 0
+
+        def communicate(self, input, timeout):
+            captured["prompt"] = input
+            captured["timeout"] = timeout
+            return json.dumps({"is_error": False, "result": "hello from claude"}), ""
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _FakeProc()
+
+    monkeypatch.setattr(ai_utils.subprocess, "Popen", fake_popen)
+
+    result = ai_utils.ask_studio_ai_with_history("claude_code", "claude/sonnet", "system prompt", [{"role": "user", "content": "hi"}])
+
+    assert result == "hello from claude"
+    assert "no configured endpoint" not in result
+    assert captured["cmd"][0] == "claude.cmd"
+    assert "-p" in captured["cmd"]
+    assert "system prompt" in captured["prompt"] and "hi" in captured["prompt"]
+
+
+def test_claude_code_provider_reports_a_readable_error_when_cli_is_missing(monkeypatch):
+    monkeypatch.setattr("claude_bridge._discover_claude", lambda: None)
+
+    result = ai_utils.ask_studio_ai_with_history("claude_code", "claude/sonnet", "system", [])
+
+    assert "Claude Code CLI is not available" in result

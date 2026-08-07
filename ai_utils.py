@@ -67,6 +67,55 @@ def _resolve_base_url(provider_lower: str) -> str:
     return PROVIDERS_URLS.get(provider_lower, "")
 
 
+def _ask_claude_code_cli(system_prompt: str, chat_history: list) -> str:
+    """One-shot text completion via the official Claude Code CLI, for callers (chat,
+    presentations, proposals) that just want an answer string -- not a project workspace
+    execution like order_workflow.claude_code_client.ConfiguredClaudeCodeExecutionClient
+    handles. Reuses the same CLI-owned-auth and stdin-not-argv approach (a long prompt
+    would otherwise blow cmd.exe's ~8191-char command-line limit on Windows)."""
+    import claude_bridge
+
+    binary = claude_bridge._discover_claude()
+    if not binary:
+        return "Claude Code CLI is not available. Install it or select a supported provider in Settings."
+
+    last_user_msg = ""
+    for message in reversed(chat_history):
+        if message.get("role") == "user":
+            content = message.get("content", "")
+            if isinstance(content, str):
+                last_user_msg = content
+                break
+    prompt = f"{system_prompt}\n\n{last_user_msg}" if last_user_msg else system_prompt
+
+    try:
+        proc = subprocess.Popen(
+            [binary, "-p", "--output-format", "json"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        stdout, stderr = proc.communicate(input=prompt, timeout=120)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return "Claude Code CLI timed out."
+    except OSError as exc:
+        return f"Failed to start Claude Code CLI: {exc}"
+
+    if proc.returncode != 0:
+        return f"Claude Code CLI error: {(stderr or stdout).strip()[:500]}"
+    try:
+        payload = json.loads(stdout)
+    except ValueError:
+        return stdout.strip()
+    if payload.get("is_error"):
+        return f"Claude Code CLI error: {payload.get('result', '')}"
+    return str(payload.get("result") or "")
+
+
 def ask_studio_ai_with_history(
     provider: str,
     model_name: str,
@@ -106,6 +155,8 @@ def ask_studio_ai_with_history(
             if response.get("status") == "success":
                 return response.get("text", "")
             return f"OpenCode bridge error: {response.get('error_category', 'request_failed')}"
+        if provider_lower == "claude_code":
+            return _ask_claude_code_cli(system_prompt, chat_history)
         base_url = _resolve_base_url(provider_lower)
         if not base_url:
             return f"AI provider '{provider}' has no configured endpoint. Select a supported provider in Settings."
