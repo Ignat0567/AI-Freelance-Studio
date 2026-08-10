@@ -182,11 +182,59 @@ def test_run_qa_commands_runs_each_command_in_its_own_container(tmp_path):
 
 def test_run_qa_commands_detects_image_when_not_given(tmp_path):
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")
-    client = FakeDockerClient(containers=[FakeContainer(exit_code=0)])
+    # Two containers queued: the automatic node_modules reinstall step, then the real command.
+    client = FakeDockerClient(containers=[FakeContainer(exit_code=0), FakeContainer(exit_code=0)])
 
     run_qa_commands_in_docker(("npm test",), tmp_path, docker_client_factory=_factory(client))
 
     assert client.containers.run_calls[0]["image"] == "node:20-slim"
+
+
+# --- node_modules reinstall step (fixes native-binary platform mismatches) -----
+
+
+def test_node_workspace_gets_a_reinstall_step_before_qa_commands(tmp_path):
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    client = FakeDockerClient(containers=[FakeContainer(exit_code=0), FakeContainer(exit_code=0)])
+
+    outcome = run_qa_commands_in_docker(("npm run build",), tmp_path, image="node:20-slim", docker_client_factory=_factory(client))
+
+    assert outcome.passed is True
+    assert len(client.containers.run_calls) == 2
+    assert client.containers.run_calls[0]["command"] == ["sh", "-c", "npm ci || npm install"]
+    assert client.containers.run_calls[1]["command"] == ["sh", "-c", "npm run build"]
+
+
+def test_reinstall_failure_fails_qa_without_running_the_actual_commands(tmp_path):
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    client = FakeDockerClient(containers=[FakeContainer(exit_code=1, logs=b"npm ERR! network timeout")])
+
+    outcome = run_qa_commands_in_docker(("npm run build",), tmp_path, image="node:20-slim", docker_client_factory=_factory(client))
+
+    assert outcome.passed is False
+    assert len(outcome.results) == 1
+    assert len(client.containers.run_calls) == 1
+    assert "npm ERR!" in outcome.results[0].stdout_tail
+
+
+def test_no_reinstall_step_when_there_is_no_package_json(tmp_path):
+    (tmp_path / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    client = FakeDockerClient(containers=[FakeContainer(exit_code=0)])
+
+    outcome = run_qa_commands_in_docker(("pytest",), tmp_path, image="python:3.12-slim", docker_client_factory=_factory(client))
+
+    assert outcome.passed is True
+    assert len(client.containers.run_calls) == 1
+    assert client.containers.run_calls[0]["command"] == ["sh", "-c", "pytest"]
+
+
+def test_no_reinstall_step_for_node_image_without_a_package_json(tmp_path):
+    client = FakeDockerClient(containers=[FakeContainer(exit_code=0)])
+
+    outcome = run_qa_commands_in_docker(("npm test",), tmp_path, image="node:20-slim", docker_client_factory=_factory(client))
+
+    assert outcome.passed is True
+    assert len(client.containers.run_calls) == 1
 
 
 def test_undetectable_stack_is_a_qa_failure_not_a_raised_exception(tmp_path):

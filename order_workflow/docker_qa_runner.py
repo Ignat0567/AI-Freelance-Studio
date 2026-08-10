@@ -61,9 +61,26 @@ def run_qa_commands_in_docker(
         # must flow through the normal QA-failed/repair-loop path, not crash the execution.
         return QAOutcome(passed=False, results=(QACommandResult(command=" && ".join(qa_commands) or "(no commands)", exit_code="qa_stack_undetected", stdout_tail="", stderr_tail=str(exc), duration=0.0),))
 
+    prep = _reinstall_native_dependencies_for_container(client, resolved_image, cwd, timeout_seconds)
+    if prep is not None and prep.exit_code != 0:
+        # node_modules is host-mounted, installed by the coding CLI running natively on the
+        # host OS -- any native-binary optional dependency (esbuild, swc...) it pulled in is
+        # compiled for the HOST's platform, not this container's Linux platform, and running
+        # it as-is fails deterministically ("You installed esbuild for another platform").
+        # Reinstalling failed too, so there's nothing more useful the QA commands themselves
+        # can report -- surface the reinstall failure directly instead of a confusing
+        # downstream error from whatever command happened to touch the broken binary first.
+        return QAOutcome(passed=False, results=(prep,))
+
     results = [_run_one_command(client, resolved_image, command_text, cwd, timeout_seconds) for command_text in qa_commands]
     passed = all(result.exit_code == 0 for result in results)
     return QAOutcome(passed=passed, results=tuple(results))
+
+
+def _reinstall_native_dependencies_for_container(client, image: str, cwd: Path, timeout_seconds: int) -> QACommandResult | None:
+    if image != _NODE_IMAGE or not (cwd / "package.json").is_file():
+        return None
+    return _run_one_command(client, image, "npm ci || npm install", cwd, timeout_seconds)
 
 
 def _run_one_command(client, image: str, command_text: str, cwd: Path, timeout_seconds: int) -> QACommandResult:
