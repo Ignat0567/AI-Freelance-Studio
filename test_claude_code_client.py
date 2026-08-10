@@ -33,15 +33,21 @@ class _FakeStdin:
 
 
 class _FakeProcess:
-    def __init__(self, result_payload: dict) -> None:
+    def __init__(self, *, stdout: str = "", stderr: str = "", returncode: int = 0) -> None:
         self.stdin = _FakeStdin()
-        self.stdout = _FakeStream(json.dumps(result_payload))
-        self.stderr = _FakeStream("")
-        self.returncode = 0
+        self.stdout = _FakeStream(stdout)
+        self.stderr = _FakeStream(stderr)
+        self.returncode = returncode
 
     def poll(self):
         # Already finished -- skips the real 0.2s-sleep wait loop entirely.
         return self.returncode
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def terminate(self):
+        pass
 
 
 class _FakePopen:
@@ -53,7 +59,22 @@ class _FakePopen:
 
     def __call__(self, cmd, **kwargs):
         self.last_cmd = cmd
-        return _FakeProcess(self.result_payload)
+        return _FakeProcess(stdout=json.dumps(self.result_payload), returncode=0)
+
+
+class _SequencedFakePopen:
+    """Hands back a different scripted process on each successive call, in order --
+    for testing the retry-once-on-silent-crash behavior."""
+
+    def __init__(self, processes: list[_FakeProcess]) -> None:
+        self._processes = list(processes)
+        self.call_count = 0
+        self.last_cmd: list[str] | None = None
+
+    def __call__(self, cmd, **kwargs):
+        self.last_cmd = cmd
+        self.call_count += 1
+        return self._processes.pop(0)
 
 
 @pytest.fixture(autouse=True)
@@ -107,3 +128,67 @@ def test_prompt_is_sent_over_stdin_not_argv(monkeypatch, tmp_path):
     client.execute_project_prompt("a very specific prompt token", tmp_path, _Sink(), CancellationToken())
 
     assert "a very specific prompt token" not in fake_popen.last_cmd
+
+
+def test_silent_nonzero_exit_is_retried_once_and_recovers(monkeypatch, tmp_path):
+    # First attempt: exit 1, nothing on stdout or stderr (the observed live wrapper-crash
+    # symptom -- the actual coding work had already completed, but the process itself then
+    # exited nonzero with no captured output). Second attempt: succeeds normally.
+    fake_popen = _SequencedFakePopen([
+        _FakeProcess(stdout="", stderr="", returncode=1),
+        _FakeProcess(stdout=json.dumps({"is_error": False, "result": "done"}), returncode=0),
+    ])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+    warnings = []
+
+    class _Sink:
+        def emit(self, **kwargs):
+            warnings.append(kwargs)
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("a prompt", tmp_path, _Sink(), CancellationToken())
+
+    assert result.success is True
+    assert fake_popen.call_count == 2
+    assert any("retrying once" in str(w.get("message", "")) for w in warnings)
+
+
+def test_silent_nonzero_exit_does_not_retry_a_second_time(monkeypatch, tmp_path):
+    fake_popen = _SequencedFakePopen([
+        _FakeProcess(stdout="", stderr="", returncode=1),
+        _FakeProcess(stdout="", stderr="", returncode=1),
+    ])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+
+    class _Sink:
+        def emit(self, **_kwargs):
+            pass
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("a prompt", tmp_path, _Sink(), CancellationToken())
+
+    assert result.success is False
+    assert fake_popen.call_count == 2
+
+
+def test_nonzero_exit_with_real_error_output_is_not_retried(monkeypatch, tmp_path):
+    # A genuine failure produces stderr text -- must fail immediately, not be mistaken for
+    # the silent-crash case and retried (which would just waste a second, costly CLI call).
+    fake_popen = _SequencedFakePopen([
+        _FakeProcess(stdout="", stderr="a real error message", returncode=1),
+    ])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+
+    class _Sink:
+        def emit(self, **_kwargs):
+            pass
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("a prompt", tmp_path, _Sink(), CancellationToken())
+
+    assert result.success is False
+    assert fake_popen.call_count == 1
+    assert "a real error message" in result.summary

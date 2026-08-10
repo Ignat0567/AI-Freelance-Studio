@@ -7,6 +7,7 @@ login` session and this module never reads or sets ANTHROPIC_API_KEY.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import re
 import subprocess
@@ -17,10 +18,20 @@ from pathlib import Path
 import claude_bridge
 
 from .executors import CancellationToken, ExecutionEventSink
+from .models import EventLevel
 from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
 
 CLAUDE_CODE_TASK_TIMEOUT = 900
+
+
+@dataclass(frozen=True, slots=True)
+class _InvokeOutcome:
+    returncode: int
+    stdout_text: str
+    stderr_text: str
+    timed_out: bool = False
+    cancelled: bool = False
 
 
 def _strip_ansi(text: str) -> str:
@@ -95,19 +106,57 @@ class ConfiguredClaudeCodeExecutionClient:
             # Studio's stored model ids carry a "claude/" catalog prefix (e.g. "claude/opus");
             # the CLI's --model flag wants the bare alias ("opus", "sonnet", "fable", ...).
             cmd.extend(["--model", model.split("/", 1)[-1]])
+
+        for attempt in range(2):
+            try:
+                outcome = self._invoke(cmd, prompt, workspace_path, cancellation)
+            except OSError as exc:
+                return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}")
+            if outcome.cancelled:
+                return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled.")
+            if outcome.timed_out:
+                return OpenCodeExecutionResult(success=False, summary="Claude Code execution timed out.", errors=("claude_code_execution_timeout",), timed_out=True)
+            if outcome.returncode != 0 and not outcome.stdout_text.strip() and not outcome.stderr_text.strip() and attempt == 0:
+                # A nonzero exit with *zero* output on both streams doesn't look like a real
+                # coding failure -- a genuine model-level failure almost always produces
+                # JSON with is_error/a reasoning result, or at least some stderr text. This
+                # matches a CLI-wrapper-level crash observed live: the actual work (file
+                # writes via tool calls) had already completed successfully, but the process
+                # itself then exited 1 with nothing captured, and a manual retry of the exact
+                # same prompt succeeded outright. One retry recovers from that transient
+                # wrapper crash without masking a real failure (which would produce output).
+                event_sink.emit(stage="implementation", agent="Claude Code", progress=50, message="Claude Code CLI exited with no output; retrying once.", level=EventLevel.WARNING)
+                continue
+            stdout_text, stderr_text, returncode = outcome.stdout_text, outcome.stderr_text, outcome.returncode
+            break
+
+        if returncode != 0:
+            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {(stderr_text or stdout_text)[-2000:]}", errors=("claude_code_process_failed",))
+
         try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(Path(workspace_path)),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except OSError as exc:
-            return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}")
+            payload = json.loads(stdout_text)
+        except ValueError:
+            # Not JSON -- the CLI still wrote files directly to the workspace on the way
+            # here, so treat a clean (zero-exit) completion as generated regardless.
+            return OpenCodeExecutionResult(success=True, summary=stdout_text[-2000:] or "Claude Code completed.", outcome="generated")
+
+        if payload.get("is_error"):
+            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {payload.get('result') or stdout_text[-2000:]}", errors=("claude_code_process_failed",))
+
+        return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated")
+
+    @staticmethod
+    def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken) -> _InvokeOutcome:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(Path(workspace_path)),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
 
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
@@ -135,14 +184,16 @@ class ConfiguredClaudeCodeExecutionClient:
 
         started = time.time()
         timed_out = False
+        cancelled = False
         while proc.poll() is None:
             if cancellation.is_cancelled():
+                cancelled = True
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled.")
+                break
             if time.time() - started > CLAUDE_CODE_TASK_TIMEOUT:
                 timed_out = True
                 proc.terminate()
@@ -166,23 +217,7 @@ class ConfiguredClaudeCodeExecutionClient:
         except OSError:
             pass
 
-        if timed_out:
-            return OpenCodeExecutionResult(success=False, summary="Claude Code execution timed out.", errors=("claude_code_execution_timeout",), timed_out=True)
-
-        if proc.returncode != 0:
-            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {(stderr_text or stdout_text)[-2000:]}", errors=("claude_code_process_failed",))
-
-        try:
-            payload = json.loads(stdout_text)
-        except ValueError:
-            # Not JSON -- the CLI still wrote files directly to the workspace on the way
-            # here, so treat a clean (zero-exit) completion as generated regardless.
-            return OpenCodeExecutionResult(success=True, summary=stdout_text[-2000:] or "Claude Code completed.", outcome="generated")
-
-        if payload.get("is_error"):
-            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {payload.get('result') or stdout_text[-2000:]}", errors=("claude_code_process_failed",))
-
-        return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated")
+        return _InvokeOutcome(returncode=proc.returncode if proc.returncode is not None else -1, stdout_text=stdout_text, stderr_text=stderr_text, timed_out=timed_out, cancelled=cancelled)
 
 
 def active_coding_backend() -> str:
