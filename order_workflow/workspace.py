@@ -146,7 +146,15 @@ def summarize_generated_workspace(workspace: ProjectWorkspace, *, limit: int = 5
         if len(entries) >= limit:
             break
     for child in workspace.project_path.rglob("*"):
-        if child.is_file() and child.name != ".freelancerstudio-project.json":
+        try:
+            is_file = child.is_file()
+        except OSError:
+            # Same Windows npm node_modules/.bin junction-point issue as
+            # scan_meaningful_generated_artifacts above -- stat() raises instead of just
+            # reporting a type. A generated project's real file count is never affected by
+            # skipping one of these.
+            continue
+        if is_file and child.name != ".freelancerstudio-project.json":
             files_created += 1
     return {"files_created": files_created, "top_level_entries": entries, "workspace_path": workspace.project_reference}
 

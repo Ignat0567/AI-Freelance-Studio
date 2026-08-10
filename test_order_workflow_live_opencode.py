@@ -420,6 +420,31 @@ def test_meaningful_artifact_scan_skips_entries_that_raise_os_error_on_stat(tmp_
     assert "broken-junction" not in artifacts
 
 
+def test_summarize_generated_workspace_skips_entries_that_raise_os_error_on_stat(tmp_path, monkeypatch):
+    """Sibling regression test to the one above: _finalize_success() calls
+    summarize_generated_workspace() too (for the final delivery report), and it had the
+    exact same unprotected is_file() call -- a real live run got past the first fix (ui_shell
+    QA passed) only to crash here instead, at the very last phase, right after its own QA
+    had already passed."""
+    workspace = reserve_owned_project_workspace(tmp_path, order_id="order", execution_id="execution", brief_fingerprint="abc")
+    (workspace.project_path / "README.md").write_text("generated", encoding="utf-8")
+    broken = workspace.project_path / "broken-junction"
+    broken.write_text("placeholder", encoding="utf-8")
+
+    real_is_file = Path.is_file
+
+    def flaky_is_file(self, *args, **kwargs):
+        if self.name == "broken-junction":
+            raise OSError("The file cannot be accessed by the system")
+        return real_is_file(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_file", flaky_is_file)
+
+    summary = summarize_generated_workspace(workspace)
+
+    assert summary["files_created"] == 1
+
+
 def test_crm_prompt_differs_and_has_no_pdf_panels(tmp_path):
     pdf_brief, pdf_handoff = _contract(PDF)
     crm_brief, crm_handoff = _contract(CRM)
