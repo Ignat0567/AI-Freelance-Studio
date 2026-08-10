@@ -646,6 +646,19 @@ def test_successful_live_execution_writes_real_readme_and_architecture_docs(tmp_
     assert "flowchart TD" in architecture_text
 
 
+def test_successful_live_execution_artifacts_are_not_marked_simulated(tmp_path):
+    client = FakeOpenCodeClient()
+    service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)
+    order_id, _ = _approve_order(service)
+
+    started = service.start_execution(order_id, ExecutionMode.PRODUCTION, live=True)
+    finished = service._executions.wait(started["execution"]["id"], 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert finished.artifacts
+    assert not any(item.simulated for item in finished.artifacts)
+
+
 def test_failed_live_execution_does_not_write_documentation(tmp_path):
     client = RejectingOpenCodeClient()
     service = _configured_workflow(tmp_path, config=_bridge_config(), opt_in=True, client=client)

@@ -66,9 +66,10 @@ class _ExecutionRecord:
 
 
 class _Sink(ExecutionEventSink):
-    def __init__(self, service: "ProjectExecutionService", execution_id: str) -> None:
+    def __init__(self, service: "ProjectExecutionService", execution_id: str, *, simulated: bool = True) -> None:
         self._service = service
         self._execution_id = execution_id
+        self._simulated = simulated
 
     def emit(
         self,
@@ -93,7 +94,9 @@ class _Sink(ExecutionEventSink):
         )
 
     def artifact(self, *, kind: ArtifactKind, name: str, summary: str, reference: str) -> ExecutionArtifact:
-        return self._service._add_artifact(self._execution_id, kind=kind, name=name, summary=summary, reference=reference)
+        return self._service._add_artifact(
+            self._execution_id, kind=kind, name=name, summary=summary, reference=reference, simulated=self._simulated
+        )
 
 
 class ProjectExecutionService:
@@ -315,7 +318,7 @@ class ProjectExecutionService:
             self._set_running_locked(record, ExecutionStage.REQUIREMENTS, "Alex", 5, "Starting execution")
             request = ExecutionRequest(brief=brief, handoff=handoff, execution_id=execution_id, title=title)
         try:
-            result = adapter.execute(request, _Sink(self, execution_id), record.token)
+            result = adapter.execute(request, _Sink(self, execution_id, simulated=adapter is not self._live_adapter), record.token)
             status = ExecutionStatus.SUCCEEDED if result.success else ExecutionStatus.FAILED
             if result.outcome == "cancelled" or record.token.is_cancelled():
                 status = ExecutionStatus.CANCELLED
@@ -382,7 +385,9 @@ class ProjectExecutionService:
             self._save(updated)
         self._notify_collaboration(event)
 
-    def _add_artifact(self, execution_id: str, *, kind: ArtifactKind, name: str, summary: str, reference: str) -> ExecutionArtifact:
+    def _add_artifact(
+        self, execution_id: str, *, kind: ArtifactKind, name: str, summary: str, reference: str, simulated: bool = True
+    ) -> ExecutionArtifact:
         with self._lock:
             record = self._records[execution_id]
             if record.snapshot.status in TERMINAL_EXECUTION_STATUSES:
@@ -394,7 +399,7 @@ class ProjectExecutionService:
                 name=sanitize_public_text(name),
                 summary=sanitize_public_text(summary),
                 reference=self._safe_reference(reference),
-                simulated=True,
+                simulated=simulated,
                 created_at=utc_now(self._clock),
             )
             event = ExecutionEvent(
