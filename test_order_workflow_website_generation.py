@@ -5,10 +5,11 @@ import json
 
 import pytest
 
-from order_workflow.models import AgentHandoff, ElenaDesignChoice, ProjectBrief
+from order_workflow.models import AgentHandoff, ElenaDesignChoice, EventKind, EventLevel, ProjectBrief
 from order_workflow.website_generation import (
     build_website_execution_plan,
     detect_cinematic_website_intent,
+    propose_custom_sections,
     select_website_sections,
 )
 from order_workflow.workspace import ProjectWorkspace
@@ -213,3 +214,136 @@ def test_two_different_briefs_produce_two_different_tokens_css(tmp_path):
     assert first_css != second_css
     assert "#ff0000" in first_css
     assert "#00ff00" in second_css
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def emit(self, *, stage, agent, progress, message, level=EventLevel.INFO, details=(), kind=EventKind.ACTIVITY):
+        self.events.append({"stage": stage, "agent": agent, "progress": progress, "message": message})
+
+    def artifact(self, *, kind, name, summary, reference):
+        raise AssertionError("not expected to be called by website_generation")
+
+
+def _custom_sections_response() -> str:
+    return json.dumps(
+        {
+            "sections": [
+                {"component_name": "PopularGamesGrid", "brief": "A grid of the platform's most popular titles."},
+                {"component_name": "MostAnticipated", "brief": "A single highlighted card for an upcoming title."},
+            ]
+        }
+    )
+
+
+def _ai_ask_with_custom_sections(accent: str = "#ff0000"):
+    def _ask(prompt: str) -> str:
+        if "font_pairing" in prompt:
+            return _tokens_response(accent)
+        if "ADDITIONAL, bespoke sections" in prompt:
+            return _custom_sections_response()
+        return _full_ai_response()
+
+    return _ask
+
+
+def test_propose_custom_sections_parses_valid_response():
+    brief = _brief("PS5 concept landing page with a games showcase.")
+    handoff = _handoff(brief)
+
+    proposed = propose_custom_sections(brief, handoff, ai_ask=lambda _prompt: _custom_sections_response())
+
+    assert [cs.component_name for cs in proposed] == ["PopularGamesGrid", "MostAnticipated"]
+    assert "popular titles" in proposed[0].brief
+
+
+def test_propose_custom_sections_degrades_to_empty_on_garbage_response():
+    brief = _brief("PS5 concept landing page.")
+    handoff = _handoff(brief)
+
+    assert propose_custom_sections(brief, handoff, ai_ask=lambda _prompt: "not json at all") == ()
+
+
+def test_propose_custom_sections_degrades_to_empty_when_ai_ask_raises():
+    brief = _brief("PS5 concept landing page.")
+    handoff = _handoff(brief)
+
+    def _boom(_prompt: str) -> str:
+        raise RuntimeError("provider unavailable")
+
+    assert propose_custom_sections(brief, handoff, ai_ask=_boom) == ()
+
+
+def test_propose_custom_sections_drops_invalid_names_and_dedupes_and_caps():
+    brief = _brief("PS5 concept landing page.")
+    handoff = _handoff(brief)
+    response = json.dumps(
+        {
+            "sections": [
+                {"component_name": "not_pascal_case", "brief": "dropped: invalid identifier"},
+                {"component_name": "Games", "brief": "first"},
+                {"component_name": "Games", "brief": "duplicate slug, dropped"},
+                {"component_name": "Specs", "brief": "b"},
+                {"component_name": "Reviews", "brief": "c"},
+                {"component_name": "History", "brief": "d"},
+                {"component_name": "Accessories", "brief": "over the cap, dropped"},
+            ]
+        }
+    )
+
+    proposed = propose_custom_sections(brief, handoff, ai_ask=lambda _prompt: response)
+
+    assert [cs.component_name for cs in proposed] == ["Games", "Specs", "Reviews", "History"]
+
+
+def test_build_website_execution_plan_includes_custom_sections_in_prompt(tmp_path):
+    brief = _brief("PS5 concept landing page with a games showcase and a most-anticipated title card.")
+    handoff = _handoff(brief)
+    workspace = ProjectWorkspace(root=tmp_path, project_path=tmp_path / "proj")
+    sink = _RecordingSink()
+
+    package = build_website_execution_plan(
+        execution_id="execution_test",
+        brief=brief,
+        handoff=handoff,
+        workspace=workspace,
+        provider_name="OpenCode",
+        model_name="local-codex",
+        qa_commands=("npm run build",),
+        ai_ask=_ai_ask_with_custom_sections(),
+        event_sink=sink,
+    )
+
+    assert "PopularGamesGrid" in package.prompt
+    assert "MostAnticipated" in package.prompt
+    assert "frontend/src/sections/PopularGamesGrid.jsx" in package.prompt
+    assert "Do not use" in package.prompt and "trademarked artwork" in package.prompt
+    assert "between <ScrollRevealSection /> and <ClosingCTA />" in package.prompt
+    # The curated files are still the only ones materialized on disk up front --
+    # the coding agent is responsible for writing the custom section files itself.
+    assert not (workspace.project_path / "frontend/src/sections/PopularGamesGrid.jsx").exists()
+    assert any("Drafting custom sections" in event["message"] for event in sink.events)
+
+
+def test_build_website_execution_plan_reports_when_no_custom_sections_proposed(tmp_path):
+    brief = _brief("Cinematic WebGL showcase site.")
+    handoff = _handoff(brief)
+    workspace = ProjectWorkspace(root=tmp_path, project_path=tmp_path / "proj")
+    sink = _RecordingSink()
+
+    package = build_website_execution_plan(
+        execution_id="execution_test",
+        brief=brief,
+        handoff=handoff,
+        workspace=workspace,
+        provider_name="OpenCode",
+        model_name="local-codex",
+        qa_commands=("npm run build",),
+        ai_ask=lambda _prompt: _full_ai_response(),
+        event_sink=sink,
+    )
+
+    assert "ADDITIONAL, bespoke sections" not in package.prompt
+    assert any("shipping the curated sections only" in event["message"] for event in sink.events)

@@ -151,9 +151,11 @@ def test_materialize_site_writes_custom_tokens_css_when_provided(tmp_path):
     assert (tmp_path / "frontend/src/tokens.css").read_text(encoding="utf-8") == custom_css
 
 
-def test_agent_pipeline_demo_is_in_the_library():
-    assert AGENT_PIPELINE_DEMO in SECTION_LIBRARY
-    assert get_section("agent_pipeline_demo") is AGENT_PIPELINE_DEMO
+def test_agent_pipeline_demo_is_not_in_the_client_library():
+    # It showcases Studio's own pipeline, not the client's project -- it must not
+    # be auto-selected for arbitrary client cinematic sites. See website_sections/library.py.
+    assert AGENT_PIPELINE_DEMO not in SECTION_LIBRARY
+    assert get_section("agent_pipeline_demo") is None
 
 
 def test_agent_pipeline_demo_content_schema_is_small_and_curated():

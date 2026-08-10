@@ -205,6 +205,7 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 model_name=self.model_name,
                 qa_commands=("npm run build",),
                 ai_ask=self._website_section_ai_ask,
+                event_sink=event_sink,
             )
         else:
             package = self.prepare_execution(request)

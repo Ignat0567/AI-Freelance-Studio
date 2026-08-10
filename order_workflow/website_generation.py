@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
+import re
 
 from design_system import generate_design_tokens, render_tokens_css
 from website_sections import SECTION_LIBRARY, get_section, materialize_site
 
 from .execution_plan import ProductionExecutionPackage
-from .models import AgentHandoff, ProjectBrief
+from .executors import ExecutionEventSink
+from .models import AgentHandoff, ExecutionStage, ProjectBrief
 from .workspace import ProjectWorkspace
 
 _CINEMATIC_KEYWORDS = (
@@ -27,6 +29,9 @@ _CINEMATIC_KEYWORDS = (
 )
 
 _MAX_CONTENT_FIELD_LENGTH = 300
+_MAX_CUSTOM_SECTIONS = 4
+_MAX_CUSTOM_SECTION_BRIEF_LENGTH = 600
+_CUSTOM_COMPONENT_NAME = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 
 
 def detect_cinematic_website_intent(brief: ProjectBrief) -> bool:
@@ -41,6 +46,18 @@ def detect_cinematic_website_intent(brief: ProjectBrief) -> bool:
 class SelectedSection:
     slug: str
     content: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class CustomSection:
+    """A bespoke section proposed for one specific project, not drawn from the curated library.
+
+    Unlike `SelectedSection`, there is no pre-written component behind this — `brief`
+    is handed to the coding agent as the spec for a new file it must write from scratch.
+    """
+
+    component_name: str
+    brief: str
 
 
 def _section_catalog_text() -> str:
@@ -102,6 +119,65 @@ def select_website_sections(brief: ProjectBrief, handoff: AgentHandoff, ai_ask: 
     return tuple(selected)
 
 
+def _custom_section_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
+    return (
+        "This project already has a working WebGL hero section, a scroll-reveal highlights "
+        "section, and a closing call-to-action/newsletter section handled separately — do not "
+        "propose any of those again. Your only job is to propose the ADDITIONAL, bespoke sections "
+        "this specific project needs that those generic sections do not cover (for example: a "
+        "product or feature grid, a comparison or specs table, a showcase gallery, pricing tiers, "
+        "or whatever this project's actual requirements call for). If the generic sections already "
+        "cover everything this project needs, propose zero sections.\n\n"
+        f"Project goal: {brief.goal}\n"
+        f"Context: {handoff.context_summary}\n"
+        "Requirements:\n" + "\n".join(f"- {item}" for item in handoff.requirements) + "\n\n"
+        "Respond with ONLY strict JSON, no prose, in exactly this shape:\n"
+        '{"sections": [{"component_name": "PopularGamesGrid", "brief": "..."}]}\n'
+        "Rules:\n"
+        f"- Propose between 0 and {_MAX_CUSTOM_SECTIONS} sections, ordered as they should appear on the page.\n"
+        "- component_name must be a PascalCase, valid JavaScript identifier (e.g. PopularGamesGrid), unique across the list.\n"
+        "- brief must be a concrete, specific paragraph describing exactly what content, layout, and any "
+        "interaction this section needs, grounded in this project's actual requirements above — no vague filler."
+    )
+
+
+def propose_custom_sections(brief: ProjectBrief, handoff: AgentHandoff, ai_ask: Callable[[str], str]) -> tuple[CustomSection, ...]:
+    """Propose bespoke, non-curated sections for this project's specific requirements.
+
+    This call is intentionally allowed to fail soft: an unavailable/garbage AI response
+    degrades to zero custom sections (the site still ships with the three reliable curated
+    sections) rather than failing the whole build the way `select_website_sections` does --
+    the curated sections are the guaranteed-working core, this is a best-effort addition.
+    """
+    try:
+        raw_response = ai_ask(_custom_section_prompt(brief, handoff))
+        payload = _parse_json_object(raw_response)
+    except Exception:
+        return ()
+    raw_sections = payload.get("sections") if isinstance(payload, dict) else None
+    if not isinstance(raw_sections, list):
+        return ()
+
+    proposed: list[CustomSection] = []
+    seen_names: set[str] = set()
+    for entry in raw_sections:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("component_name")
+        section_brief = entry.get("brief")
+        if not isinstance(name, str) or not isinstance(section_brief, str):
+            continue
+        name = name.strip()
+        section_brief = section_brief.strip()
+        if not section_brief or not _CUSTOM_COMPONENT_NAME.fullmatch(name) or name in seen_names:
+            continue
+        seen_names.add(name)
+        proposed.append(CustomSection(component_name=name, brief=section_brief[:_MAX_CUSTOM_SECTION_BRIEF_LENGTH]))
+        if len(proposed) >= _MAX_CUSTOM_SECTIONS:
+            break
+    return tuple(proposed)
+
+
 def _parse_json_object(raw_response: str) -> object:
     text = raw_response.strip()
     if text.startswith("```"):
@@ -115,7 +191,13 @@ def _parse_json_object(raw_response: str) -> object:
         raise ValueError("ai_response_not_valid_json") from exc
 
 
-def _build_website_prompt(brief: ProjectBrief, handoff: AgentHandoff, selected: tuple[SelectedSection, ...], qa_commands: tuple[str, ...]) -> str:
+def _build_website_prompt(
+    brief: ProjectBrief,
+    handoff: AgentHandoff,
+    selected: tuple[SelectedSection, ...],
+    qa_commands: tuple[str, ...],
+    custom_sections: tuple[CustomSection, ...] = (),
+) -> str:
     section_lines = []
     for item in selected:
         section = get_section(item.slug)
@@ -138,9 +220,32 @@ def _build_website_prompt(brief: ProjectBrief, handoff: AgentHandoff, selected: 
         "QA commands:",
         *[f"- {item}" for item in qa_commands],
         "",
-        "Your job is ONLY to make the project build and run:",
+    ]
+    if custom_sections:
+        lines += [
+            "In addition, write NEW section components tailored to this specific project's "
+            "requirements (the curated sections above are generic and do not cover this content). "
+            "Create each one, in this order, between the ScrollRevealSection and ClosingCTA sections:",
+            *[
+                f"- {cs.component_name} (new file: frontend/src/sections/{cs.component_name}.jsx): {cs.brief}"
+                for cs in custom_sections
+            ],
+            "",
+            "Rules for these new sections:",
+            "- Plain React + CSS only (a matching frontend/src/sections/<Name>.css per component). Do not use "
+            "Three.js, GSAP, or any package not already declared in frontend/package.json.",
+            "- Match the existing dark, token-driven visual style: use the CSS custom properties already "
+            "defined in frontend/src/tokens.css (colors, fonts) rather than hardcoding new ones.",
+            "- Do not use real third-party trademarked artwork, logos, or copyrighted screenshots for any "
+            "images this section needs -- use original CSS/SVG graphics, gradients, or abstract placeholder art.",
+            "- Edit frontend/src/App.jsx to import each new component and render it in the exact order given "
+            "above, positioned between <ScrollRevealSection /> and <ClosingCTA />.",
+            "",
+        ]
+    lines += [
+        "Your job:",
         "- Run npm install and npm run build inside frontend/ and fix any build errors.",
-        "- Do NOT rewrite, simplify, or remove the existing animation, WebGL, or GSAP code in the section files.",
+        "- Do NOT rewrite, simplify, or remove the existing animation, WebGL, or GSAP code in the curated section files listed above.",
         "- Do NOT add new npm dependencies beyond what is already declared in frontend/package.json.",
         "- Do not expose secrets in logs, reports, or generated files.",
         "After the project builds successfully, stop and exit. Do not keep rewriting files.",
@@ -158,11 +263,25 @@ def build_website_execution_plan(
     model_name: str,
     qa_commands: tuple[str, ...],
     ai_ask: Callable[[str], str],
+    event_sink: ExecutionEventSink | None = None,
 ) -> ProductionExecutionPackage:
     selected = select_website_sections(brief, handoff, ai_ask)
     # Separate, narrow AI call from section selection — one AI call, one job — so
     # each can be validated and tested independently. A broken/garbage response
-    # here never fails the build: generate_design_tokens falls back per-field.
+    # here never fails the build: generate_design_tokens falls back per-field,
+    # and propose_custom_sections degrades to zero bespoke sections.
+    custom_sections = propose_custom_sections(brief, handoff, ai_ask)
+    if custom_sections:
+        names = ", ".join(cs.component_name for cs in custom_sections)
+        if event_sink is not None:
+            event_sink.emit(stage=ExecutionStage.PLANNING, agent="Elena", progress=27, message=f"Drafting custom sections: {names}")
+    elif event_sink is not None:
+        event_sink.emit(
+            stage=ExecutionStage.PLANNING,
+            agent="Elena",
+            progress=27,
+            message="No project-specific sections proposed; shipping the curated sections only.",
+        )
     tokens = generate_design_tokens(f"{brief.goal}\n\n{handoff.context_summary}", ai_ask)
     materialize_site(
         [(item.slug, item.content) for item in selected],
@@ -181,5 +300,5 @@ def build_website_execution_plan(
         workspace_root=workspace.root_reference,
         project_path=workspace.project_reference,
         qa_commands=qa_commands,
-        prompt=_build_website_prompt(brief, handoff, selected, qa_commands),
+        prompt=_build_website_prompt(brief, handoff, selected, qa_commands, custom_sections),
     )
