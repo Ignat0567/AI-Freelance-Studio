@@ -12,6 +12,7 @@ from pydantic import Field, model_validator
 from .brief_service import BriefServiceError, sanitize_public_text, verify_brief_approval
 from .models import LongText, ProductType, ProjectBrief, ShortText, StrictDomainModel, new_public_id, utc_now
 from .style_library import STYLE_LIBRARY, StylePack
+from .ui_vocabulary import get_pattern
 
 
 class DesignPreviewError(ValueError):
@@ -293,6 +294,21 @@ def _has(text: str, *needles: str) -> bool:
     return any(item in text for item in needles)
 
 
+def _named(label: str, pattern_name: str) -> str:
+    """Annotate a component label with its precise UI pattern name + ARIA/HTML/API symbol
+    from the namethatui web vocabulary (order_workflow/ui_vocabulary.py), so the coding
+    prompt reads e.g. "Lead card -- use the 'Card' pattern (<Card>)" instead of leaving the
+    coding agent to guess an implementation. Not every component has a real vocabulary
+    match -- the glossary covers interactive/overlay patterns (tabs, toasts, disclosure,
+    pickers...), not generic layout elements like tables or charts -- those stay plain
+    labels rather than being forced into a wrong pattern.
+    """
+    pattern = get_pattern(pattern_name)
+    if pattern is None:
+        raise ValueError(f"unknown UI vocabulary pattern: {pattern_name!r}")
+    return f"{label} — use the '{pattern.name}' pattern ({pattern.api_symbol})"
+
+
 def _screen(archetype: LayoutArchetype, *, regions: Iterable[str], components: Iterable[str], states: Iterable[str], name: str = "Main workspace", purpose: str = "Support the primary user workflow.") -> PreviewScreen:
     return PreviewScreen(
         screen_id="main",
@@ -313,7 +329,7 @@ def _preview_spec(kind: LayoutArchetype, brief: ProjectBrief) -> dict[str, objec
         return {
             "concept_name": "Document-grounded assistant workspace",
             "visual_direction": "Calm productivity workspace with clear evidence, conversation, and document zones.",
-            "screens": (_screen(kind, regions=("Left PDF library panel with drag-and-drop upload, document list, processing status, and assistant instruction textarea", "Center voice/text chat panel with microphone button, recognized text state, assistant answers, and speech playback waveform indicator", "Right source evidence panel with source document, page reference, highlighted quote, citation pinning, and no-answer state"), components=("PDF drag-and-drop upload", "Document processing status", "Assistant instruction textarea", "Text and voice chat", "Microphone button", "Recognized speech text", "Speech playback or waveform indicator", "Source document panel", "Page reference", "Highlighted quote", "Citation pinning"), states=("Empty document library", "Processing document", "Recognized text pending submission", "No-answer state when sources do not contain an answer", "Citation highlighted and pinned"), purpose="Let users upload documents, ask by voice or text, and inspect source-backed answers."),),
+            "screens": (_screen(kind, regions=("Left PDF library panel with drag-and-drop upload, document list, processing status, and assistant instruction textarea", "Center voice/text chat panel with microphone button, recognized text state, assistant answers, and speech playback waveform indicator", "Right source evidence panel with source document, page reference, highlighted quote, citation pinning, and no-answer state"), components=(_named("PDF drag-and-drop upload", "Drag & Drop"), _named("Document processing status", "Skeleton vs. Spinner"), "Assistant instruction textarea", "Text and voice chat", "Microphone button", "Recognized speech text", "Speech playback or waveform indicator", "Source document panel", "Page reference", "Highlighted quote", "Citation pinning"), states=("Empty document library", "Processing document", "Recognized text pending submission", "No-answer state when sources do not contain an answer", "Citation highlighted and pinned"), purpose="Let users upload documents, ask by voice or text, and inspect source-backed answers."),),
             "user_flows": ("Upload one or more PDFs, wait for processing, then ask a grounded question.", "Review answer citations, open the highlighted source quote, and pin useful references.", "Use voice input and speech playback when browser capabilities are available."),
             "empty_states": ("Show PDF drop zone and sample instructions before documents are uploaded.", "Show a no-answer explanation when uploaded documents do not contain supporting evidence."),
             "error_states": ("Show actionable browser capability blocker for unavailable microphone or speech synthesis.", "Show document processing failure without raw stack traces."),
@@ -321,13 +337,13 @@ def _preview_spec(kind: LayoutArchetype, brief: ProjectBrief) -> dict[str, objec
             "implementation_notes": ("Build a left PDF library panel, center voice/text chat, and right source evidence panel.", "Include citation highlighting, no-answer state, recognized speech state, and speech playback indicator."),
         }
     specs = {
-        LayoutArchetype.MASTER_DETAIL: ("CRM pipeline workspace", "Pipeline board, selected client/deal detail, and task or activity panel", ("Pipeline board", "Client or deal detail panel", "Task and activity panel"), ("Lead card", "Deal stage", "Activity timeline", "Task composer"), ("No selected client", "Empty pipeline", "Overdue task warning")),
-        LayoutArchetype.CALENDAR_BOOKING: ("Booking scheduler", "Service list, calendar slots, booking form, and admin schedule", ("Service selection", "Calendar and time slots", "Booking details form", "Admin schedule"), ("Service card", "Time slot picker", "Booking form", "Schedule summary"), ("No available slots", "Pending confirmation", "Booking conflict")),
-        LayoutArchetype.CATALOG_CHECKOUT: ("Catalog checkout flow", "Product catalog, product detail, cart, and checkout", ("Product catalog", "Product detail", "Cart summary", "Checkout form"), ("Product grid", "Variant selector", "Cart line items", "Checkout CTA"), ("Empty cart", "Out of stock", "Payment error")),
-        LayoutArchetype.SINGLE_PAGE_LANDING: ("Conversion landing page", "Hero, benefits, pricing, call to action, and contact form", ("Hero section", "Benefits", "Pricing", "CTA", "Contact form"), ("Hero headline", "Benefit cards", "Pricing tiers", "Contact form"), ("Form submitted", "Validation error", "No pricing plan selected")),
-        LayoutArchetype.DASHBOARD: ("Operational dashboard", "KPI cards, charts, filters, and data table", ("KPI cards", "Charts", "Filters", "Data table", "Status panel"), ("Metric card", "Trend chart", "Filter bar", "Sortable table"), ("No data", "Loading metrics", "Filter returns no results")),
-        LayoutArchetype.ADMIN_CONSOLE: ("Admin console", "Navigation, configuration workspace, analytics, and settings", ("Admin navigation", "Primary configuration workspace", "Analytics panel", "Settings drawer"), ("Navigation item", "Configuration form", "Analytics card", "Settings toggle"), ("No configuration selected", "Unsaved changes", "Invalid setting")),
-        LayoutArchetype.WIZARD_FLOW: ("Guided task wizard", "Step navigation, main task area, review panel, and result state", ("Step navigation", "Main task area", "Review panel", "Result panel"), ("Step indicator", "Form section", "Review summary", "Submit action"), ("Step incomplete", "Validation error", "Completed result")),
+        LayoutArchetype.MASTER_DETAIL: ("CRM pipeline workspace", "Pipeline board, selected client/deal detail, and task or activity panel", ("Pipeline board", "Client or deal detail panel", "Task and activity panel"), (_named("Lead card", "Card"), _named("Deal stage", "Badge vs. Chip vs. Pill vs. Tag"), "Activity timeline", "Task composer"), ("No selected client", "Empty pipeline", "Overdue task warning")),
+        LayoutArchetype.CALENDAR_BOOKING: ("Booking scheduler", "Service list, calendar slots, booking form, and admin schedule", ("Service selection", "Calendar and time slots", "Booking details form", "Admin schedule"), (_named("Service card", "Card"), _named("Time slot picker", "Date Picker"), _named("Booking form", "Form Field"), "Schedule summary"), ("No available slots", "Pending confirmation", "Booking conflict")),
+        LayoutArchetype.CATALOG_CHECKOUT: ("Catalog checkout flow", "Product catalog, product detail, cart, and checkout", ("Product catalog", "Product detail", "Cart summary", "Checkout form"), ("Product grid", _named("Variant selector", "Toggle Group (Segmented Control)"), "Cart line items", "Checkout CTA"), ("Empty cart", "Out of stock", "Payment error")),
+        LayoutArchetype.SINGLE_PAGE_LANDING: ("Conversion landing page", "Hero, benefits, pricing, call to action, and contact form", ("Hero section", "Benefits", "Pricing", "CTA", "Contact form"), ("Hero headline", _named("Benefit cards", "Card"), _named("Pricing tiers", "Card"), _named("Contact form", "Form Field")), ("Form submitted", "Validation error", "No pricing plan selected")),
+        LayoutArchetype.DASHBOARD: ("Operational dashboard", "KPI cards, charts, filters, and data table", ("KPI cards", "Charts", "Filters", "Data table", "Status panel"), (_named("Metric card", "Card"), "Trend chart", _named("Filter bar", "Toggle Group (Segmented Control)"), "Sortable table"), ("No data", "Loading metrics", "Filter returns no results")),
+        LayoutArchetype.ADMIN_CONSOLE: ("Admin console", "Navigation, configuration workspace, analytics, and settings", ("Admin navigation", "Primary configuration workspace", "Analytics panel", "Settings drawer"), ("Navigation item", _named("Configuration form", "Form Field"), _named("Analytics card", "Card"), _named("Settings toggle", "Switch vs. Checkbox vs. Radio")), ("No configuration selected", "Unsaved changes", "Invalid setting")),
+        LayoutArchetype.WIZARD_FLOW: ("Guided task wizard", "Step navigation, main task area, review panel, and result state", ("Step navigation", "Main task area", "Review panel", "Result panel"), (_named("Step indicator", "Steps"), _named("Form section", "Form Field"), "Review summary", "Submit action"), ("Step incomplete", "Validation error", "Completed result")),
     }
     concept, direction, regions, components, states = specs[kind]
     return {
