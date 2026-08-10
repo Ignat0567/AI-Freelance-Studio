@@ -325,3 +325,29 @@ def test_empty_timeout_without_artifact_remains_timeout_without_artifact(monkeyp
 
 def test_unsupported_flag_maps_to_flag_rejection():
     assert opencode_provider._error_category("Error: unknown option --auto", "") == "flag_rejected"
+
+
+def test_scan_meaningful_artifacts_skips_entries_that_raise_os_error_on_stat(tmp_path, monkeypatch):
+    """Sibling regression test to order_workflow.workspace's near-identical function:
+    npm on Windows sometimes creates node_modules/.bin entries as NTFS junction points
+    rather than true symlinks, so is_symlink() doesn't catch them, but stat()-ing one (via
+    is_dir()/is_file()) raises OSError (WinError 1920) instead of just reporting a type.
+    This module has its own copy of the same scan logic for the OpenCode execution path,
+    so it needs the same guard."""
+    (tmp_path / "README.md").write_text("generated", encoding="utf-8")
+    broken = tmp_path / "broken-junction"
+    broken.write_text("placeholder", encoding="utf-8")
+
+    real_is_dir = Path.is_dir
+
+    def flaky_is_dir(self, *args, **kwargs):
+        if self.name == "broken-junction":
+            raise OSError("The file cannot be accessed by the system")
+        return real_is_dir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", flaky_is_dir)
+
+    artifacts = opencode_provider._scan_meaningful_artifacts(str(tmp_path))
+
+    assert "README.md" in artifacts
+    assert "broken-junction" not in artifacts
