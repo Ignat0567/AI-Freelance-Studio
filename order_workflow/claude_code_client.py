@@ -63,6 +63,7 @@ class ConfiguredClaudeCodeExecutionClient:
         workspace_path: Path,
         event_sink: ExecutionEventSink,
         cancellation: CancellationToken,
+        model: str | None = None,
     ) -> OpenCodeExecutionResult:
         if cancellation.is_cancelled():
             return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled before invocation.")
@@ -90,6 +91,10 @@ class ConfiguredClaudeCodeExecutionClient:
             "--permission-mode", "bypassPermissions",
             "--tools", "default",
         ]
+        if model:
+            # Studio's stored model ids carry a "claude/" catalog prefix (e.g. "claude/opus");
+            # the CLI's --model flag wants the bare alias ("opus", "sonnet", "fable", ...).
+            cmd.extend(["--model", model.split("/", 1)[-1]])
         try:
             proc = subprocess.Popen(
                 cmd,

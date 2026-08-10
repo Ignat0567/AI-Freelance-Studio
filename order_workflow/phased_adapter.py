@@ -8,6 +8,7 @@ from pathlib import Path
 from ai_utils import ask_studio_ai_with_history
 from project_docs import build_architecture_mermaid, build_module_map, build_readme, generate_overview_paragraph
 
+from .complexity import classify_phase_complexity, model_for_complexity
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProjectBrief, TestSummary
@@ -133,6 +134,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return _cancelled_result(request)
         validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)
 
+        ui_shell_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.ui_requirements)}")
         ui_shell = self._run_phase(
             stage=ExecutionStage.UI_SHELL,
             prompt=build_ui_shell_prompt(request.brief, request.handoff),
@@ -141,11 +143,13 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink=event_sink,
             cancellation=cancellation,
             request=request,
+            model=model_for_complexity(ui_shell_complexity),
         )
         if not ui_shell.success:
             return ui_shell.failure
         self._emit_milestone(event_sink, ExecutionStage.UI_SHELL, "UI shell complete: screens and navigation build cleanly, no backend/auth/external calls wired.")
 
+        core_feature_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.core_features[0]} {request.brief.goal}")
         core_feature = self._run_phase(
             stage=ExecutionStage.CORE_FEATURE,
             prompt=build_core_feature_prompt(request.brief, request.handoff, ui_shell.context),
@@ -154,6 +158,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink=event_sink,
             cancellation=cancellation,
             request=request,
+            model=model_for_complexity(core_feature_complexity),
         )
         if not core_feature.success:
             return core_feature.failure
@@ -201,14 +206,15 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         event_sink: ExecutionEventSink,
         cancellation: CancellationToken,
         request: ExecutionRequest,
+        model: str | None = None,
     ) -> _PhaseOutcome:
         if cancellation.is_cancelled():
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
         workspace_path = workspace.project_path
         (workspace_path / f"execution_prompt_{stage.value}.md").write_text(prompt, encoding="utf-8")
-        event_sink.emit(stage=stage, agent="Codex", progress=10, message=f"Sending {stage.value} prompt to the coding CLI")
+        event_sink.emit(stage=stage, agent="Codex", progress=10, message=f"Sending {stage.value} prompt to the coding CLI" + (f" (model: {model})" if model else ""))
         try:
-            result = self._opencode_client.execute_project_prompt(prompt, workspace_path, event_sink, cancellation)
+            result = self._opencode_client.execute_project_prompt(prompt, workspace_path, event_sink, cancellation, model=model)
         except Exception:
             return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, "opencode_execution_failed", f"Live OpenCode execution failed during the {stage.value} phase."))
         if cancellation.is_cancelled():
@@ -228,6 +234,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 agent="BugCatcher",
                 max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
                 fix_prompt_builder=_build_qa_fix_prompt,
+                model=model,
             )
         except DockerUnavailableError as exc:
             event_sink.emit(
@@ -280,6 +287,10 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink=event_sink,
             cancellation=cancellation,
             request=request,
+            # Backend/database/auth work is architecturally significant by nature, and this
+            # phase only runs at all once _decide_backend_need() already found it necessary
+            # -- that decision is itself already a complexity signal, so skip the heuristic.
+            model=model_for_complexity("complex"),
         )
         if not bridge.success:
             return bridge.failure

@@ -108,7 +108,7 @@ class FakeOpenCodeClient:
 
         return ReadinessResult.blocked(readiness_blocker("opencode_unavailable", "OpenCode is not available."))
 
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
         self.call_count += 1
         self.prompt = prompt
         self.prompts.append(prompt)
@@ -127,7 +127,7 @@ class FakeOpenCodeClient:
 
 
 class RejectingOpenCodeClient(FakeOpenCodeClient):
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
         self.prompt = prompt
         self.workspace_path = Path(workspace_path)
         event_sink.emit(stage="implementation", agent="OpenCode", progress=60, message="OpenCode execution rejected request")
@@ -139,7 +139,7 @@ class TimeoutOpenCodeClient(FakeOpenCodeClient):
         super().__init__()
         self.files = files
 
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
         self.prompt = prompt
         self.workspace_path = Path(workspace_path)
         for relative in self.files:
@@ -739,7 +739,7 @@ def test_qa_failure_exhausts_repair_attempts_and_reports_failure(tmp_path):
 
 def test_qa_repair_loop_stops_early_when_the_repair_call_itself_fails(tmp_path):
     class FailsOnSecondCall(FakeOpenCodeClient):
-        def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+        def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
             if self.call_count == 1:  # the repair call (0-indexed count already incremented by super())
                 self.call_count += 1
                 self.prompt = prompt

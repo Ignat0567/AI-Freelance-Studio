@@ -45,7 +45,7 @@ class ReadyOpenCodeClient:
     def check_readiness(self):
         return ReadinessResult.ready_result()
 
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
         self.invoked = True
         return OpenCodeExecutionResult(success=True, summary="not used in readiness tests")
 

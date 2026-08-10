@@ -75,7 +75,12 @@ class ConfiguredOpenCodeExecutionClient:
         workspace_path,
         event_sink: ExecutionEventSink,
         cancellation: CancellationToken,
+        model: str | None = None,
     ) -> OpenCodeExecutionResult:
+        # model is ignored here: OpenCode's model comes from the connection's own bridge
+        # config (set once when the connection is saved), not a per-call choice -- the
+        # parameter exists only so this satisfies the same OpenCodeExecutionClient Protocol
+        # as ConfiguredClaudeCodeExecutionClient, which does route per-call.
         if cancellation.is_cancelled():
             return OpenCodeExecutionResult(success=False, summary="OpenCode execution was cancelled before invocation.")
         connection = self._connection()

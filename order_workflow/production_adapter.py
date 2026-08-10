@@ -54,6 +54,7 @@ class OpenCodeExecutionClient(Protocol):
         workspace_path: Path,
         event_sink: ExecutionEventSink,
         cancellation: CancellationToken,
+        model: str | None = None,
     ) -> OpenCodeExecutionResult: ...
 
 
@@ -61,7 +62,7 @@ class UnavailableOpenCodeExecutionClient:
     def check_readiness(self) -> ReadinessResult:
         return ReadinessResult.blocked(OPENCODE_UNAVAILABLE)
 
-    def execute_project_prompt(self, prompt: str, workspace_path: Path, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> OpenCodeExecutionResult:
+    def execute_project_prompt(self, prompt: str, workspace_path: Path, event_sink: ExecutionEventSink, cancellation: CancellationToken, model: str | None = None) -> OpenCodeExecutionResult:
         raise RuntimeError("OpenCode client is unavailable")
 
 

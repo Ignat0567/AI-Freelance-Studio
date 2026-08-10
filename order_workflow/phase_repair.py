@@ -31,6 +31,7 @@ def run_qa_repair_loop(
     agent: str,
     max_attempts: int,
     fix_prompt_builder: Callable[[QAOutcome], str],
+    model: str | None = None,
 ) -> RepairLoopResult:
     """Run QA, and on failure re-prompt the coding provider up to max_attempts times.
 
@@ -56,7 +57,7 @@ def run_qa_repair_loop(
                 details=(qa_outcome.failure_summary()[:2000],),
             )
             try:
-                fix_result = opencode_client.execute_project_prompt(fix_prompt_builder(qa_outcome), workspace_path, event_sink, cancellation)
+                fix_result = opencode_client.execute_project_prompt(fix_prompt_builder(qa_outcome), workspace_path, event_sink, cancellation, model=model)
             except Exception:
                 break
             if not fix_result.success:

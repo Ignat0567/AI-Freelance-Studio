@@ -79,7 +79,7 @@ class FakePhaseOpenCodeClient:
 
         return ReadinessResult.blocked(readiness_blocker("opencode_unavailable", "OpenCode is not available."))
 
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
         self.call_count += 1
         self.prompts.append(prompt)
         if self.call_count in self.raise_on_call:
