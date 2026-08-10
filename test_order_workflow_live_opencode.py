@@ -392,6 +392,34 @@ def test_meaningful_artifact_scan_ignores_symlink_escape(tmp_path):
     assert "linked.md" not in scan_meaningful_generated_artifacts(workspace)
 
 
+def test_meaningful_artifact_scan_skips_entries_that_raise_os_error_on_stat(tmp_path, monkeypatch):
+    """Regression test: a real live run hit this on Windows -- npm creates node_modules/.bin
+    entries as NTFS junction points rather than true symlinks, so is_symlink() doesn't catch
+    them, but stat()-ing them (via is_dir()/is_file()) raises OSError (WinError 1920:
+    "The file cannot be accessed by the system"). This used to propagate uncaught out of
+    scan_meaningful_generated_artifacts, crashing the whole phase as an "internal error"
+    right after a successful, QA-passed build -- the crash had nothing to do with the
+    generated code."""
+    workspace = reserve_owned_project_workspace(tmp_path, order_id="order", execution_id="execution", brief_fingerprint="abc")
+    (workspace.project_path / "README.md").write_text("generated", encoding="utf-8")
+    broken = workspace.project_path / "broken-junction"
+    broken.write_text("placeholder", encoding="utf-8")
+
+    real_is_dir = Path.is_dir
+
+    def flaky_is_dir(self, *args, **kwargs):
+        if self.name == "broken-junction":
+            raise OSError("The file cannot be accessed by the system")
+        return real_is_dir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", flaky_is_dir)
+
+    artifacts = scan_meaningful_generated_artifacts(workspace)
+
+    assert "README.md" in artifacts
+    assert "broken-junction" not in artifacts
+
+
 def test_crm_prompt_differs_and_has_no_pdf_panels(tmp_path):
     pdf_brief, pdf_handoff = _contract(PDF)
     crm_brief, crm_handoff = _contract(CRM)

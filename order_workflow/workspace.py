@@ -112,10 +112,20 @@ def scan_meaningful_generated_artifacts(workspace: ProjectWorkspace, *, max_file
         name = child.name
         if name in STUDIO_METADATA_FILES:
             continue
-        if child.is_dir():
+        try:
+            is_dir = child.is_dir()
+            is_file = not is_dir and child.is_file()
+        except OSError:
+            # npm on Windows sometimes creates node_modules/.bin entries as NTFS junction
+            # points rather than true symlinks -- child.is_symlink() above doesn't catch
+            # those (wrong reparse tag), and stat()-ing them raises OSError (WinError 1920)
+            # instead of just reporting a type. A generated project's real, meaningful
+            # files are never inside node_modules/.bin, so skipping is always correct here.
+            continue
+        if is_dir:
             if name in MEANINGFUL_DIR_NAMES:
                 found.append(safe_relative + "/")
-        elif child.is_file():
+        elif is_file:
             scanned += 1
             if scanned > max_files:
                 break
