@@ -109,7 +109,7 @@ class ConfiguredClaudeCodeExecutionClient:
 
         for attempt in range(2):
             try:
-                outcome = self._invoke(cmd, prompt, workspace_path, cancellation)
+                outcome = self._invoke(cmd, prompt, workspace_path, cancellation, attempt=attempt)
             except OSError as exc:
                 return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}")
             if outcome.cancelled:
@@ -146,7 +146,7 @@ class ConfiguredClaudeCodeExecutionClient:
         return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated")
 
     @staticmethod
-    def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken) -> _InvokeOutcome:
+    def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken, *, attempt: int = 0) -> _InvokeOutcome:
         proc = subprocess.Popen(
             cmd,
             cwd=str(Path(workspace_path)),
@@ -210,10 +210,13 @@ class ConfiguredClaudeCodeExecutionClient:
         stderr_text = _strip_ansi("".join(stderr_chunks))
 
         try:
-            (Path(workspace_path) / "claude_code_raw_output.log").write_text(
-                f"CMD: {cmd}\nEXIT: {proc.returncode}\n\n--- STDOUT ---\n{stdout_text}\n\n--- STDERR ---\n{stderr_text}\n",
-                encoding="utf-8",
-            )
+            # attempt 0 starts a fresh log for this phase call; a retry (attempt 1) appends
+            # rather than overwrites, so if attempt 0 also failed its output isn't lost --
+            # a previous silent-crash investigation had only the *last* attempt's output to
+            # go on and couldn't tell whether the retry had even fired.
+            mode = "w" if attempt == 0 else "a"
+            with (Path(workspace_path) / "claude_code_raw_output.log").open(mode, encoding="utf-8") as handle:
+                handle.write(f"=== Attempt {attempt + 1} ===\nCMD: {cmd}\nEXIT: {proc.returncode}\n\n--- STDOUT ---\n{stdout_text}\n\n--- STDERR ---\n{stderr_text}\n\n")
         except OSError:
             pass
 
