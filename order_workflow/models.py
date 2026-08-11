@@ -425,6 +425,18 @@ class TestSummary(StrictDomainModel):
     repair_attempts: Annotated[int, Field(ge=0)] = 0
 
 
+class TokenUsage(StrictDomainModel):
+    """Token/cost accounting for a single coding-agent CLI invocation, as reported by
+    the CLI's own JSON output (Claude Code's `-p --output-format json`). Not an estimate --
+    these are the exact figures the provider billed for that call."""
+
+    total_cost_usd: Annotated[float, Field(ge=0)] = 0.0
+    input_tokens: Annotated[int, Field(ge=0)] = 0
+    output_tokens: Annotated[int, Field(ge=0)] = 0
+    cache_read_input_tokens: Annotated[int, Field(ge=0)] = 0
+    cache_creation_input_tokens: Annotated[int, Field(ge=0)] = 0
+
+
 class ExecutionResult(StrictDomainModel):
     success: bool
     summary: LongText
@@ -435,6 +447,8 @@ class ExecutionResult(StrictDomainModel):
     errors: tuple[ShortText, ...] = ()
     duration_seconds: Annotated[float, Field(ge=0)] | None = None
     final_stage: ExecutionStage | None = None
+    usage: TokenUsage | None = None
+    rate_limit_message: ShortText | None = None
     completed_at: datetime
 
     @field_validator("completed_at")
@@ -450,6 +464,7 @@ class ProjectExecution(StrictDomainModel):
     handoff_id: PublicId
     approval_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
     mode: ExecutionMode
+    live: bool = False
     status: ExecutionStatus = ExecutionStatus.QUEUED
     stage: ExecutionStage = ExecutionStage.REQUIREMENTS
     active_agent: ShortText | None = None

@@ -359,6 +359,79 @@ def test_custom_readiness_blocker_is_structured():
     assert result.blockers[0].action_required is True
 
 
+class FlakyAdapter(FakeProjectExecutionAdapter):
+    """Fails the first call (like a transient provider rate limit), succeeds on retry."""
+
+    def __init__(self, config: FakeExecutorConfig | None = None) -> None:
+        super().__init__(config or FakeExecutorConfig())
+        self.calls = 0
+
+    def execute(self, request, event_sink, cancellation):
+        self.calls += 1
+        if self.calls == 1:
+            return ExecutionResult(
+                success=False,
+                outcome="failed",
+                summary="Simulated transient provider failure.",
+                test_summary=WorkflowTestSummary(failed=1),
+                errors=("provider_rate_limited",),
+                completed_at=NOW,
+            )
+        return super().execute(request, event_sink, cancellation)
+
+
+def test_retry_reruns_a_failed_execution_reusing_the_same_id():
+    brief, handoff = _approved_contract()
+    adapter = FlakyAdapter()
+    service = _service(fake_adapter=adapter)
+
+    first_attempt = service.wait(service.start(brief, handoff).id, 2)
+    assert first_attempt.status is ExecutionStatus.FAILED
+
+    retried = service.retry(first_attempt.id, brief, handoff)
+    assert retried.id == first_attempt.id
+    finished = service.wait(retried.id, 2)
+
+    assert finished.id == first_attempt.id
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert adapter.calls == 2
+    # the first attempt's event history survives the retry -- it's appended to, not wiped
+    assert len(finished.events) > len(first_attempt.events)
+    assert any("Retrying execution" in event.message for event in finished.events)
+
+
+def test_retry_rejects_execution_that_is_not_failed():
+    brief, handoff = _approved_contract()
+    service = _service()
+    succeeded = service.wait(service.start(brief, handoff).id, 2)
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.retry(succeeded.id, brief, handoff)
+    assert error.value.code == "execution_not_retryable"
+
+
+def test_retry_rejects_unknown_execution_id():
+    brief, handoff = _approved_contract()
+    service = _service()
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.retry("execution_does_not_exist", brief, handoff)
+    assert error.value.code == "execution_not_found"
+
+
+def test_retry_rejects_mismatched_brief():
+    first_brief, first_handoff = _approved_contract("order_one")
+    second_brief, second_handoff = _approved_contract("order_two")
+    service = _service(fake_adapter=FlakyAdapter())
+
+    failed = service.wait(service.start(first_brief, first_handoff).id, 2)
+    assert failed.status is ExecutionStatus.FAILED
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.retry(failed.id, second_brief, second_handoff)
+    assert error.value.code == "execution_not_found"
+
+
 def test_shutdown_stops_accepting_new_executions_and_is_bounded():
     brief, handoff = _approved_contract()
     service = _service(fake_adapter=NonCooperativeAdapter(FakeExecutorConfig(step_delay_seconds=0.05)))

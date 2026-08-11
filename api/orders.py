@@ -36,6 +36,7 @@ _STATUS_BY_CODE = {
     "order_not_found": 404,
     "question_not_found": 404,
     "execution_not_found": 404,
+    "execution_not_retryable": 409,
     "unsupported_product_type": 400,
     "invalid_answer": 422,
     "brief_revision_invalid": 422,
@@ -130,6 +131,12 @@ def _call(func, *args, **kwargs):
 async def create_order(request: Request):
     payload = await _body(request, CreateOrderRequest)
     return _call(get_order_workflow_service(request).create_order, payload)
+
+
+@router.get("/usage-summary")
+def get_usage_summary(request: Request):
+    # Registered before /{order_id} so this static path is never shadowed by it.
+    return _call(get_order_workflow_service(request).usage_summary)
 
 
 @router.get("/{order_id}")
@@ -263,6 +270,11 @@ def get_execution(order_id: str, request: Request):
 @router.post("/{order_id}/execution/cancel")
 def cancel_execution(order_id: str, request: Request):
     return _call(get_order_workflow_service(request).cancel_execution, order_id)
+
+
+@router.post("/{order_id}/execution/retry")
+def retry_execution(order_id: str, request: Request):
+    return _call(get_order_workflow_service(request).retry_execution, order_id)
 
 
 @router.get("/{order_id}/events")

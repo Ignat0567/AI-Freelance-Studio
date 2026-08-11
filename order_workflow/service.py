@@ -549,6 +549,76 @@ class OrderWorkflowService:
         self._persist()
         return self.snapshot(order_id)
 
+    def retry_execution(self, order_id: str) -> dict[str, Any]:
+        with self._lock:
+            self._order(order_id)
+            brief = self._require_brief(order_id)
+            handoff = self._handoff_by_order.get(order_id)
+            execution_id = self._execution_by_order.get(order_id)
+        if handoff is None:
+            raise OrderWorkflowError("design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved", "Approve the current brief and Elena preview before execution.")
+        if execution_id is None:
+            raise OrderWorkflowError("execution_not_found")
+        try:
+            execution = self._executions.retry(execution_id, brief, handoff)
+        except ExecutionServiceError as exc:
+            raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
+        with self._lock:
+            next_status = UserOrderStatus.AWAITING_USER if execution.blockers else UserOrderStatus.QUEUED
+            self._orders[order_id] = self._orders[order_id].model_copy(update={"status": next_status})
+        self._persist()
+        return self.snapshot(order_id)
+
+    def usage_summary(self) -> dict[str, Any]:
+        """Aggregate token/cost usage across every execution this Studio instance has
+        ever run, plus the most recent rate-limit message if one was hit.
+
+        This only ever reflects Studio's own coding-agent invocations -- it cannot see
+        usage from the same subscription used outside Studio (a plain `claude` session
+        run manually, for example), because Claude Code CLI has no command or cached
+        state file that reports account-wide weekly/session quota; the CLI only ever
+        surfaces that information reactively, in the error message once a limit is
+        already hit. See ConfiguredClaudeCodeExecutionClient._extract_rate_limit_message.
+        """
+        total_cost_usd = 0.0
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_cache_read_input_tokens = 0
+        total_cache_creation_input_tokens = 0
+        executions_with_usage = 0
+        last_rate_limit: dict[str, Any] | None = None
+        last_rate_limit_at: datetime | None = None
+
+        for execution in self._executions.list_snapshots():
+            result = execution.result
+            if result is None:
+                continue
+            if result.usage is not None:
+                executions_with_usage += 1
+                total_cost_usd += result.usage.total_cost_usd
+                total_input_tokens += result.usage.input_tokens
+                total_output_tokens += result.usage.output_tokens
+                total_cache_read_input_tokens += result.usage.cache_read_input_tokens
+                total_cache_creation_input_tokens += result.usage.cache_creation_input_tokens
+            if result.rate_limit_message and (last_rate_limit_at is None or result.completed_at > last_rate_limit_at):
+                last_rate_limit_at = result.completed_at
+                last_rate_limit = {
+                    "message": result.rate_limit_message,
+                    "order_id": execution.order_id,
+                    "execution_id": execution.id,
+                    "at": result.completed_at.isoformat(),
+                }
+
+        return {
+            "total_cost_usd": round(total_cost_usd, 6),
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_cache_read_input_tokens": total_cache_read_input_tokens,
+            "total_cache_creation_input_tokens": total_cache_creation_input_tokens,
+            "executions_with_usage": executions_with_usage,
+            "last_rate_limit": last_rate_limit,
+        }
+
     def execution_readiness(self, order_id: str, mode: ExecutionMode = ExecutionMode.PRODUCTION) -> dict[str, Any]:
         with self._lock:
             self._order(order_id)
@@ -753,6 +823,7 @@ class OrderWorkflowService:
         return {
             "execution_already_completed": "execution_already_completed",
             "execution_not_found": "execution_not_found",
+            "execution_not_retryable": "execution_not_retryable",
             "brief_not_approved": "brief_not_approved",
             "live_execution_opt_in_required": "live_execution_opt_in_required",
         }.get(code, code)

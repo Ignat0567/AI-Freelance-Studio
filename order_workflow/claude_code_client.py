@@ -18,7 +18,7 @@ from pathlib import Path
 import claude_bridge
 
 from .executors import CancellationToken, ExecutionEventSink
-from .models import EventLevel
+from .models import EventLevel, TokenUsage
 from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
 
@@ -36,6 +36,37 @@ class _InvokeOutcome:
 
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text or "")
+
+
+def _extract_usage(payload: dict | None) -> TokenUsage | None:
+    """Read the exact usage/cost figures Claude Code CLI's own JSON output reports for
+    this call -- present on both successful and failed (e.g. rate-limited) invocations,
+    since the CLI still bills/reports for the API round-trip that hit the error."""
+    if not isinstance(payload, dict):
+        return None
+    raw_usage = payload.get("usage")
+    if not isinstance(raw_usage, dict):
+        return None
+    try:
+        return TokenUsage(
+            total_cost_usd=float(payload.get("total_cost_usd") or 0.0),
+            input_tokens=int(raw_usage.get("input_tokens") or 0),
+            output_tokens=int(raw_usage.get("output_tokens") or 0),
+            cache_read_input_tokens=int(raw_usage.get("cache_read_input_tokens") or 0),
+            cache_creation_input_tokens=int(raw_usage.get("cache_creation_input_tokens") or 0),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_rate_limit_message(payload: dict | None) -> str | None:
+    """The CLI's own human-readable rate-limit message (e.g. "You've hit your session
+    limit - resets 1:10am (Europe/Berlin)"), only present once a limit is actually hit --
+    Claude Code CLI has no separate command to check quota before hitting it."""
+    if not isinstance(payload, dict) or payload.get("api_error_status") != 429:
+        return None
+    result = payload.get("result")
+    return result.strip()[:240] if isinstance(result, str) and result.strip() else None
 
 
 def _ensure_isolated_git_repo(workspace_path: Path) -> None:
@@ -130,20 +161,30 @@ class ConfiguredClaudeCodeExecutionClient:
             stdout_text, stderr_text, returncode = outcome.stdout_text, outcome.stderr_text, outcome.returncode
             break
 
-        if returncode != 0:
-            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {(stderr_text or stdout_text)[-2000:]}", errors=("claude_code_process_failed",))
-
+        # Parse JSON before branching on returncode: a nonzero exit (e.g. a provider
+        # rate limit, api_error_status 429) still comes with a full JSON payload on
+        # stdout carrying usage/cost figures and the human-readable rate-limit reset
+        # message -- both worth keeping even though the call itself failed.
         try:
-            payload = json.loads(stdout_text)
+            payload: dict | None = json.loads(stdout_text)
         except ValueError:
+            payload = None
+        usage = _extract_usage(payload)
+        rate_limit_message = _extract_rate_limit_message(payload)
+
+        if returncode != 0:
+            failure_text = (payload.get("result") if isinstance(payload, dict) else None) or (stderr_text or stdout_text)[-2000:]
+            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {failure_text}", errors=("claude_code_process_failed",), usage=usage, rate_limit_message=rate_limit_message)
+
+        if payload is None:
             # Not JSON -- the CLI still wrote files directly to the workspace on the way
             # here, so treat a clean (zero-exit) completion as generated regardless.
             return OpenCodeExecutionResult(success=True, summary=stdout_text[-2000:] or "Claude Code completed.", outcome="generated")
 
         if payload.get("is_error"):
-            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {payload.get('result') or stdout_text[-2000:]}", errors=("claude_code_process_failed",))
+            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {payload.get('result') or stdout_text[-2000:]}", errors=("claude_code_process_failed",), usage=usage, rate_limit_message=rate_limit_message)
 
-        return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated")
+        return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated", usage=usage)
 
     @staticmethod
     def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken, *, attempt: int = 0) -> _InvokeOutcome:

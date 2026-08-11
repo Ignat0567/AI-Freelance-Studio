@@ -192,3 +192,88 @@ def test_nonzero_exit_with_real_error_output_is_not_retried(monkeypatch, tmp_pat
     assert result.success is False
     assert fake_popen.call_count == 1
     assert "a real error message" in result.summary
+
+
+def test_successful_call_captures_token_usage(monkeypatch, tmp_path):
+    payload = {
+        "is_error": False,
+        "result": "done",
+        "total_cost_usd": 0.19616135,
+        "usage": {
+            "input_tokens": 14,
+            "output_tokens": 2066,
+            "cache_read_input_tokens": 256717,
+            "cache_creation_input_tokens": 16218,
+        },
+    }
+    fake_popen = _SequencedFakePopen([_FakeProcess(stdout=json.dumps(payload), returncode=0)])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+
+    class _Sink:
+        def emit(self, **_kwargs):
+            pass
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("a prompt", tmp_path, _Sink(), CancellationToken())
+
+    assert result.success is True
+    assert result.usage is not None
+    assert result.usage.total_cost_usd == pytest.approx(0.19616135)
+    assert result.usage.input_tokens == 14
+    assert result.usage.output_tokens == 2066
+    assert result.usage.cache_read_input_tokens == 256717
+    assert result.usage.cache_creation_input_tokens == 16218
+    assert result.rate_limit_message is None
+
+
+def test_rate_limited_failure_captures_usage_and_reset_message(monkeypatch, tmp_path):
+    # This is the exact shape Claude Code CLI returns when a session/weekly limit is
+    # hit: nonzero exit, but a full JSON payload on stdout with is_error, a human
+    # readable reset message, and usage/cost figures for the call that hit the limit.
+    payload = {
+        "is_error": True,
+        "api_error_status": 429,
+        "result": "You've hit your session limit · resets 1:10am (Europe/Berlin)",
+        "total_cost_usd": 0.33191555,
+        "usage": {
+            "input_tokens": 24,
+            "output_tokens": 5066,
+            "cache_read_input_tokens": 476901,
+            "cache_creation_input_tokens": 21484,
+        },
+    }
+    fake_popen = _SequencedFakePopen([_FakeProcess(stdout=json.dumps(payload), returncode=1)])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+
+    class _Sink:
+        def emit(self, **_kwargs):
+            pass
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("a prompt", tmp_path, _Sink(), CancellationToken())
+
+    assert result.success is False
+    assert result.rate_limit_message == "You've hit your session limit · resets 1:10am (Europe/Berlin)"
+    assert result.usage is not None
+    assert result.usage.total_cost_usd == pytest.approx(0.33191555)
+    assert result.usage.output_tokens == 5066
+
+
+def test_non_rate_limit_failure_has_no_rate_limit_message(monkeypatch, tmp_path):
+    payload = {"is_error": True, "result": "Something else went wrong.", "usage": {"input_tokens": 1, "output_tokens": 1}}
+    fake_popen = _SequencedFakePopen([_FakeProcess(stdout=json.dumps(payload), returncode=1)])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+
+    class _Sink:
+        def emit(self, **_kwargs):
+            pass
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("a prompt", tmp_path, _Sink(), CancellationToken())
+
+    assert result.success is False
+    assert result.rate_limit_message is None
+    assert result.usage is not None

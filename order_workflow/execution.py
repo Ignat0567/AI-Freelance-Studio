@@ -194,6 +194,7 @@ class ProjectExecutionService:
             handoff_id=handoff.id,
             approval_fingerprint=brief.approval_fingerprint,
             mode=active_mode,
+            live=live,
             status=ExecutionStatus.QUEUED,
             stage=ExecutionStage.REQUIREMENTS,
             progress=0,
@@ -218,12 +219,89 @@ class ProjectExecutionService:
             worker.start()
             return self._snapshot(record.snapshot)
 
+    def retry(self, execution_id: str, brief: ProjectBrief, handoff: AgentHandoff, *, title: str = "") -> ProjectExecution:
+        """Re-run a FAILED execution in place, without going through order/clarification/
+        brief-approval/design-preview again -- those are already done and unchanged.
+
+        Reuses the same execution_id, which reserve_owned_project_workspace() (called by
+        the adapter) keys its directory off of, so the same owned workspace is reused
+        rather than a fresh one created: any files an earlier attempt already wrote
+        (e.g. before a transient provider rate limit killed it mid-run) survive and get
+        built on, not discarded. Only a FAILED execution can be retried -- a SUCCEEDED
+        one has nothing to redo, and a CANCELLED one was a deliberate user stop, not a
+        failure worth auto-resuming.
+        """
+        self._validate_handoff(brief, handoff)
+        with self._lock:
+            if not self._accepting:
+                raise ExecutionServiceError("execution_service_stopping")
+            record = self._records.get(execution_id)
+            if record is None:
+                raise ExecutionServiceError("execution_not_found")
+            if record.snapshot.order_id != brief.order_id or record.snapshot.brief_id != brief.id:
+                raise ExecutionServiceError("execution_not_found")
+            if record.snapshot.status is not ExecutionStatus.FAILED:
+                raise ExecutionServiceError("execution_not_retryable")
+            active_mode = record.snapshot.mode
+            live = record.snapshot.live
+        readiness = self.check_readiness(brief, handoff, mode=active_mode, live=live)
+        if not readiness.ready:
+            raise ExecutionServiceError(readiness.blockers[0].code if readiness.blockers else "execution_provider_not_configured")
+        adapter = self._adapter(active_mode, live=live)
+        if adapter is None:
+            raise ExecutionServiceError("live_execution_opt_in_required" if live else "execution_provider_not_configured")
+        now = utc_now(self._clock)
+        retry_event = ExecutionEvent(
+            id=new_public_id("event", self._id_factory),
+            execution_id=execution_id,
+            kind=EventKind.ACTIVITY,
+            level=EventLevel.INFO,
+            message="Retrying execution from the same workspace after the previous attempt failed.",
+            stage=ExecutionStage.REQUIREMENTS,
+            agent="Studio",
+            created_at=now,
+        )
+        with self._lock:
+            record = self._records[execution_id]
+            if record.snapshot.status is not ExecutionStatus.FAILED:
+                raise ExecutionServiceError("execution_not_retryable")
+            updated = record.snapshot.model_copy(
+                update={
+                    "status": ExecutionStatus.QUEUED,
+                    "stage": ExecutionStage.REQUIREMENTS,
+                    "progress": 0,
+                    "current_activity": "Queued for retry",
+                    "blockers": (),
+                    "result": None,
+                    "started_at": None,
+                    "finished_at": None,
+                    "events": append_bounded_event(record.snapshot.events, retry_event, limit=self._event_limit),
+                    "updated_at": now,
+                }
+            )
+            record.snapshot = updated
+            record.token = CancellationToken()
+            self._save(updated)
+            worker = self._thread_factory(
+                target=self._run,
+                args=(execution_id, brief, handoff, adapter, title),
+                name=f"order-execution-{execution_id}-retry",
+                daemon=True,
+            )
+            record.worker = worker
+            worker.start()
+            return self._snapshot(record.snapshot)
+
     def snapshot(self, execution_id: str) -> ProjectExecution:
         with self._lock:
             record = self._records.get(execution_id)
             if record is None:
                 raise ExecutionServiceError("execution_not_found")
             return self._snapshot(record.snapshot)
+
+    def list_snapshots(self) -> tuple[ProjectExecution, ...]:
+        with self._lock:
+            return tuple(self._snapshot(record.snapshot) for record in self._records.values())
 
     def cancel(self, execution_id: str) -> ProjectExecution:
         with self._lock:

@@ -11,7 +11,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_rea
 
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
-from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventLevel, ProjectBrief, TestSummary
+from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventLevel, ProjectBrief, TestSummary, TokenUsage
 from .phase_repair import run_qa_repair_loop
 from .qa_runner import QAOutcome, run_qa_commands
 from .readiness import (
@@ -43,6 +43,8 @@ class OpenCodeExecutionResult:
     errors: tuple[str, ...] = ()
     timed_out: bool = False
     meaningful_artifacts: tuple[str, ...] = ()
+    usage: TokenUsage | None = None
+    rate_limit_message: str | None = None
 
 
 class OpenCodeExecutionClient(Protocol):
@@ -351,6 +353,8 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             warnings=(qa_status_message, *result.warnings),
             errors=errors_value,
             final_stage=final_stage_value,
+            usage=result.usage,
+            rate_limit_message=result.rate_limit_message,
             completed_at=request.brief.updated_at,
         )
 

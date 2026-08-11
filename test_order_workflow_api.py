@@ -10,7 +10,14 @@ from fastapi.testclient import TestClient
 
 from api.orders import install_order_workflow_api, router
 from backend_security import LocalSecurityContext, LocalSecurityMiddleware, set_app_security_context
-from order_workflow import FakeExecutorConfig, FakeProjectExecutionAdapter, ProjectExecutionService
+from order_workflow import (
+    ExecutionResult,
+    FakeExecutorConfig,
+    FakeProjectExecutionAdapter,
+    ProjectExecutionService,
+    TestSummary as WorkflowTestSummary,
+    TokenUsage,
+)
 from order_workflow.service import OrderWorkflowError, OrderWorkflowService
 
 
@@ -343,6 +350,105 @@ def test_cancellation_and_production_mode_blocker():
     assert body["execution"]["mode"] == "production"
     assert body["execution"]["status"] == "awaiting_user"
     assert body["blockers"][0]["code"] == "execution_provider_not_configured"
+
+
+class _FlakyAdapter(FakeProjectExecutionAdapter):
+    def __init__(self, config: FakeExecutorConfig | None = None) -> None:
+        super().__init__(config or FakeExecutorConfig())
+        self.calls = 0
+
+    def execute(self, request, event_sink, cancellation):
+        self.calls += 1
+        if self.calls == 1:
+            return ExecutionResult(success=False, outcome="failed", summary="Simulated failure.", test_summary=WorkflowTestSummary(failed=1), errors=("provider_rate_limited",), completed_at=NOW)
+        return super().execute(request, event_sink, cancellation)
+
+
+def test_retry_reruns_a_failed_execution_without_a_new_order():
+    adapter = _FlakyAdapter()
+    service = _service(fake_adapter=adapter)
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "failed":
+            break
+        sleep(0.01)
+    failed = client.get(f"/api/orders/{order_id}/execution").json()["execution"]
+    assert failed["status"] == "failed"
+
+    retried = client.post(f"/api/orders/{order_id}/execution/retry")
+    assert retried.status_code == 200
+    assert retried.json()["execution"]["id"] == failed["id"]
+
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+    final = client.get(f"/api/orders/{order_id}/execution").json()["execution"]
+    assert final["id"] == failed["id"]
+    assert final["status"] == "succeeded"
+    assert adapter.calls == 2
+
+
+def test_retry_rejects_execution_that_never_failed():
+    service = _service(fake_adapter=FakeProjectExecutionAdapter(FakeExecutorConfig(step_delay_seconds=0.01)))
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+
+    retried = client.post(f"/api/orders/{order_id}/execution/retry")
+    assert retried.status_code == 409
+    assert retried.json()["detail"]["code"] == "execution_not_retryable"
+
+
+class _UsageReportingAdapter(FakeProjectExecutionAdapter):
+    def __init__(self, *, usage: TokenUsage | None, rate_limit_message: str | None = None) -> None:
+        super().__init__(FakeExecutorConfig())
+        self._usage = usage
+        self._rate_limit_message = rate_limit_message
+
+    def execute(self, request, event_sink, cancellation):
+        base = super().execute(request, event_sink, cancellation)
+        return base.model_copy(update={"usage": self._usage, "rate_limit_message": self._rate_limit_message})
+
+
+def test_usage_summary_aggregates_across_executions_and_reports_latest_rate_limit():
+    usage = TokenUsage(total_cost_usd=0.2, input_tokens=10, output_tokens=20, cache_read_input_tokens=30, cache_creation_input_tokens=40)
+    service = _service(fake_adapter=_UsageReportingAdapter(usage=usage, rate_limit_message="You've hit your session limit · resets 1:10am (Europe/Berlin)"))
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+
+    summary = client.get("/api/orders/usage-summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["executions_with_usage"] == 1
+    assert body["total_cost_usd"] == pytest.approx(0.2)
+    assert body["total_input_tokens"] == 10
+    assert body["total_output_tokens"] == 20
+    assert body["last_rate_limit"]["message"] == "You've hit your session limit · resets 1:10am (Europe/Berlin)"
+    assert body["last_rate_limit"]["order_id"] == order_id
+
+
+def test_usage_summary_with_no_executions_is_all_zero():
+    client = _client(_app())
+
+    summary = client.get("/api/orders/usage-summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["executions_with_usage"] == 0
+    assert body["total_cost_usd"] == 0
+    assert body["last_rate_limit"] is None
 
 
 def test_unknown_order_and_internal_errors_are_sanitized():
