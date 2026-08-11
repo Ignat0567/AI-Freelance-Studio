@@ -219,7 +219,7 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)
         event_sink.emit(stage=ExecutionStage.IMPLEMENTATION, agent="OpenCode", progress=45, message="Sending implementation prompt to OpenCode")
         try:
-            result = self._opencode_client.execute_project_prompt(package.prompt, workspace.project_path, event_sink, cancellation)
+            result = self._opencode_client.execute_project_prompt(package.prompt, workspace.project_path, event_sink, cancellation, model=self.model_name)
         except Exception:
             return ExecutionResult(success=False, outcome="failed", summary="Live OpenCode execution failed before completion.", test_summary=TestSummary(failed=1), errors=("opencode_execution_failed",), final_stage=ExecutionStage.IMPLEMENTATION, completed_at=request.brief.updated_at)
         if cancellation.is_cancelled():

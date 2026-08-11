@@ -100,6 +100,7 @@ class FakeOpenCodeClient:
         self.workspace_path = None
         self.cancellation_seen = False
         self.call_count = 0
+        self.received_model = None
 
     def check_readiness(self):
         if self.ready:
@@ -112,6 +113,7 @@ class FakeOpenCodeClient:
         self.call_count += 1
         self.prompt = prompt
         self.prompts.append(prompt)
+        self.received_model = model
         self.workspace_path = Path(workspace_path)
         self.cancellation_seen = cancellation.is_cancelled()
         event_sink.emit(stage="implementation", agent="OpenCode", progress=60, message="OpenCode execution started")
@@ -337,6 +339,24 @@ def test_live_adapter_writes_owned_workspace_and_prompt(tmp_path):
     assert "center voice/text chat" in client.prompt
     assert "right source evidence panel" in client.prompt
     assert "token" not in (client.workspace_path / ".freelancerstudio-project.json").read_text(encoding="utf-8").casefold()
+
+
+def test_live_adapter_passes_the_configured_model_to_the_coding_client(tmp_path):
+    # Regression: LiveOpenCodeExecutionAdapter.execute() used to call
+    # execute_project_prompt() without a model= argument at all, so Claude Code CLI
+    # silently used its own default model regardless of what Studio had configured --
+    # found live when an intentionally-broken configured model had zero effect on a
+    # real run. The model IS validated as required at readiness time (MODEL_NOT_SELECTED)
+    # but was then discarded before ever reaching the coding client.
+    client = FakeOpenCodeClient()
+    brief, handoff = _contract(PDF)
+    adapter = LiveOpenCodeExecutionAdapter(provider_name="OpenCode", model_name="local-codex", workspace_root=tmp_path, opencode_client=client, environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"})
+    service = ProjectExecutionService(id_factory=SequenceIds(), clock=_clock, live_adapter=adapter)
+
+    finished = service.wait(service.start(brief, handoff, mode=ExecutionMode.PRODUCTION, live=True).id, 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    assert client.received_model == "local-codex"
 
 
 def test_workspace_safety_rejects_unsafe_and_non_owned_paths(tmp_path):
