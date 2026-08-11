@@ -45,7 +45,9 @@ export const orderWorkflowApi = {
   startExecution: (orderId, mode = 'fake', live = false) => post(`/api/orders/${encodeURIComponent(orderId)}/execution`, { mode, live }),
   getExecution: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/execution`),
   cancelExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/cancel`, {}),
+  retryExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/retry`, {}),
   getEvents: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/events`),
   getArtifacts: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/artifacts`),
   getResult: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/result`),
+  getUsageSummary: () => requestJson('/api/orders/usage-summary'),
 };
