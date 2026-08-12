@@ -14,7 +14,7 @@ from .complexity import classify_phase_complexity, model_for_complexity
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .functional_smoke_check import run_functional_smoke_check_in_docker
-from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProjectBrief, TestSummary
+from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProjectBrief, TestSummary, TokenUsage
 from .phase_context import PhaseContext, build_phase_context
 from .phase_prompts import (
     BackendDecision,
@@ -331,7 +331,13 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         if repair.cancelled:
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
         if not result.success:
-            return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, "opencode_execution_failed", f"Live OpenCode execution did not succeed during the {stage.value} phase."))
+            return _PhaseOutcome(
+                context=None,
+                failure=self._phase_failure(
+                    request, stage, "opencode_execution_failed", f"Live OpenCode execution did not succeed during the {stage.value} phase.",
+                    usage=result.usage, rate_limit_message=result.rate_limit_message,
+                ),
+            )
         if repair.qa_outcome is None or not repair.qa_outcome.passed:
             return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, "qa_failed", f"QA did not pass for the {stage.value} phase. {repair.qa_status_message}", outcome="qa_failed"))
 
@@ -395,7 +401,16 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         return None
 
     @staticmethod
-    def _phase_failure(request: ExecutionRequest, stage: ExecutionStage, error_code: str, summary: str, *, outcome: str = "failed") -> ExecutionResult:
+    def _phase_failure(
+        request: ExecutionRequest,
+        stage: ExecutionStage,
+        error_code: str,
+        summary: str,
+        *,
+        outcome: str = "failed",
+        usage: TokenUsage | None = None,
+        rate_limit_message: str | None = None,
+    ) -> ExecutionResult:
         return ExecutionResult(
             success=False,
             outcome=outcome,
@@ -403,6 +418,8 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             test_summary=TestSummary(failed=1),
             errors=(error_code,),
             final_stage=stage,
+            usage=usage,
+            rate_limit_message=rate_limit_message,
             completed_at=request.brief.updated_at,
         )
 

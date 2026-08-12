@@ -15,6 +15,7 @@ from order_workflow import (
     OpenCodeExecutionResult,
     ProjectBriefService,
     ReadinessResult,
+    TokenUsage,
     UserOrder,
 )
 from order_workflow.docker_qa_runner import DockerUnavailableError, run_qa_commands_in_docker
@@ -291,6 +292,41 @@ def test_ui_shell_qa_failure_exhausts_repair_and_reports_failure_at_ui_shell_sta
     assert result.success is False
     assert result.final_stage == ExecutionStage.UI_SHELL
     assert result.outcome == "qa_failed"
+
+
+class RateLimitedOpenCodeClient:
+    """A coding client that fails the very first call the way Claude Code CLI's own
+    JSON payload does on a real 429: is_error, plus usage/cost for the call that hit
+    the limit, plus the CLI's own human-readable reset message."""
+
+    def check_readiness(self):
+        return ReadinessResult.ready_result()
+
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
+        return OpenCodeExecutionResult(
+            success=False,
+            summary="Claude Code execution failed: You've hit your session limit",
+            errors=("claude_code_process_failed",),
+            usage=TokenUsage(total_cost_usd=1.53, input_tokens=2249, output_tokens=32640, cache_read_input_tokens=489115, cache_creation_input_tokens=45938),
+            rate_limit_message="You've hit your session limit · resets 3:40pm (Europe/Berlin)",
+        )
+
+
+def test_a_rate_limited_phase_failure_carries_usage_and_the_reset_message(tmp_path):
+    # Regression: found live -- a real 429 during the ui_shell phase reported
+    # rate_limit_message: null even though Claude Code CLI's own JSON payload had it,
+    # because _phase_failure() never threaded usage/rate_limit_message through from the
+    # OpenCodeExecutionResult, unlike the (non-phased) LiveOpenCodeExecutionAdapter path.
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path, opencode_client=RateLimitedOpenCodeClient())
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert result.rate_limit_message == "You've hit your session limit · resets 3:40pm (Europe/Berlin)"
+    assert result.usage is not None
+    assert result.usage.total_cost_usd == pytest.approx(1.53)
+    assert result.usage.output_tokens == 32640
 
 
 def test_core_feature_phase_never_runs_if_ui_shell_fails(tmp_path):
