@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -30,6 +31,8 @@ from order_workflow.service import OrderWorkflowError, OrderWorkflowService
 
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+_logger = logging.getLogger(__name__)
 
 
 _STATUS_BY_CODE = {
@@ -124,6 +127,12 @@ def _call(func, *args, **kwargs):
     except HTTPException:
         raise
     except Exception:
+        # The client only ever sees the generic message below (never a raw traceback, which
+        # could leak internal paths/secrets) -- but until now the real exception went nowhere
+        # at all, not even the server's own log, making an unexpected order-workflow failure
+        # nearly impossible to diagnose from the running app (had to be reproduced by calling
+        # the service directly in a separate script to see what actually broke).
+        _logger.exception("Unhandled error in order workflow request: %s", getattr(func, "__name__", func))
         raise HTTPException(status_code=500, detail={"code": "internal_error", "message": "Internal order workflow error."}) from None
 
 

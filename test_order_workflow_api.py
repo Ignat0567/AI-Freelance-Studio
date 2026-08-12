@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from threading import Lock
 from time import sleep
@@ -451,7 +452,7 @@ def test_usage_summary_with_no_executions_is_all_zero():
     assert body["last_rate_limit"] is None
 
 
-def test_unknown_order_and_internal_errors_are_sanitized():
+def test_unknown_order_and_internal_errors_are_sanitized(caplog):
     client = _client(_app())
     missing = client.get("/api/orders/order_missing")
     assert missing.status_code == 404
@@ -459,10 +460,15 @@ def test_unknown_order_and_internal_errors_are_sanitized():
 
     app = _app(ExplodingService())
     app.state.order_workflow_service = ExplodingService()
-    raw = _client(app).get("/api/orders/order_any")
+    with caplog.at_level(logging.ERROR, logger="api.orders"):
+        raw = _client(app).get("/api/orders/order_any")
     assert raw.status_code == 500
     assert raw.json()["detail"]["code"] == "internal_error"
     assert "secret-value" not in raw.text
+    # the real exception used to vanish entirely (not even in the server's own log),
+    # which made any unexpected order-workflow failure nearly impossible to diagnose.
+    assert "Unhandled error in order workflow request" in caplog.text
+    assert "raw stack trace token=secret-value" in caplog.text
 
 
 def test_autopilot_reaches_handoff_ready_using_the_injected_ai_ask():

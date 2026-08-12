@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -40,6 +42,8 @@ UI_SHELL_QA_COMMANDS: tuple[str, ...] = ("npm run build",)
 CORE_FEATURE_QA_COMMANDS: tuple[str, ...] = ("npm test",)
 MAX_PHASE_REPAIR_ATTEMPTS = 2
 
+_logger = logging.getLogger(__name__)
+
 
 def resolve_execution_pipeline_mode(environ: dict[str, str] | None = None) -> str:
     """"phased" is the default; only the literal value "legacy" opts back into the one-shot adapter."""
@@ -62,6 +66,55 @@ class _PhaseOutcome:
     @property
     def success(self) -> bool:
         return self.failure is None
+
+
+def _checkpoint_path(workspace, key: str) -> Path:
+    return workspace.project_path / f".freelancerstudio-checkpoint-{key}.json"
+
+
+def _load_phase_checkpoint(workspace, stage: ExecutionStage) -> PhaseContext | None:
+    """A completed phase's checkpoint, if this workspace already has one -- present when
+    execute() is re-run on the same owned workspace (via ProjectExecutionService.retry())
+    after a later phase failed. Loading it lets that phase be skipped entirely on retry
+    instead of re-running an already-successful, potentially expensive CLI generation.
+    Any missing/corrupt checkpoint is treated as "no checkpoint" (falls back to a normal
+    fresh run of that phase) rather than failing the whole execution."""
+    path = _checkpoint_path(workspace, stage.value)
+    if not path.is_file():
+        return None
+    try:
+        return PhaseContext.model_validate(json.loads(path.read_text(encoding="utf-8")))
+    except Exception:
+        _logger.warning("Ignoring unreadable phase checkpoint at %s", path, exc_info=True)
+        return None
+
+
+def _save_phase_checkpoint(workspace, stage: ExecutionStage, context: PhaseContext) -> None:
+    path = _checkpoint_path(workspace, stage.value)
+    try:
+        path.write_text(context.to_json(), encoding="utf-8")
+    except OSError:
+        _logger.warning("Could not write phase checkpoint at %s; a retry would redo this phase.", path, exc_info=True)
+
+
+def _load_backend_decision_checkpoint(workspace) -> BackendDecision | None:
+    path = _checkpoint_path(workspace, "backend_decision")
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return BackendDecision(needs_backend=bool(data["needs_backend"]), reasoning=str(data["reasoning"]), parsed=bool(data["parsed"]))
+    except Exception:
+        _logger.warning("Ignoring unreadable backend-decision checkpoint at %s", path, exc_info=True)
+        return None
+
+
+def _save_backend_decision_checkpoint(workspace, decision: BackendDecision) -> None:
+    path = _checkpoint_path(workspace, "backend_decision")
+    try:
+        path.write_text(json.dumps({"needs_backend": decision.needs_backend, "reasoning": decision.reasoning, "parsed": decision.parsed}), encoding="utf-8")
+    except OSError:
+        _logger.warning("Could not write backend-decision checkpoint at %s; a retry would re-ask.", path, exc_info=True)
 
 
 class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
@@ -134,39 +187,56 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return _cancelled_result(request)
         validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)
 
-        ui_shell_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.ui_requirements)}")
-        ui_shell = self._run_phase(
-            stage=ExecutionStage.UI_SHELL,
-            prompt=build_ui_shell_prompt(request.brief, request.handoff),
-            qa_commands=UI_SHELL_QA_COMMANDS,
-            workspace=workspace,
-            event_sink=event_sink,
-            cancellation=cancellation,
-            request=request,
-            model=model_for_complexity(ui_shell_complexity),
-        )
-        if not ui_shell.success:
-            return ui_shell.failure
+        ui_shell_checkpoint = _load_phase_checkpoint(workspace, ExecutionStage.UI_SHELL)
+        if ui_shell_checkpoint is not None:
+            event_sink.emit(stage=ExecutionStage.UI_SHELL, agent="Studio", progress=30, message="Resuming: ui_shell already completed in an earlier attempt, skipping regeneration.")
+            ui_shell = _PhaseOutcome(context=ui_shell_checkpoint, failure=None)
+        else:
+            ui_shell_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.ui_requirements)}")
+            ui_shell = self._run_phase(
+                stage=ExecutionStage.UI_SHELL,
+                prompt=build_ui_shell_prompt(request.brief, request.handoff),
+                qa_commands=UI_SHELL_QA_COMMANDS,
+                workspace=workspace,
+                event_sink=event_sink,
+                cancellation=cancellation,
+                request=request,
+                model=model_for_complexity(ui_shell_complexity),
+            )
+            if not ui_shell.success:
+                return ui_shell.failure
+            _save_phase_checkpoint(workspace, ExecutionStage.UI_SHELL, ui_shell.context)
         self._emit_milestone(event_sink, ExecutionStage.UI_SHELL, "UI shell complete: screens and navigation build cleanly, no backend/auth/external calls wired.")
 
-        core_feature_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.core_features[0]} {request.brief.goal}")
-        core_feature = self._run_phase(
-            stage=ExecutionStage.CORE_FEATURE,
-            prompt=build_core_feature_prompt(request.brief, request.handoff, ui_shell.context),
-            qa_commands=CORE_FEATURE_QA_COMMANDS,
-            workspace=workspace,
-            event_sink=event_sink,
-            cancellation=cancellation,
-            request=request,
-            model=model_for_complexity(core_feature_complexity),
-        )
-        if not core_feature.success:
-            return core_feature.failure
+        core_feature_checkpoint = _load_phase_checkpoint(workspace, ExecutionStage.CORE_FEATURE)
+        if core_feature_checkpoint is not None:
+            event_sink.emit(stage=ExecutionStage.CORE_FEATURE, agent="Studio", progress=55, message="Resuming: core_feature already completed in an earlier attempt, skipping regeneration.")
+            core_feature = _PhaseOutcome(context=core_feature_checkpoint, failure=None)
+        else:
+            core_feature_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.core_features[0]} {request.brief.goal}")
+            core_feature = self._run_phase(
+                stage=ExecutionStage.CORE_FEATURE,
+                prompt=build_core_feature_prompt(request.brief, request.handoff, ui_shell.context),
+                qa_commands=CORE_FEATURE_QA_COMMANDS,
+                workspace=workspace,
+                event_sink=event_sink,
+                cancellation=cancellation,
+                request=request,
+                model=model_for_complexity(core_feature_complexity),
+            )
+            if not core_feature.success:
+                return core_feature.failure
+            _save_phase_checkpoint(workspace, ExecutionStage.CORE_FEATURE, core_feature.context)
         self._emit_milestone(event_sink, ExecutionStage.CORE_FEATURE, f"Core feature wired in and passing its own test: {request.brief.core_features[0]}")
 
         if cancellation.is_cancelled():
             return _cancelled_result(request)
-        decision = self._decide_backend_need(request, ui_shell.context, core_feature.context)
+        decision = _load_backend_decision_checkpoint(workspace)
+        if decision is not None:
+            event_sink.emit(stage=ExecutionStage.BACKEND_DECISION, agent="Studio", progress=65, message="Resuming: reusing the backend-need decision from an earlier attempt.")
+        else:
+            decision = self._decide_backend_need(request, ui_shell.context, core_feature.context)
+            _save_backend_decision_checkpoint(workspace, decision)
         self._emit_milestone(
             event_sink,
             ExecutionStage.BACKEND_DECISION,
@@ -278,22 +348,27 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         core_feature_context: PhaseContext,
         decision: BackendDecision,
     ) -> ExecutionResult:
-        prompt = build_backend_bridge_prompt(request.brief, request.handoff, ui_shell_context, core_feature_context, decision.reasoning, self.qa_commands)
-        bridge = self._run_phase(
-            stage=ExecutionStage.IMPLEMENTATION,
-            prompt=prompt,
-            qa_commands=self.qa_commands,
-            workspace=workspace,
-            event_sink=event_sink,
-            cancellation=cancellation,
-            request=request,
-            # Backend/database/auth work is architecturally significant by nature, and this
-            # phase only runs at all once _decide_backend_need() already found it necessary
-            # -- that decision is itself already a complexity signal, so skip the heuristic.
-            model=model_for_complexity("complex"),
-        )
-        if not bridge.success:
-            return bridge.failure
+        bridge_checkpoint = _load_phase_checkpoint(workspace, ExecutionStage.IMPLEMENTATION)
+        if bridge_checkpoint is not None:
+            event_sink.emit(stage=ExecutionStage.IMPLEMENTATION, agent="Studio", progress=70, message="Resuming: the backend bridge phase already completed in an earlier attempt, skipping regeneration.")
+        else:
+            prompt = build_backend_bridge_prompt(request.brief, request.handoff, ui_shell_context, core_feature_context, decision.reasoning, self.qa_commands)
+            bridge = self._run_phase(
+                stage=ExecutionStage.IMPLEMENTATION,
+                prompt=prompt,
+                qa_commands=self.qa_commands,
+                workspace=workspace,
+                event_sink=event_sink,
+                cancellation=cancellation,
+                request=request,
+                # Backend/database/auth work is architecturally significant by nature, and this
+                # phase only runs at all once _decide_backend_need() already found it necessary
+                # -- that decision is itself already a complexity signal, so skip the heuristic.
+                model=model_for_complexity("complex"),
+            )
+            if not bridge.success:
+                return bridge.failure
+            _save_phase_checkpoint(workspace, ExecutionStage.IMPLEMENTATION, bridge.context)
         return self._finalize_success(request, event_sink, workspace, note=f"A backend was added: {decision.reasoning}")
 
     def _finalize_success(self, request: ExecutionRequest, event_sink: ExecutionEventSink, workspace, *, note: str) -> ExecutionResult:

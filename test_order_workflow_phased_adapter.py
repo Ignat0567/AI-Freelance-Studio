@@ -27,6 +27,7 @@ from order_workflow.phased_adapter import (
     resolve_execution_pipeline_mode,
 )
 from order_workflow.qa_runner import QACommandResult, QAOutcome, run_qa_commands
+from order_workflow.workspace import reserve_owned_project_workspace
 
 pytestmark = pytest.mark.unit
 NOW = datetime(2026, 7, 27, 19, 0, tzinfo=timezone.utc)
@@ -421,3 +422,102 @@ def test_cancellation_before_execution_returns_a_cancelled_result(tmp_path):
 
     assert result.success is False
     assert result.outcome == "cancelled"
+
+
+# --- phase checkpoint / resume ---------------------------------------------------
+
+
+class FlakyOnceClient(FakePhaseOpenCodeClient):
+    """Declines exactly once, the first time call_count reaches `fail_at_call`, then
+    succeeds on every later call -- models a transient failure (rate limit, timeout)
+    that clears by the time a retry happens, without needing to predict exactly how
+    many client calls a whole phase (including QA-repair re-prompts) will consume."""
+
+    def __init__(self, *, fail_at_call: int) -> None:
+        super().__init__()
+        self._fail_at_call = fail_at_call
+        self._already_failed = False
+
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
+        self.call_count += 1
+        self.prompts.append(prompt)
+        Path(workspace_path, f"call-{self.call_count}-marker.txt").write_text("generated", encoding="utf-8")
+        if self.call_count == self._fail_at_call and not self._already_failed:
+            self._already_failed = True
+            return OpenCodeExecutionResult(success=False, summary="Simulated transient failure.")
+        return OpenCodeExecutionResult(success=True, summary="generated")
+
+
+def test_resume_skips_a_completed_ui_shell_phase_after_core_feature_fails(tmp_path):
+    brief, handoff = _contract()
+    client = FlakyOnceClient(fail_at_call=2)  # call 1 = ui_shell (ok), call 2 = core_feature (fails once)
+    adapter = _adapter(tmp_path, opencode_client=client)
+    request = _request(brief, handoff)
+
+    first = adapter.execute(request, FakeEventSink(), CancellationToken())
+    assert first.success is False
+    assert first.final_stage == ExecutionStage.CORE_FEATURE
+    assert client.call_count == 2
+
+    second_sink = FakeEventSink()
+    second = adapter.execute(request, second_sink, CancellationToken())
+
+    assert second.success is True
+    # ui_shell was never re-invoked on the coding client -- only core_feature (call 3) ran again.
+    assert client.call_count == 3
+    assert any("Resuming: ui_shell already completed" in event["message"] for event in second_sink.events)
+
+
+def test_resume_skips_ui_shell_and_core_feature_after_backend_bridge_fails(tmp_path):
+    brief, handoff = _contract()
+    client = FlakyOnceClient(fail_at_call=3)  # 1=ui_shell, 2=core_feature, 3=backend bridge (fails once)
+    adapter = _adapter(tmp_path, opencode_client=client, decision_ai_ask=_always_needs_backend)
+    request = _request(brief, handoff)
+
+    first = adapter.execute(request, FakeEventSink(), CancellationToken())
+    assert first.success is False
+    assert first.final_stage == ExecutionStage.IMPLEMENTATION
+    assert client.call_count == 3
+
+    second_sink = FakeEventSink()
+    second = adapter.execute(request, second_sink, CancellationToken())
+
+    assert second.success is True
+    # only the backend-bridge phase (call 4) re-ran; ui_shell and core_feature were skipped.
+    assert client.call_count == 4
+    messages = [event["message"] for event in second_sink.events]
+    assert any("Resuming: ui_shell already completed" in m for m in messages)
+    assert any("Resuming: core_feature already completed" in m for m in messages)
+    assert any("Resuming: reusing the backend-need decision" in m for m in messages)
+
+
+def test_a_brand_new_execution_is_unaffected_by_checkpointing(tmp_path):
+    # First-time runs must behave exactly as before: no checkpoint files exist yet, so
+    # every phase runs normally and none of the "Resuming" messages ever appear.
+    brief, handoff = _contract()
+    client = FakePhaseOpenCodeClient()
+    adapter = _adapter(tmp_path, opencode_client=client)
+    sink = FakeEventSink()
+
+    result = adapter.execute(_request(brief, handoff), sink, CancellationToken())
+
+    assert result.success is True
+    assert client.call_count == 2  # ui_shell + core_feature, no backend needed
+    assert not any("Resuming" in event["message"] for event in sink.events)
+
+
+def test_corrupt_checkpoint_file_is_ignored_and_the_phase_reruns(tmp_path):
+    # A checkpoint that fails to parse must never crash or silently corrupt the run --
+    # it degrades to "no checkpoint", exactly like a first-time execution.
+    brief, handoff = _contract()
+    client = FakePhaseOpenCodeClient()
+    adapter = _adapter(tmp_path, opencode_client=client)
+    request = _request(brief, handoff)
+
+    workspace = reserve_owned_project_workspace(tmp_path, order_id=brief.order_id, execution_id=request.execution_id, brief_fingerprint=brief.approval_fingerprint, title="")
+    (workspace.project_path / ".freelancerstudio-checkpoint-ui_shell.json").write_text("not valid json", encoding="utf-8")
+
+    result = adapter.execute(request, FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    assert client.call_count == 2  # ui_shell really ran (corrupt checkpoint was ignored), plus core_feature
