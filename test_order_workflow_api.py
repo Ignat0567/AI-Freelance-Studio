@@ -358,9 +358,11 @@ class _FlakyAdapter(FakeProjectExecutionAdapter):
     def __init__(self, config: FakeExecutorConfig | None = None) -> None:
         super().__init__(config or FakeExecutorConfig())
         self.calls = 0
+        self.received_titles: list[str] = []
 
     def execute(self, request, event_sink, cancellation):
         self.calls += 1
+        self.received_titles.append(request.title)
         if self.calls == 1:
             return ExecutionResult(success=False, outcome="failed", summary="Simulated failure.", test_summary=WorkflowTestSummary(failed=1), errors=("provider_rate_limited",), completed_at=NOW)
         return super().execute(request, event_sink, cancellation)
@@ -392,6 +394,28 @@ def test_retry_reruns_a_failed_execution_without_a_new_order():
     assert final["id"] == failed["id"]
     assert final["status"] == "succeeded"
     assert adapter.calls == 2
+    # Regression: found live -- retry_execution() used to omit title, and title is a
+    # slug PREFIX in reserve_owned_project_workspace(), not cosmetic: a retry with a
+    # different (empty) title than the original start_execution() call resolves to a
+    # DIFFERENT directory, silently abandoning the workspace it was supposed to resume.
+    assert adapter.received_titles == [_order_payload()["title"]] * 2
+
+
+def test_retry_uses_the_same_title_as_the_original_start_so_the_workspace_matches():
+    adapter = _FlakyAdapter()
+    service = _service(fake_adapter=adapter)
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "failed":
+            break
+        sleep(0.01)
+
+    client.post(f"/api/orders/{order_id}/execution/retry")
+
+    assert all(title == _order_payload()["title"] for title in adapter.received_titles)
+    assert all(title for title in adapter.received_titles)  # never empty
 
 
 def test_retry_rejects_execution_that_never_failed():
@@ -456,6 +480,7 @@ def test_usage_summary_with_no_executions_is_all_zero():
 class _FakeRevisionAdapter:
     def __init__(self) -> None:
         self.received_notes: list[str] = []
+        self.received_titles: list[str] = []
 
     def check_readiness(self, brief):
         from order_workflow import ReadinessResult
@@ -464,6 +489,7 @@ class _FakeRevisionAdapter:
 
     def execute(self, request, event_sink, cancellation):
         self.received_notes.append(request.revision_note)
+        self.received_titles.append(request.title)
         return ExecutionResult(success=True, outcome="generated", summary="Revision applied.", test_summary=WorkflowTestSummary(skipped=1), completed_at=NOW)
 
 
@@ -492,6 +518,9 @@ def test_revise_execution_creates_a_new_execution_after_success():
     assert final["id"] == revised_execution["id"]
     assert final["status"] == "succeeded"
     assert revision_adapter.received_notes == ["Add a dark mode toggle"]
+    # Same regression as retry: revise_execution() must pass the order's real title
+    # through, or it resolves a different workspace directory than the original delivery.
+    assert revision_adapter.received_titles == [_order_payload()["title"]]
 
 
 def test_revise_execution_rejects_an_empty_revision_note():

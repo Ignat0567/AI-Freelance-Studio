@@ -567,7 +567,7 @@ class OrderWorkflowService:
 
     def retry_execution(self, order_id: str) -> dict[str, Any]:
         with self._lock:
-            self._order(order_id)
+            order = self._order(order_id)
             brief = self._require_brief(order_id)
             handoff = self._handoff_by_order.get(order_id)
             execution_id = self._execution_by_order.get(order_id)
@@ -576,7 +576,12 @@ class OrderWorkflowService:
         if execution_id is None:
             raise OrderWorkflowError("execution_not_found")
         try:
-            execution = self._executions.retry(execution_id, brief, handoff)
+            # title must match the ORIGINAL start_execution() call exactly -- it feeds
+            # reserve_owned_project_workspace()'s directory slug, and an execution_id alone
+            # resolves to a DIFFERENT path when the title differs (title is a slug prefix,
+            # not just cosmetic), silently reserving a brand-new empty workspace instead of
+            # actually resuming the one this execution already owns.
+            execution = self._executions.retry(execution_id, brief, handoff, title=order.title)
         except ExecutionServiceError as exc:
             raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
         with self._lock:
@@ -587,7 +592,7 @@ class OrderWorkflowService:
 
     def revise_execution(self, order_id: str, revision_note: str) -> dict[str, Any]:
         with self._lock:
-            self._order(order_id)
+            order = self._order(order_id)
             brief = self._require_brief(order_id)
             handoff = self._handoff_by_order.get(order_id)
             execution_id = self._execution_by_order.get(order_id)
@@ -596,7 +601,10 @@ class OrderWorkflowService:
         if execution_id is None:
             raise OrderWorkflowError("execution_not_found")
         try:
-            execution = self._executions.revise(execution_id, brief, handoff, revision_note)
+            # Same reasoning as retry_execution() above: title must match the ORIGINAL
+            # execution's title so reserve_owned_project_workspace() resolves to the same
+            # directory this revision is meant to edit in place.
+            execution = self._executions.revise(execution_id, brief, handoff, revision_note, title=order.title)
         except ExecutionServiceError as exc:
             raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
         with self._lock:
