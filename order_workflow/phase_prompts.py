@@ -30,6 +30,11 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
         "- Every place where asynchronous data or a future feature will later appear must show a "
         "loading or skeleton state now, so the UI does not visibly change shape once real logic is added.",
         "- Build navigation between all listed screens so it can be clicked through end to end.",
+        "- package.json must include a `preview` script that serves the production build "
+        "(the output of `npm run build`) on its tool's default local port, so the app can be "
+        "opened and smoke-tested automatically after this phase. A plain Vite project already "
+        "gets this for free (`vite preview`, default port 4173) -- do not remove or rename it "
+        "if it is already there; add it if it is missing.",
         "",
         "Do not expose secrets in logs, reports, or generated files.",
         "After creating the requested screens and navigation, stop and exit. Do not keep rewriting files.",

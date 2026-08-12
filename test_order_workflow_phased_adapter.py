@@ -137,7 +137,7 @@ def _safe_prose_ai_ask(_prompt: str) -> str:
     return "A generated project overview paragraph."
 
 
-def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, decision_ai_ask=None, ai_ask=None, environ=None) -> PhasedLiveOpenCodeExecutionAdapter:
+def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, decision_ai_ask=None, ai_ask=None, environ=None, smoke_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
     return PhasedLiveOpenCodeExecutionAdapter(
         provider_name="opencode_bridge",
         model_name="openai/gpt-5.5",
@@ -147,6 +147,9 @@ def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, decision_ai_ask=
         ai_ask=ai_ask or _safe_prose_ai_ask,
         decision_ai_ask=decision_ai_ask or _always_needs_no_backend,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1", **(environ or {})},
+        # Never a real Docker/Playwright call in a unit test by default -- the functional
+        # smoke check gets its own dedicated test coverage further down.
+        smoke_check_runner=smoke_check_runner or _passing_qa,
     )
 
 
@@ -422,6 +425,53 @@ def test_cancellation_before_execution_returns_a_cancelled_result(tmp_path):
 
     assert result.success is False
     assert result.outcome == "cancelled"
+
+
+# --- functional smoke check (QA depth level (a)) --------------------------------
+
+
+def test_smoke_check_failure_fails_the_phase_after_exhausting_repair(tmp_path):
+    client = FakePhaseOpenCodeClient()
+    adapter = _adapter(tmp_path, opencode_client=client, smoke_check_runner=_failing_qa)
+
+    result = adapter.execute(_request(*_contract()), FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert result.outcome == "qa_failed"
+    assert "functional_smoke_check_failed" in result.errors
+    assert result.final_stage == ExecutionStage.UI_SHELL
+
+
+def test_smoke_check_failure_goes_through_the_repair_loop_before_giving_up(tmp_path):
+    client = FakePhaseOpenCodeClient()
+    smoke_runner = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="smoke check", exit_code=1, stdout_tail="no interactive elements found", stderr_tail="", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="smoke check", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    adapter = _adapter(tmp_path, opencode_client=client, smoke_check_runner=smoke_runner)
+
+    result = adapter.execute(_request(*_contract()), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    # 2 calls for ui_shell's repair cycle (fail, then pass) + 1 more for core_feature's own
+    # smoke check, which also runs and gets the scripted runner's last (passing) outcome.
+    assert smoke_runner.calls == 3
+    # the repair attempt re-prompted the coding client with the smoke-check failure details
+    assert any("no interactive elements found" in prompt for prompt in client.prompts)
+
+
+def test_smoke_check_is_skipped_not_failed_when_docker_is_unavailable(tmp_path):
+    def _unavailable(_qa_commands, _cwd):
+        raise DockerUnavailableError("no docker daemon")
+
+    client = FakePhaseOpenCodeClient()
+    sink = FakeEventSink()
+    adapter = _adapter(tmp_path, opencode_client=client, smoke_check_runner=_unavailable)
+
+    result = adapter.execute(_request(*_contract()), sink, CancellationToken())
+
+    assert result.success is True
+    assert any("Functional smoke check skipped" in event["message"] for event in sink.events)
 
 
 # --- phase checkpoint / resume ---------------------------------------------------

@@ -13,6 +13,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_rea
 from .complexity import classify_phase_complexity, model_for_complexity
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
+from .functional_smoke_check import run_functional_smoke_check_in_docker
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProjectBrief, TestSummary
 from .phase_context import PhaseContext, build_phase_context
 from .phase_prompts import (
@@ -141,6 +142,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         ai_ask: Callable[[str], str] | None = None,
         decision_ai_ask: Callable[[str], str] | None = None,
         qa_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
+        smoke_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
     ) -> None:
         super().__init__(provider_name=provider_name, model_name=model_name, workspace_root=workspace_root, qa_commands=qa_commands, dry_run=True, writable_probe=writable_probe)
         self._opencode_client = opencode_client or UnavailableOpenCodeExecutionClient()
@@ -152,6 +154,12 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         self._ai_ask = ai_ask or self._default_ai_ask
         self._decision_ai_ask = decision_ai_ask or self._ai_ask
         self._qa_runner = qa_runner or _select_qa_runner(environ)
+        # Independently injectable from qa_runner: qa_runner may be swapped to the bare-host
+        # runner (FREELANCERSTUDIO_PHASED_QA_BACKEND=host), but the functional smoke check
+        # always needs a real headless browser, so it always defaults to the Docker/Playwright
+        # runner regardless of that setting -- see _run_functional_smoke_check's DockerUnavailableError
+        # handling for what happens when Docker itself isn't reachable either.
+        self._smoke_check_runner = smoke_check_runner or run_functional_smoke_check_in_docker
         self._legacy_fallback = LiveOpenCodeExecutionAdapter(
             provider_name=provider_name,
             model_name=model_name,
@@ -202,6 +210,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 cancellation=cancellation,
                 request=request,
                 model=model_for_complexity(ui_shell_complexity),
+                run_functional_smoke_check=True,
             )
             if not ui_shell.success:
                 return ui_shell.failure
@@ -223,6 +232,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 cancellation=cancellation,
                 request=request,
                 model=model_for_complexity(core_feature_complexity),
+                run_functional_smoke_check=True,
             )
             if not core_feature.success:
                 return core_feature.failure
@@ -277,6 +287,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         cancellation: CancellationToken,
         request: ExecutionRequest,
         model: str | None = None,
+        run_functional_smoke_check: bool = False,
     ) -> _PhaseOutcome:
         if cancellation.is_cancelled():
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
@@ -323,8 +334,64 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         if repair.qa_outcome is None or not repair.qa_outcome.passed:
             return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, "qa_failed", f"QA did not pass for the {stage.value} phase. {repair.qa_status_message}", outcome="qa_failed"))
 
+        if run_functional_smoke_check:
+            failure = self._run_functional_smoke_check(stage, workspace, event_sink, cancellation, request, model)
+            if failure is not None:
+                return _PhaseOutcome(context=None, failure=failure)
+
         context = build_phase_context(stage.value, workspace, repair.qa_outcome)
         return _PhaseOutcome(context=context, failure=None)
+
+    def _run_functional_smoke_check(
+        self,
+        stage: ExecutionStage,
+        workspace,
+        event_sink: ExecutionEventSink,
+        cancellation: CancellationToken,
+        request: ExecutionRequest,
+        model: str | None,
+    ) -> ExecutionResult | None:
+        """QA depth level (a): does the app actually boot and render, not just compile?
+        Best-effort -- if Docker isn't reachable at all, this is skipped (not failed), so
+        it never blocks a host-only QA setup that has no Docker. When Docker IS available
+        and the check fails, it goes through the same repair loop as build/test QA."""
+        try:
+            smoke_repair = run_qa_repair_loop(
+                opencode_client=self._opencode_client,
+                opencode_succeeded=True,
+                workspace_path=workspace.project_path,
+                qa_commands=("Functional smoke check: the app must boot, render visible content, "
+                             "expose at least one usable interactive element, and produce no console/page errors.",),
+                qa_cwd=workspace.project_path,
+                qa_runner=self._smoke_check_runner,
+                event_sink=event_sink,
+                cancellation=cancellation,
+                stage=stage,
+                agent="BugCatcher",
+                max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
+                fix_prompt_builder=_build_qa_fix_prompt,
+                model=model,
+            )
+        except DockerUnavailableError:
+            event_sink.emit(
+                stage=stage,
+                agent="BugCatcher",
+                progress=78,
+                message="Functional smoke check skipped: Docker engine is not reachable.",
+                level=EventLevel.WARNING,
+            )
+            return None
+        if smoke_repair.cancelled:
+            return _cancelled_result(request)
+        if smoke_repair.qa_outcome is None or not smoke_repair.qa_outcome.passed:
+            return self._phase_failure(
+                request,
+                stage,
+                "functional_smoke_check_failed",
+                f"The app did not pass a functional smoke check after the {stage.value} phase. {smoke_repair.qa_status_message}",
+                outcome="qa_failed",
+            )
+        return None
 
     @staticmethod
     def _phase_failure(request: ExecutionRequest, stage: ExecutionStage, error_code: str, summary: str, *, outcome: str = "failed") -> ExecutionResult:

@@ -65,6 +65,8 @@ def test_ui_shell_prompt_forbids_backend_auth_and_external_calls_and_requires_sk
     assert "do not call any external api" in lowered
     assert "loading or skeleton state" in lowered
     assert "provide conversational search across uploaded pdf documents" in lowered
+    assert "`preview` script" in prompt
+    assert "4173" in prompt
 
 
 def test_core_feature_prompt_names_exactly_one_feature_and_requires_a_test():
