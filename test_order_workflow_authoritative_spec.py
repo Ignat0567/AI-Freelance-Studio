@@ -179,6 +179,47 @@ def test_brief_generation_survives_near_max_length_headings():
     assert all(len(item) <= 240 for item in brief.acceptance_criteria)
 
 
+def test_generic_brief_generation_survives_a_long_core_features_answer():
+    # Sibling bug to test_brief_generation_survives_near_max_length_headings, in the
+    # OTHER branch: _generic_features() (used whenever the order description doesn't
+    # look like a structured spec) returned the raw "core-features" clarification
+    # answer with no length cap at all, crashing brief generation with the same
+    # pydantic ValidationError whenever that answer -- AI-authored or user-typed --
+    # ran past ShortText's 240-char cap. Found live via a real order.
+    ids = SequenceIds()
+    order = UserOrder(
+        id="order_generic_long_answer",
+        title="Generic order with a long core-features answer",
+        description="A short project description that does not look like a structured spec.",
+        product_type="web_app",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    clarification = AlexClarificationService(clock=lambda: NOW)
+    started = clarification.begin(order)
+    result = clarification.use_recommended_defaults(started.order, started.session)
+    long_answer = "The user can do a specific thing in this application. " * 6  # well over 240 chars
+    assert len(long_answer) > 240
+
+    for _ in range(10):
+        if result.order.status is UserOrderStatus.BRIEF_READY:
+            break
+        answered_ids = {answer.question_id for answer in result.order.answers}
+        pending = tuple(q for q in result.order.questions if q.id not in answered_ids)
+        if not pending:
+            break
+        answers = tuple(
+            ClarificationAnswer(question_id=q.id, value=long_answer if q.id == "core-features" else _answer_for(q))
+            for q in pending
+        )
+        result = clarification.apply_answers(result.order, result.session, answers)
+
+    briefs = ProjectBriefService(id_factory=ids, clock=_clock)
+    brief = briefs.generate(result.order, result.session)
+
+    assert len(brief.core_features[0]) <= 240
+
+
 def test_full_pipeline_prompt_carries_the_entire_spec(tmp_path: Path):
     long_spec = STRUCTURED_SPEC * 3
     brief, ids = _brief_for(long_spec)

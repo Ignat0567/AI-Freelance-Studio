@@ -129,7 +129,7 @@ def _target_users(order: UserOrder, target_signal: str | None) -> tuple[str, ...
         "My customers": "Customers using the application",
         "Public users": "Public users",
     }
-    return (mapping.get(str(value), sanitize_public_text(str(value))),)
+    return (mapping.get(str(value), sanitize_public_text(str(value))[:240]),)
 
 
 def _pdf_features(signals) -> tuple[str, ...]:
@@ -162,8 +162,8 @@ def _pdf_features(signals) -> tuple[str, ...]:
 def _generic_features(order: UserOrder) -> tuple[str, ...]:
     answer = _answers(order).get("core-features")
     if isinstance(answer, str) and answer.strip():
-        return (sanitize_public_text(answer),)
-    return (sanitize_public_text(order.description[:1_500]),)
+        return (sanitize_public_text(answer)[:240],)
+    return (sanitize_public_text(order.description[:1_500])[:240],)
 
 
 _SECTION_HEADING = re.compile(r"^\s*\d+\.\s+(.+)$", re.MULTILINE)
