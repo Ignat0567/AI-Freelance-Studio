@@ -22,6 +22,7 @@ from order_workflow.api_models import (
     DefaultsRequest,
     ReviseDesignPreviewRequest,
     ReviseBriefRequest,
+    ReviseExecutionRequest,
     StartExecutionRequest,
 )
 from order_workflow.autopilot import run_order_to_handoff_automatically
@@ -40,6 +41,8 @@ _STATUS_BY_CODE = {
     "question_not_found": 404,
     "execution_not_found": 404,
     "execution_not_retryable": 409,
+    "execution_not_revisable": 409,
+    "revision_note_required": 422,
     "unsupported_product_type": 400,
     "invalid_answer": 422,
     "brief_revision_invalid": 422,
@@ -284,6 +287,12 @@ def cancel_execution(order_id: str, request: Request):
 @router.post("/{order_id}/execution/retry")
 def retry_execution(order_id: str, request: Request):
     return _call(get_order_workflow_service(request).retry_execution, order_id)
+
+
+@router.post("/{order_id}/execution/revise")
+async def revise_execution(order_id: str, request: Request):
+    payload = await _body(request, ReviseExecutionRequest)
+    return _call(get_order_workflow_service(request).revise_execution, order_id, payload.revision_note)
 
 
 @router.get("/{order_id}/events")

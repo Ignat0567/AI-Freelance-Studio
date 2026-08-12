@@ -85,6 +85,7 @@ class ExecutionStage(str, Enum):
     VERIFICATION = "verification"
     REPAIR = "repair"
     PACKAGING = "packaging"
+    REVISION = "revision"
     COMPLETED = "completed"
 
 
@@ -465,6 +466,7 @@ class ProjectExecution(StrictDomainModel):
     approval_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
     mode: ExecutionMode
     live: bool = False
+    revised_from: PublicId | None = None
     status: ExecutionStatus = ExecutionStatus.QUEUED
     stage: ExecutionStage = ExecutionStage.REQUIREMENTS
     active_agent: ShortText | None = None

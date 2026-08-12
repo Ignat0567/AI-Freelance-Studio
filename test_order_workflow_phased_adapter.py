@@ -22,6 +22,7 @@ from order_workflow.models import ExecutionStage, EventKind
 from order_workflow.phased_adapter import (
     CORE_FEATURE_QA_COMMANDS,
     PhasedLiveOpenCodeExecutionAdapter,
+    ReviseProjectExecutionAdapter,
     UI_SHELL_QA_COMMANDS,
     _select_qa_runner,
     resolve_execution_pipeline_mode,
@@ -571,3 +572,113 @@ def test_corrupt_checkpoint_file_is_ignored_and_the_phase_reruns(tmp_path):
 
     assert result.success is True
     assert client.call_count == 2  # ui_shell really ran (corrupt checkpoint was ignored), plus core_feature
+
+
+# --- revision (Level 1: revise an already-delivered project) --------------------
+
+
+def _revision_adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None) -> ReviseProjectExecutionAdapter:
+    return ReviseProjectExecutionAdapter(
+        provider_name="opencode_bridge",
+        model_name="openai/gpt-5.5",
+        workspace_root=tmp_path,
+        opencode_client=opencode_client or FakePhaseOpenCodeClient(),
+        qa_runner=qa_runner or _passing_qa,
+        ai_ask=ai_ask or _safe_prose_ai_ask,
+        decision_ai_ask=_always_needs_no_backend,  # unused by the revision path, required by the base class
+        environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1", **(environ or {})},
+        smoke_check_runner=smoke_check_runner or _passing_qa,
+    )
+
+
+def _revision_request(brief, handoff, *, revision_note="Add a dark mode toggle", revised_from_execution_id="execution_original0001") -> ExecutionRequest:
+    return ExecutionRequest(
+        brief=brief,
+        handoff=handoff,
+        execution_id="execution_revision0001",
+        revision_note=revision_note,
+        revised_from_execution_id=revised_from_execution_id,
+    )
+
+
+def test_revision_reuses_the_original_executions_workspace_not_a_new_one(tmp_path):
+    brief, handoff = _contract()
+    client = FakePhaseOpenCodeClient()
+    adapter = _revision_adapter(tmp_path, opencode_client=client)
+    request = _revision_request(brief, handoff)
+
+    # Simulate the original, already-delivered execution's workspace existing beforehand.
+    original_workspace = reserve_owned_project_workspace(tmp_path, order_id=brief.order_id, execution_id=request.revised_from_execution_id, brief_fingerprint=brief.approval_fingerprint, title="")
+    (original_workspace.project_path / "package.json").write_text("{}", encoding="utf-8")
+
+    result = adapter.execute(request, FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    # the coding client actually wrote into the ORIGINAL directory, not a new one
+    assert (original_workspace.project_path / "call-1-marker.txt").is_file()
+    # the pre-existing file from "before the revision" is still there, proving this
+    # operated on the SAME directory rather than reserving a brand-new one.
+    assert (original_workspace.project_path / "package.json").is_file()
+    # a fresh workspace keyed off the NEW execution_id must never have been created
+    assert not (tmp_path / f"order_phased-{request.execution_id}").exists()
+
+
+def test_revision_prompt_includes_the_revision_note_and_original_goal(tmp_path):
+    brief, handoff = _contract()
+    client = FakePhaseOpenCodeClient()
+    adapter = _revision_adapter(tmp_path, opencode_client=client)
+    request = _revision_request(brief, handoff, revision_note="Add a dark mode toggle to the settings screen")
+
+    adapter.execute(request, FakeEventSink(), CancellationToken())
+
+    assert len(client.prompts) >= 1
+    assert "Add a dark mode toggle to the settings screen" in client.prompts[0]
+    assert "already exists, fully built" in client.prompts[0]
+
+
+def test_revision_fails_cleanly_without_a_revision_note(tmp_path):
+    brief, handoff = _contract()
+    adapter = _revision_adapter(tmp_path)
+    request = _revision_request(brief, handoff, revision_note=None)
+
+    result = adapter.execute(request, FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert "revision_request_incomplete" in result.errors
+
+
+def test_revision_fails_cleanly_without_a_source_execution_id(tmp_path):
+    brief, handoff = _contract()
+    adapter = _revision_adapter(tmp_path)
+    request = _revision_request(brief, handoff, revised_from_execution_id=None)
+
+    result = adapter.execute(request, FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert "revision_request_incomplete" in result.errors
+
+
+def test_revision_runs_the_functional_smoke_check_too(tmp_path):
+    brief, handoff = _contract()
+    adapter = _revision_adapter(tmp_path, smoke_check_runner=_failing_qa)
+    request = _revision_request(brief, handoff)
+    reserve_owned_project_workspace(tmp_path, order_id=brief.order_id, execution_id=request.revised_from_execution_id, brief_fingerprint=brief.approval_fingerprint, title="")
+
+    result = adapter.execute(request, FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert "functional_smoke_check_failed" in result.errors
+
+
+def test_revision_success_finalizes_with_readme_and_architecture_artifacts(tmp_path):
+    brief, handoff = _contract()
+    adapter = _revision_adapter(tmp_path)
+    request = _revision_request(brief, handoff)
+    workspace = reserve_owned_project_workspace(tmp_path, order_id=brief.order_id, execution_id=request.revised_from_execution_id, brief_fingerprint=brief.approval_fingerprint, title="")
+
+    result = adapter.execute(request, FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    assert (workspace.project_path / "README.md").is_file()
+    assert (workspace.project_path / "ARCHITECTURE.md").is_file()
+    assert (workspace.project_path / "delivery_report.md").is_file()

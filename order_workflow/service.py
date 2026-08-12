@@ -46,7 +46,7 @@ from .models import (
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
-from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
+from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
     OpenCodeExecutionClient,
@@ -163,12 +163,17 @@ class ConfigurationBackedExecutionAdapter:
         configuration_provider: ExecutionConfigurationProvider,
         *,
         live: bool = False,
+        revision: bool = False,
         opencode_client: OpenCodeExecutionClient | None = None,
         website_section_ai_ask: Callable[[str], str] | None = None,
         environ: dict[str, str] | None = None,
     ) -> None:
         self._configuration_provider = configuration_provider
         self._live = live
+        # Only meaningful alongside live=True: revision needs the same live opt-in gate and
+        # real coding-CLI call as ordinary live execution, just a different final adapter
+        # class that edits an already-delivered project instead of building a new one.
+        self._revision = revision
         self._opencode_client = opencode_client
         self._website_section_ai_ask = website_section_ai_ask
         self._environ = environ
@@ -187,6 +192,16 @@ class ConfigurationBackedExecutionAdapter:
         if self._live:
             environ = {"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if snapshot.live_opt_in.enabled else {}
             opencode_client = self._opencode_client or select_coding_execution_client()
+            if self._revision:
+                return ReviseProjectExecutionAdapter(
+                    provider_name=provider,
+                    model_name=model,
+                    workspace_root=workspace_root,
+                    opencode_client=opencode_client,
+                    environ=environ,
+                    ai_ask=self._website_section_ai_ask,
+                    qa_runner=_select_qa_runner(self._environ),
+                )
             if resolve_execution_pipeline_mode(self._environ) == "legacy":
                 return LiveOpenCodeExecutionAdapter(
                     provider_name=provider,
@@ -238,6 +253,7 @@ class OrderWorkflowService:
             clock=clock,
             production_adapter=ConfigurationBackedExecutionAdapter(self._configuration),
             live_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask, environ=environ),
+            revision_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, revision=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask, environ=environ),
             collaboration_sink=collaboration_sink,
             state_store=execution_state_store,
         )
@@ -569,6 +585,27 @@ class OrderWorkflowService:
         self._persist()
         return self.snapshot(order_id)
 
+    def revise_execution(self, order_id: str, revision_note: str) -> dict[str, Any]:
+        with self._lock:
+            self._order(order_id)
+            brief = self._require_brief(order_id)
+            handoff = self._handoff_by_order.get(order_id)
+            execution_id = self._execution_by_order.get(order_id)
+        if handoff is None:
+            raise OrderWorkflowError("design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved", "Approve the current brief and Elena preview before execution.")
+        if execution_id is None:
+            raise OrderWorkflowError("execution_not_found")
+        try:
+            execution = self._executions.revise(execution_id, brief, handoff, revision_note)
+        except ExecutionServiceError as exc:
+            raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
+        with self._lock:
+            self._execution_by_order[order_id] = execution.id
+            next_status = UserOrderStatus.AWAITING_USER if execution.blockers else UserOrderStatus.QUEUED
+            self._orders[order_id] = self._orders[order_id].model_copy(update={"execution_id": execution.id, "status": next_status})
+        self._persist()
+        return self.snapshot(order_id)
+
     def usage_summary(self) -> dict[str, Any]:
         """Aggregate token/cost usage across every execution this Studio instance has
         ever run, plus the most recent rate-limit message if one was hit.
@@ -824,6 +861,8 @@ class OrderWorkflowService:
             "execution_already_completed": "execution_already_completed",
             "execution_not_found": "execution_not_found",
             "execution_not_retryable": "execution_not_retryable",
+            "execution_not_revisable": "execution_not_revisable",
+            "revision_note_required": "revision_note_required",
             "brief_not_approved": "brief_not_approved",
             "live_execution_opt_in_required": "live_execution_opt_in_required",
         }.get(code, code)

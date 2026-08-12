@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { formatLabel } from './orderWorkflowState.js';
 import { EventTimeline } from './ExecutionDashboard.jsx';
 
@@ -14,13 +14,46 @@ function UsageDetails({ usage }) {
   );
 }
 
-export default function ExecutionResultPanel({ state, pending, onRetry, onNewOrder, onBackToBrief }) {
+function RevisionRequestForm({ pending, onSubmit }) {
+  const [note, setNote] = useState('');
+  const submit = event => {
+    event.preventDefault();
+    const trimmed = note.trim();
+    if (!trimmed) return;
+    onSubmit(trimmed);
+  };
+  return (
+    <form className="ow-form ow-revision-form" onSubmit={submit}>
+      <label htmlFor="ow-revision-note">Request a change to this delivered project</label>
+      <textarea
+        id="ow-revision-note"
+        rows={3}
+        value={note}
+        onChange={event => setNote(event.target.value)}
+        placeholder="e.g. Add a dark mode toggle to the settings screen"
+        disabled={pending}
+      />
+      <div className="ow-actions">
+        <button type="submit" className="fs-primary" disabled={pending || !note.trim()}>{pending ? 'Applying revision...' : 'Request change'}</button>
+      </div>
+    </form>
+  );
+}
+
+export default function ExecutionResultPanel({ state, pending, onRetry, onRevise, onNewOrder, onBackToBrief }) {
   const execution = state?.execution;
   const result = execution?.result;
   const canRetry = execution?.status === 'failed';
+  const canRevise = execution?.status === 'succeeded' && Boolean(onRevise);
   return (
     <section className="fs-panel ow-card" aria-labelledby="ow-result-title">
       <div className="fs-panel-title"><div><span>Result</span><strong id="ow-result-title">{formatLabel(execution?.status, 'No result yet')}</strong></div></div>
+      {execution?.revised_from && (
+        <div className="ow-callout" role="status">
+          <strong>This is a revision</strong>
+          <span>Built on top of the previously delivered project ({execution.revised_from}), not regenerated from scratch.</span>
+        </div>
+      )}
       {result?.rate_limit_message && (
         <div className="ow-callout warning" role="alert">
           <strong>Rate limited</strong>
@@ -33,6 +66,7 @@ export default function ExecutionResultPanel({ state, pending, onRetry, onNewOrd
       {execution?.artifacts?.length > 0 && <section className="ow-artifacts"><h3>Artifacts</h3>{execution.artifacts.map(item => <article key={item.id}><strong>{item.name}</strong><span>{item.summary}</span>{item.simulated && <b>Simulated artifact</b>}</article>)}</section>}
       {result?.warnings?.length > 0 && <div className="ow-callout warning"><strong>Warnings</strong>{result.warnings.map(item => <p key={item}>{item}</p>)}</div>}
       <EventTimeline events={execution?.events || []} />
+      {canRevise && <RevisionRequestForm pending={pending} onSubmit={onRevise} />}
       <div className="ow-actions">
         {canRetry && <button type="button" className="fs-primary" onClick={onRetry} disabled={pending}>{pending ? 'Retrying...' : 'Retry execution'}</button>}
         <button type="button" className="fs-secondary" onClick={onBackToBrief}>Revise brief</button>

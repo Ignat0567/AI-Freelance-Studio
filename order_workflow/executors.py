@@ -56,6 +56,12 @@ class ExecutionRequest:
     handoff: AgentHandoff
     execution_id: str
     title: str = ""
+    # Both unused by every adapter except ReviseProjectExecutionAdapter: revision_note is
+    # the client's free-text change request; revised_from_execution_id is the ALREADY-
+    # DELIVERED execution whose workspace this run must reuse in place (not execution_id,
+    # which identifies this new execution's own event/artifact history).
+    revision_note: str | None = None
+    revised_from_execution_id: str | None = None
 
 
 class ProjectExecutionAdapter(Protocol):

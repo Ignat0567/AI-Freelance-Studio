@@ -77,6 +77,10 @@ class StartExecutionRequest(StrictApiModel):
     live: bool = False
 
 
+class ReviseExecutionRequest(StrictApiModel):
+    revision_note: LongText
+
+
 class NextAction(StrictApiModel):
     code: str
     message: str

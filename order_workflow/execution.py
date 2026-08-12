@@ -114,6 +114,7 @@ class ProjectExecutionService:
         fake_adapter: ProjectExecutionAdapter | None = None,
         production_adapter: ProjectExecutionAdapter | None = None,
         live_adapter: ProjectExecutionAdapter | None = None,
+        revision_adapter: ProjectExecutionAdapter | None = None,
         state_store: ExecutionStateStore | None = None,
         id_factory: Callable[[], object] = uuid4,
         clock: Callable[[], datetime] | None = None,
@@ -127,6 +128,7 @@ class ProjectExecutionService:
         self._fake_adapter = fake_adapter or FakeProjectExecutionAdapter()
         self._production_adapter = production_adapter
         self._live_adapter = live_adapter
+        self._revision_adapter = revision_adapter
         self._store = state_store or InMemoryExecutionStateStore()
         self._id_factory = id_factory
         self._clock = clock
@@ -296,6 +298,81 @@ class ProjectExecutionService:
             worker.start()
             return self._snapshot(record.snapshot)
 
+    def revise(self, execution_id: str, brief: ProjectBrief, handoff: AgentHandoff, revision_note: str, *, title: str = "") -> ProjectExecution:
+        """Start a NEW execution that makes one targeted change to a project that has
+        ALREADY been successfully delivered, reusing that delivered execution's workspace
+        in place rather than regenerating everything from scratch into a fresh directory.
+
+        Deliberately a distinct action from retry(): retry redoes exactly what a FAILED
+        attempt didn't finish; revise deliberately touches code that already works, on the
+        client's request, and only makes sense against a SUCCEEDED execution -- a failed
+        one has nothing successfully delivered yet to revise. Always creates a brand-new
+        execution record (linked via ProjectExecution.revised_from), so the original
+        execution's own history is never rewritten and each revision round is independently
+        visible.
+        """
+        note = revision_note.strip()
+        if not note:
+            raise ExecutionServiceError("revision_note_required")
+        self._validate_handoff(brief, handoff)
+        with self._lock:
+            if not self._accepting:
+                raise ExecutionServiceError("execution_service_stopping")
+            source = self._records.get(execution_id)
+            if source is None:
+                raise ExecutionServiceError("execution_not_found")
+            if source.snapshot.order_id != brief.order_id or source.snapshot.brief_id != brief.id:
+                raise ExecutionServiceError("execution_not_found")
+            if source.snapshot.status is not ExecutionStatus.SUCCEEDED:
+                raise ExecutionServiceError("execution_not_revisable")
+            active_mode = source.snapshot.mode
+            live = source.snapshot.live
+        domain_blockers = self._domain_blockers(brief, handoff)
+        if domain_blockers:
+            raise ExecutionServiceError(domain_blockers[0].code)
+        if self._revision_adapter is None:
+            raise ExecutionServiceError("live_execution_opt_in_required" if live else "execution_provider_not_configured")
+        readiness = self._revision_adapter.check_readiness(brief)
+        if not readiness.ready:
+            raise ExecutionServiceError(readiness.blockers[0].code if readiness.blockers else "execution_provider_not_configured")
+
+        now = utc_now(self._clock)
+        new_execution = ProjectExecution(
+            id=new_public_id("execution", self._id_factory),
+            order_id=brief.order_id,
+            brief_id=brief.id,
+            handoff_id=handoff.id,
+            approval_fingerprint=brief.approval_fingerprint,
+            mode=active_mode,
+            live=live,
+            revised_from=execution_id,
+            status=ExecutionStatus.QUEUED,
+            stage=ExecutionStage.REQUIREMENTS,
+            progress=0,
+            current_activity="Queued for revision",
+            created_at=now,
+            updated_at=now,
+        )
+        record = _ExecutionRecord(new_execution, CancellationToken())
+        with self._lock:
+            # Deliberately NOT registered in self._by_approval: that mapping exists to
+            # prevent duplicate/concurrent starts against the SAME brief approval, but a
+            # revision is an intentional, repeatable action against an already-completed
+            # brief -- a client can ask for several rounds of changes, and none of them
+            # should ever be blocked as a "duplicate" of the original delivery.
+            self._records[new_execution.id] = record
+            self._save(record.snapshot)
+            worker = self._thread_factory(
+                target=self._run,
+                args=(new_execution.id, brief, handoff, self._revision_adapter, title),
+                kwargs={"revision_note": note, "revised_from_execution_id": execution_id},
+                name=f"order-execution-{new_execution.id}-revision",
+                daemon=True,
+            )
+            record.worker = worker
+            worker.start()
+            return self._snapshot(record.snapshot)
+
     def snapshot(self, execution_id: str) -> ProjectExecution:
         with self._lock:
             record = self._records.get(execution_id)
@@ -388,6 +465,9 @@ class ProjectExecutionService:
         handoff: AgentHandoff,
         adapter: ProjectExecutionAdapter,
         title: str = "",
+        *,
+        revision_note: str | None = None,
+        revised_from_execution_id: str | None = None,
     ) -> None:
         with self._lock:
             record = self._records[execution_id]
@@ -398,9 +478,17 @@ class ProjectExecutionService:
                 return
             record.started_monotonic = monotonic()
             self._set_running_locked(record, ExecutionStage.REQUIREMENTS, "Alex", 5, "Starting execution")
-            request = ExecutionRequest(brief=brief, handoff=handoff, execution_id=execution_id, title=title)
+            request = ExecutionRequest(
+                brief=brief,
+                handoff=handoff,
+                execution_id=execution_id,
+                title=title,
+                revision_note=revision_note,
+                revised_from_execution_id=revised_from_execution_id,
+            )
         try:
-            result = adapter.execute(request, _Sink(self, execution_id, simulated=adapter is not self._live_adapter), record.token)
+            simulated = adapter is not self._live_adapter and adapter is not self._revision_adapter
+            result = adapter.execute(request, _Sink(self, execution_id, simulated=simulated), record.token)
             status = ExecutionStatus.SUCCEEDED if result.success else ExecutionStatus.FAILED
             if result.outcome == "cancelled" or record.token.is_cancelled():
                 status = ExecutionStatus.CANCELLED

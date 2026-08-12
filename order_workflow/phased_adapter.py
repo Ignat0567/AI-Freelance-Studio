@@ -21,6 +21,7 @@ from .phase_prompts import (
     build_backend_bridge_prompt,
     build_backend_decision_prompt,
     build_core_feature_prompt,
+    build_revision_prompt,
     build_ui_shell_prompt,
     parse_backend_decision,
 )
@@ -487,8 +488,56 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         )
 
 
+class ReviseProjectExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
+    """Level 1 of the reliability/capability roadmap: make one targeted change to a
+    project that has ALREADY been successfully delivered, instead of the only option
+    that existed before this -- regenerating the whole thing from scratch into a brand
+    new workspace with no memory of what was already built.
+
+    Deliberately a thin subclass, not a rewrite: check_readiness(), _run_phase() (build/
+    test QA, the functional smoke check, and their shared repair loop), _phase_failure(),
+    and _finalize_success() are all inherited unchanged. Only execute() differs -- one
+    phase (REVISION) instead of the ui_shell/core_feature/backend-decision sequence, and
+    it resolves the workspace using the ORIGINAL execution's id (via
+    request.revised_from_execution_id) rather than this new execution's own id, so it
+    operates on the exact same files instead of reserving a fresh directory.
+    """
+
+    def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        if not request.revision_note or not request.revised_from_execution_id:
+            return self._phase_failure(request, ExecutionStage.REVISION, "revision_request_incomplete", "A revision requires both a revision note and the execution being revised.")
+
+        event_sink.emit(stage=ExecutionStage.REVISION, agent="Studio", progress=5, message="Preparing revision")
+        source_execution_id = request.revised_from_execution_id
+        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=source_execution_id, brief_fingerprint=request.brief.approval_fingerprint, title=request.title)
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=source_execution_id)
+
+        complexity = classify_phase_complexity(request.brief, focus_text=request.revision_note)
+        revision = self._run_phase(
+            stage=ExecutionStage.REVISION,
+            prompt=build_revision_prompt(request.brief, request.handoff, request.revision_note),
+            qa_commands=CORE_FEATURE_QA_COMMANDS,
+            workspace=workspace,
+            event_sink=event_sink,
+            cancellation=cancellation,
+            request=request,
+            model=model_for_complexity(complexity),
+            run_functional_smoke_check=True,
+        )
+        if not revision.success:
+            return revision.failure
+
+        self._emit_milestone(event_sink, ExecutionStage.REVISION, f"Revision complete: {request.revision_note[:200]}")
+        return self._finalize_success(request, event_sink, workspace, note=f"Revision applied: {request.revision_note[:200]}")
+
+
 _MILESTONE_PROGRESS: dict[ExecutionStage, int] = {
     ExecutionStage.UI_SHELL: 30,
     ExecutionStage.CORE_FEATURE: 55,
     ExecutionStage.BACKEND_DECISION: 65,
+    ExecutionStage.REVISION: 70,
 }

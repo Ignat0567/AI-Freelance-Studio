@@ -42,6 +42,33 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
     return "\n".join(lines)
 
 
+def build_revision_prompt(brief: ProjectBrief, handoff: AgentHandoff, revision_note: str) -> str:
+    """For ReviseProjectExecutionAdapter only: this project already exists, fully built, in
+    this exact workspace -- unlike every other phase prompt, which either builds from
+    nothing or from a PhaseContext summary of what a *previous phase in the same run* did.
+    The instruction must be scoped tightly to the one requested change; nothing here asks
+    for the whole project to be reconsidered."""
+    lines = [
+        "This project already exists, fully built, in this exact workspace. Do not rebuild it "
+        "from scratch and do not restructure parts that are not mentioned below.",
+        "",
+        f"Original goal: {brief.goal}",
+        f"Context: {handoff.context_summary}",
+        "",
+        "The client has asked for exactly this change to the existing, already-delivered project:",
+        f"{revision_note}",
+        "",
+        "Rules for this revision:",
+        "- Read the existing code first. Make the smallest change that satisfies the request above.",
+        "- Do not rewrite files or features unrelated to this request.",
+        "- Do not remove the `preview` npm script or otherwise break how the project builds and runs.",
+        "",
+        "Do not expose secrets in logs, reports, or generated files.",
+        "After making the requested change, stop and exit. Do not keep rewriting files.",
+    ]
+    return "\n".join(lines)
+
+
 def build_core_feature_prompt(brief: ProjectBrief, handoff: AgentHandoff, ui_shell_context: PhaseContext) -> str:
     core_feature = brief.core_features[0]
     lines = [

@@ -49,13 +49,14 @@ class ExplodingService(OrderWorkflowService):
         raise RuntimeError("raw stack trace token=secret-value")
 
 
-def _service(fake_adapter=None, mode="fake") -> OrderWorkflowService:
+def _service(fake_adapter=None, mode="fake", revision_adapter=None) -> OrderWorkflowService:
     ids = SequenceIds()
     execution = ProjectExecutionService(
         id_factory=ids,
         clock=lambda: NOW,
         fake_adapter=fake_adapter,
         mode=mode,
+        revision_adapter=revision_adapter,
     )
     return OrderWorkflowService(id_factory=ids, clock=lambda: NOW, execution_service=execution)
 
@@ -450,6 +451,72 @@ def test_usage_summary_with_no_executions_is_all_zero():
     assert body["executions_with_usage"] == 0
     assert body["total_cost_usd"] == 0
     assert body["last_rate_limit"] is None
+
+
+class _FakeRevisionAdapter:
+    def __init__(self) -> None:
+        self.received_notes: list[str] = []
+
+    def check_readiness(self, brief):
+        from order_workflow import ReadinessResult
+
+        return ReadinessResult.ready_result()
+
+    def execute(self, request, event_sink, cancellation):
+        self.received_notes.append(request.revision_note)
+        return ExecutionResult(success=True, outcome="generated", summary="Revision applied.", test_summary=WorkflowTestSummary(skipped=1), completed_at=NOW)
+
+
+def test_revise_execution_creates_a_new_execution_after_success():
+    revision_adapter = _FakeRevisionAdapter()
+    service = _service(revision_adapter=revision_adapter)
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    original = client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"}).json()["execution"]
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+
+    revised = client.post(f"/api/orders/{order_id}/execution/revise", json={"revision_note": "Add a dark mode toggle"})
+    assert revised.status_code == 200
+    revised_execution = revised.json()["execution"]
+    assert revised_execution["id"] != original["id"]
+    assert revised_execution["revised_from"] == original["id"]
+
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+    final = client.get(f"/api/orders/{order_id}/execution").json()["execution"]
+    assert final["id"] == revised_execution["id"]
+    assert final["status"] == "succeeded"
+    assert revision_adapter.received_notes == ["Add a dark mode toggle"]
+
+
+def test_revise_execution_rejects_an_empty_revision_note():
+    service = _service(revision_adapter=_FakeRevisionAdapter())
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+
+    response = client.post(f"/api/orders/{order_id}/execution/revise", json={"revision_note": ""})
+    assert response.status_code == 422
+
+
+def test_revise_execution_rejects_when_not_yet_succeeded():
+    service = _service(fake_adapter=FakeProjectExecutionAdapter(FakeExecutorConfig(step_delay_seconds=0.05)), revision_adapter=_FakeRevisionAdapter())
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+
+    response = client.post(f"/api/orders/{order_id}/execution/revise", json={"revision_note": "Add a dark mode toggle"})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "execution_not_revisable"
 
 
 def test_unknown_order_and_internal_errors_are_sanitized(caplog):

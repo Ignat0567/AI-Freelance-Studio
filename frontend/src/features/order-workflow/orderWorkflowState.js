@@ -16,6 +16,7 @@ export const STAGE_PROGRESS = {
   verification: 85,
   repair: 90,
   packaging: 95,
+  revision: 70,
   completed: 100,
 };
 

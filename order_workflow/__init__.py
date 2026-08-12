@@ -77,7 +77,7 @@ from .models import (
 )
 from .persistence import ExecutionStateStore, InMemoryExecutionStateStore
 from .phase_context import PhaseContext, build_phase_context
-from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, resolve_execution_pipeline_mode
+from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, resolve_execution_pipeline_mode
 from .production_adapter import ProductionProjectExecutionAdapter
 from .production_adapter import LiveOpenCodeExecutionAdapter, OpenCodeExecutionClient, OpenCodeExecutionResult, live_opencode_execution_enabled
 from .readiness import ReadinessResult, readiness_blocker
@@ -157,6 +157,7 @@ __all__ = [
     "RequirementDimension",
     "RequirementSignals",
     "ReadinessResult",
+    "ReviseProjectExecutionAdapter",
     "TestSummary",
     "ThemePalette",
     "TokenUsage",

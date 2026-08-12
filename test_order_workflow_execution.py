@@ -472,6 +472,114 @@ def test_retry_rejects_mismatched_brief():
     assert error.value.code == "execution_not_found"
 
 
+# --- revise ---------------------------------------------------------------------
+
+
+class FakeRevisionAdapter:
+    def __init__(self, *, succeed: bool = True) -> None:
+        self.succeed = succeed
+        self.received_requests = []
+
+    def check_readiness(self, brief):
+        return ReadinessResult.ready_result()
+
+    def execute(self, request, event_sink, cancellation):
+        self.received_requests.append(request)
+        if not self.succeed:
+            return ExecutionResult(success=False, outcome="failed", summary="Revision failed.", test_summary=WorkflowTestSummary(failed=1), errors=("revision_failed",), completed_at=NOW)
+        return ExecutionResult(success=True, outcome="generated", summary="Revision applied.", test_summary=WorkflowTestSummary(skipped=1), completed_at=NOW)
+
+
+def test_revise_creates_a_new_execution_targeting_the_original_workspace():
+    brief, handoff = _approved_contract()
+    revision_adapter = FakeRevisionAdapter()
+    service = _service(revision_adapter=revision_adapter)
+
+    original = service.wait(service.start(brief, handoff).id, 2)
+    assert original.status is ExecutionStatus.SUCCEEDED
+
+    revised = service.wait(service.revise(original.id, brief, handoff, "Add a dark mode toggle").id, 2)
+
+    assert revised.id != original.id
+    assert revised.revised_from == original.id
+    assert revised.status is ExecutionStatus.SUCCEEDED
+    # the original execution's own record is untouched by the revision
+    assert service.snapshot(original.id).status is ExecutionStatus.SUCCEEDED
+    assert len(revision_adapter.received_requests) == 1
+    request = revision_adapter.received_requests[0]
+    assert request.revision_note == "Add a dark mode toggle"
+    assert request.revised_from_execution_id == original.id
+    assert request.execution_id == revised.id
+
+
+def test_revise_rejects_a_failed_execution():
+    brief, handoff = _approved_contract()
+    service = _service(fake_adapter=FlakyAdapter(), revision_adapter=FakeRevisionAdapter())
+
+    failed = service.wait(service.start(brief, handoff).id, 2)
+    assert failed.status is ExecutionStatus.FAILED
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.revise(failed.id, brief, handoff, "Add a dark mode toggle")
+    assert error.value.code == "execution_not_revisable"
+
+
+def test_revise_rejects_an_empty_revision_note():
+    brief, handoff = _approved_contract()
+    service = _service(revision_adapter=FakeRevisionAdapter())
+    original = service.wait(service.start(brief, handoff).id, 2)
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.revise(original.id, brief, handoff, "   ")
+    assert error.value.code == "revision_note_required"
+
+
+def test_revise_rejects_unknown_execution_id():
+    brief, handoff = _approved_contract()
+    service = _service(revision_adapter=FakeRevisionAdapter())
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.revise("execution_does_not_exist", brief, handoff, "Add a dark mode toggle")
+    assert error.value.code == "execution_not_found"
+
+
+def test_revise_rejects_mismatched_brief():
+    first_brief, first_handoff = _approved_contract("order_one")
+    second_brief, second_handoff = _approved_contract("order_two")
+    service = _service(revision_adapter=FakeRevisionAdapter())
+
+    original = service.wait(service.start(first_brief, first_handoff).id, 2)
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.revise(original.id, second_brief, second_handoff, "Add a dark mode toggle")
+    assert error.value.code == "execution_not_found"
+
+
+def test_revise_fails_without_a_configured_revision_adapter():
+    brief, handoff = _approved_contract()
+    service = _service()  # no revision_adapter given
+    original = service.wait(service.start(brief, handoff).id, 2)
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.revise(original.id, brief, handoff, "Add a dark mode toggle")
+    assert error.value.code in {"live_execution_opt_in_required", "execution_provider_not_configured"}
+
+
+def test_two_revisions_of_the_same_execution_are_both_recorded_independently():
+    brief, handoff = _approved_contract()
+    revision_adapter = FakeRevisionAdapter()
+    service = _service(revision_adapter=revision_adapter)
+    original = service.wait(service.start(brief, handoff).id, 2)
+
+    first_revision = service.wait(service.revise(original.id, brief, handoff, "Add a dark mode toggle").id, 2)
+    second_revision = service.wait(service.revise(original.id, brief, handoff, "Add an export-to-CSV button").id, 2)
+
+    assert first_revision.id != second_revision.id
+    assert first_revision.revised_from == original.id
+    assert second_revision.revised_from == original.id
+    assert len(revision_adapter.received_requests) == 2
+
+
 def test_shutdown_stops_accepting_new_executions_and_is_bounded():
     brief, handoff = _approved_contract()
     service = _service(fake_adapter=NonCooperativeAdapter(FakeExecutorConfig(step_delay_seconds=0.05)))

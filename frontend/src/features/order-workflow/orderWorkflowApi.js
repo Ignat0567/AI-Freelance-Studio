@@ -46,6 +46,7 @@ export const orderWorkflowApi = {
   getExecution: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/execution`),
   cancelExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/cancel`, {}),
   retryExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/retry`, {}),
+  reviseExecution: (orderId, revisionNote) => post(`/api/orders/${encodeURIComponent(orderId)}/execution/revise`, { revision_note: revisionNote }),
   getEvents: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/events`),
   getArtifacts: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/artifacts`),
   getResult: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/result`),
