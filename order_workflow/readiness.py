@@ -84,7 +84,7 @@ DESIGN_PREVIEW_NOT_APPROVED = readiness_blocker(
 
 UNSUPPORTED_PRODUCT_TYPE = readiness_blocker(
     "unsupported_product_type",
-    "This MVP currently supports only small browser-based web applications.",
+    "This MVP currently supports only small browser-based web applications and Telegram bots.",
     "Revise Brief",
 )
 

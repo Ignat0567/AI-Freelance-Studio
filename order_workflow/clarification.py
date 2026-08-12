@@ -15,6 +15,7 @@ from .models import (
     ProductType,
     QuestionType,
     StrictDomainModel,
+    SUPPORTED_PRODUCT_TYPES,
     UserOrder,
     UserOrderStatus,
     utc_now,
@@ -222,7 +223,9 @@ def infer_requirement_signals(order: UserOrder) -> RequirementSignals:
         data_persistence_resolved=persistence_resolved,
         documents_persist=documents_persist,
         external_integrations_resolved=integration_resolved,
-        ui_required=not no_ui,
+        # A Telegram bot has no BROWSER ui in the sense this signal gates (Elena's visual
+        # design step) -- it has its own chat "UI" that isn't a design-preview concern.
+        ui_required=order.product_type is not ProductType.BOT and not no_ui,
         input_methods=tuple(item for item, present in (("text", text_input), ("voice", voice_input)) if present),
         output_methods=tuple(item for item, present in (("visual", visual_output), ("speech", speech_output)) if present),
         privacy_mode_resolved=privacy_resolved,
@@ -239,7 +242,7 @@ def infer_requirement_signals(order: UserOrder) -> RequirementSignals:
 
 
 def detect_requirement_gaps(order: UserOrder) -> GapAnalysis:
-    if order.product_type is not ProductType.WEB_APP:
+    if order.product_type not in SUPPORTED_PRODUCT_TYPES:
         raise ClarificationError("unsupported_product_type")
     signals = infer_requirement_signals(order)
     missing: set[RequirementDimension] = set()

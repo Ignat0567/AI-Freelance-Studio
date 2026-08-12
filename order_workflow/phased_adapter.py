@@ -14,12 +14,13 @@ from .complexity import classify_phase_complexity, model_for_complexity
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .functional_smoke_check import run_functional_smoke_check_in_docker
-from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProjectBrief, TestSummary, TokenUsage
+from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProductType, ProjectBrief, TestSummary, TokenUsage
 from .phase_context import PhaseContext, build_phase_context
 from .phase_prompts import (
     BackendDecision,
     build_backend_bridge_prompt,
     build_backend_decision_prompt,
+    build_bot_prompt,
     build_core_feature_prompt,
     build_revision_prompt,
     build_ui_shell_prompt,
@@ -42,6 +43,12 @@ from .workspace import reserve_owned_project_workspace, scan_meaningful_generate
 
 UI_SHELL_QA_COMMANDS: tuple[str, ...] = ("npm run build",)
 CORE_FEATURE_QA_COMMANDS: tuple[str, ...] = ("npm test",)
+# docker_qa_runner.detect_base_image() already resolves requirements.txt/pyproject.toml
+# projects to a Python image with zero changes needed there -- pip install then a bare
+# import is the bot equivalent of "npm run build": proves dependencies resolve and the
+# module has no syntax/import-time errors, without needing a real BOT_TOKEN or Telegram
+# connectivity (which QA must never attempt -- see build_bot_prompt).
+BOT_QA_COMMANDS: tuple[str, ...] = ("pip install -r requirements.txt", 'python -c "import bot"')
 MAX_PHASE_REPAIR_ATTEMPTS = 2
 
 _logger = logging.getLogger(__name__)
@@ -533,17 +540,19 @@ class ReviseProjectExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
             return _cancelled_result(request)
         validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=source_execution_id)
 
+        is_bot = request.brief.product_type is ProductType.BOT
         complexity = classify_phase_complexity(request.brief, focus_text=request.revision_note)
         revision = self._run_phase(
             stage=ExecutionStage.REVISION,
             prompt=build_revision_prompt(request.brief, request.handoff, request.revision_note),
-            qa_commands=CORE_FEATURE_QA_COMMANDS,
+            qa_commands=BOT_QA_COMMANDS if is_bot else CORE_FEATURE_QA_COMMANDS,
             workspace=workspace,
             event_sink=event_sink,
             cancellation=cancellation,
             request=request,
             model=model_for_complexity(complexity),
-            run_functional_smoke_check=True,
+            # The functional smoke check is Playwright/browser-only -- meaningless for a bot.
+            run_functional_smoke_check=not is_bot,
         )
         if not revision.success:
             return revision.failure
@@ -552,9 +561,48 @@ class ReviseProjectExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
         return self._finalize_success(request, event_sink, workspace, note=f"Revision applied: {request.revision_note[:200]}")
 
 
+class TelegramBotExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
+    """Level 2 of the roadmap: a fundamentally different product shape from the web-app
+    pipeline this subclasses -- no UI shell, no core-feature/backend-decision split (a
+    bot is usually small enough to build in a single pass), and no browser to run the
+    functional smoke check against. Reuses _run_phase() (QA + repair loop) and
+    _finalize_success() (README/ARCHITECTURE/delivery report -- both are generic
+    file-tree summarizers with nothing web-specific in their own logic) unchanged.
+    """
+
+    def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        event_sink.emit(stage=ExecutionStage.BOT_BUILD, agent="Studio", progress=5, message="Preparing bot build")
+        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint, title=request.title)
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)
+
+        complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.core_features)}")
+        build = self._run_phase(
+            stage=ExecutionStage.BOT_BUILD,
+            prompt=build_bot_prompt(request.brief, request.handoff),
+            qa_commands=BOT_QA_COMMANDS,
+            workspace=workspace,
+            event_sink=event_sink,
+            cancellation=cancellation,
+            request=request,
+            model=model_for_complexity(complexity),
+            # No functional_smoke_check: that check is Playwright/browser-only and a bot
+            # has no browser surface for it to load.
+        )
+        if not build.success:
+            return build.failure
+
+        self._emit_milestone(event_sink, ExecutionStage.BOT_BUILD, "Bot build complete: handlers implemented, module imports cleanly.")
+        return self._finalize_success(request, event_sink, workspace, note="Telegram bot generated. No backend or browser frontend required.")
+
+
 _MILESTONE_PROGRESS: dict[ExecutionStage, int] = {
     ExecutionStage.UI_SHELL: 30,
     ExecutionStage.CORE_FEATURE: 55,
     ExecutionStage.BACKEND_DECISION: 65,
     ExecutionStage.REVISION: 70,
+    ExecutionStage.BOT_BUILD: 50,
 }

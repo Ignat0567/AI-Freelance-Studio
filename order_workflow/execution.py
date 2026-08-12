@@ -29,6 +29,7 @@ from .models import (
     EventLevel,
     ProjectBrief,
     ProjectExecution,
+    SUPPORTED_PRODUCT_TYPES,
     TestSummary,
     append_bounded_event,
     new_public_id,
@@ -766,7 +767,7 @@ class ProjectExecutionService:
             blockers.append(UNRESOLVED_QUESTIONS)
         if str(brief.elena_design_choice) == "ElenaDesignChoice.UNDECIDED" or brief.elena_design_choice.value == "undecided":
             blockers.append(ELENA_CHOICE_REQUIRED)
-        if brief.recommended_stack.frontend != "React + Vite":
+        if brief.product_type not in SUPPORTED_PRODUCT_TYPES:
             blockers.append(UNSUPPORTED_PRODUCT_TYPE)
         if not verify_brief_approval(brief):
             blockers.append(BRIEF_NOT_APPROVED)

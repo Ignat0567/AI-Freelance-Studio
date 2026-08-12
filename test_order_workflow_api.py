@@ -186,6 +186,22 @@ def test_unsupported_product_type_and_empty_description_are_rejected():
     assert empty.status_code == 422
 
 
+def test_create_bot_order_is_accepted_and_never_asks_elena_design():
+    client = _client(_app())
+    response = client.post("/api/orders", json={
+        **_order_payload(),
+        "title": "Habit Bot",
+        "product_type": "bot",
+        "description": "Build a Telegram bot for tracking daily habits, with a command to add a habit and mark it done.",
+    })
+
+    assert response.status_code == 200
+    state = response.json()
+    assert state["order"]["product_type"] == "bot"
+    question_ids = [item["id"] for item in state["questions"]]
+    assert "elena-design" not in question_ids
+
+
 def test_answers_validate_question_ids_and_options():
     client = _client(_app())
     state = _create(client)

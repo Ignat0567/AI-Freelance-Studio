@@ -167,3 +167,37 @@ def _strip_code_fence(raw_response: str) -> str:
             text = text[4:]
         text = text.strip()
     return text
+
+
+def build_bot_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
+    """Telegram bot instead of a browser web app: no screens, no UI shell/core-feature
+    split -- most bots are small enough to build in one pass. The QA that follows this
+    (see bot_adapter.py) is `pip install` + `python -c "import bot"`, so the structural
+    rules below exist specifically to make that a real, meaningful check rather than a
+    vacuous one (a bot module that tries to connect to Telegram at import time would
+    "fail" QA for having no real token, not for being broken)."""
+    lines = [
+        "Build a Telegram bot in Python using the python-telegram-bot library. This is NOT "
+        "a browser web app -- there is no HTML/CSS/JS, no frontend, no screens.",
+        "",
+        f"Goal: {brief.goal}",
+        f"Context: {handoff.context_summary}",
+        "",
+        "Commands and behavior to implement (from the approved requirements):",
+        *[f"- {item}" for item in handoff.requirements],
+        "",
+        "Structure requirements:",
+        "- Entry point: bot.py at the project root.",
+        "- requirements.txt listing python-telegram-bot and anything else actually used.",
+        "- .env.example with BOT_TOKEN=your-token-here (a placeholder, never a real token).",
+        "- Read BOT_TOKEN with os.environ, and only inside `if __name__ == \"__main__\":` -- "
+        "importing bot.py (e.g. `python -c \"import bot\"`) must succeed with NO token set "
+        "and must NOT attempt to contact Telegram's API, start polling, or block. All handler "
+        "registration and bot construction must be safe to import.",
+        "- README.md with setup steps: create requirements.txt install, set BOT_TOKEN, run bot.py.",
+        "",
+        "Do not expose secrets in logs, reports, or generated files. Never hardcode a real "
+        "bot token anywhere.",
+        "After implementing the requested commands, stop and exit. Do not keep rewriting files.",
+    ]
+    return "\n".join(lines)

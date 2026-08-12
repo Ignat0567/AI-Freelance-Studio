@@ -4,7 +4,6 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from enum import Enum
 import hashlib
-from typing import Literal
 from uuid import uuid4
 
 from pydantic import Field, model_validator
@@ -65,7 +64,7 @@ class DesignPreview(StrictDomainModel):
     brief_id: str
     brief_version: int = Field(ge=1)
     status: DesignPreviewStatus = DesignPreviewStatus.DRAFT
-    product_type: Literal[ProductType.WEB_APP] = ProductType.WEB_APP
+    product_type: ProductType = ProductType.WEB_APP
     concept_name: str
     layout_type: LayoutArchetype
     visual_direction: str
@@ -125,7 +124,7 @@ class DesignPreviewService:
             brief_id=brief.id,
             brief_version=brief.revision,
             status=DesignPreviewStatus.DRAFT,
-            product_type=brief.product_type if hasattr(brief, "product_type") else ProductType.WEB_APP,
+            product_type=brief.product_type,
             concept_name=spec["concept_name"],
             layout_type=kind,
             visual_direction=spec["visual_direction"],

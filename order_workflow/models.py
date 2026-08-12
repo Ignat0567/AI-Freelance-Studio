@@ -39,6 +39,14 @@ class UserOrderStatus(str, Enum):
 
 class ProductType(str, Enum):
     WEB_APP = "web_app"
+    BOT = "bot"
+
+
+# Every ProductType member the pipeline actually has a full clarification/brief/execution
+# path for. A ProductType could exist here as a value the *type system* allows before an
+# execution adapter is wired up for it -- this is the single, explicit gate that decides
+# whether an order of that type is actually accepted end to end.
+SUPPORTED_PRODUCT_TYPES: frozenset[ProductType] = frozenset({ProductType.WEB_APP, ProductType.BOT})
 
 
 class QuestionType(str, Enum):
@@ -86,6 +94,7 @@ class ExecutionStage(str, Enum):
     REPAIR = "repair"
     PACKAGING = "packaging"
     REVISION = "revision"
+    BOT_BUILD = "bot_build"
     COMPLETED = "completed"
 
 
@@ -229,7 +238,7 @@ class UserOrder(StrictDomainModel):
     id: PublicId
     title: ShortText
     description: OrderDescription
-    product_type: Literal[ProductType.WEB_APP] = ProductType.WEB_APP
+    product_type: ProductType = ProductType.WEB_APP
     preferred_language: LanguageCode = "en"
     constraints: tuple[ShortText, ...] = ()
     attachments: tuple[OpaqueReference, ...] = ()
@@ -307,6 +316,7 @@ class ProjectBrief(StrictDomainModel):
     id: PublicId
     order_id: PublicId
     revision: Annotated[int, Field(ge=1)] = 1
+    product_type: ProductType = ProductType.WEB_APP
     goal: LongText
     target_users: tuple[ShortText, ...]
     core_features: tuple[ShortText, ...]

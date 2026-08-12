@@ -18,6 +18,7 @@ from .clarification import (
 from .models import (
     ElenaDesignChoice,
     ElenaDesignConcept,
+    ProductType,
     ProjectBrief,
     RecommendedStack,
     StrictDomainModel,
@@ -244,8 +245,12 @@ def verify_brief_approval(brief: ProjectBrief) -> bool:
     return _brief_fingerprint(unapproved) == brief.approval_fingerprint
 
 
-def _elena_placeholder(choice: ElenaDesignChoice) -> ElenaDesignConcept | None:
-    if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT:
+def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType = ProductType.WEB_APP) -> ElenaDesignConcept | None:
+    if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT or product_type is ProductType.BOT:
+        # A bot has no screens/light-dark theme -- there is nothing for Elena's visual
+        # design concept to describe. In practice, product_type BOT orders never reach
+        # SHOW_ELENA_CONCEPT in the first place (see clarification.py's ui_required
+        # signal), but this stays correct even if that ever changes.
         return None
     return ElenaDesignConcept(
         visual_direction="Liquid Glass",
@@ -288,7 +293,24 @@ class ProjectBriefService:
             raise BriefServiceError("elena_choice_required")
 
         signals = infer_requirement_signals(order)
-        if _looks_like_authoritative_spec(order.description):
+        stack = RecommendedStack(frontend="React + Vite", backend="FastAPI", storage="SQLite")
+        if order.product_type is ProductType.BOT:
+            # A single, top-level branch ahead of the web-app branches below, rather than
+            # threading product_type checks into each of them -- a bot order never falls
+            # through to the authoritative-spec/PDF/generic web-app logic, which all
+            # assume a browser frontend exists.
+            features = _generic_features(order)
+            goal = sanitize_public_text(order.description[:20_000]) or f"A Telegram bot supporting {features[0].rstrip('.').casefold()}."
+            non_goals = ("Features not explicitly included in the approved first version",)
+            technical = (
+                "Python 3 with python-telegram-bot",
+                "BOT_TOKEN read from an environment variable, never hardcoded or logged",
+                "No database unless a specific feature requires persistence",
+            )
+            ui = ()
+            acceptance = _generic_acceptance(features)
+            stack = RecommendedStack(frontend="None (Telegram bot, no browser UI)", backend="Python + python-telegram-bot", storage="None unless a feature requires persistence")
+        elif _looks_like_authoritative_spec(order.description):
             features = _authoritative_spec_features(order.description)
             goal = sanitize_public_text(order.description[:20_000]) or f"A small browser application supporting {features[0].rstrip('.').casefold()}."
             non_goals = ()
@@ -344,6 +366,7 @@ class ProjectBriefService:
         return ProjectBrief(
             id=new_public_id("brief", self._id_factory),
             order_id=order.id,
+            product_type=order.product_type,
             goal=goal,
             target_users=_target_users(order, signals.target_users),
             core_features=features,
@@ -353,9 +376,9 @@ class ProjectBriefService:
             ui_requirements=ui,
             acceptance_criteria=acceptance,
             open_questions=(),
-            recommended_stack=RecommendedStack(frontend="React + Vite", backend="FastAPI", storage="SQLite"),
+            recommended_stack=stack,
             elena_design_choice=session.elena_choice,
-            elena_design_concept=_elena_placeholder(session.elena_choice),
+            elena_design_concept=_elena_placeholder(session.elena_choice, product_type=order.product_type),
             created_at=now,
             updated_at=now,
         )
@@ -410,7 +433,7 @@ class ProjectBriefService:
                 "assumptions": tuple(assumptions),
                 "acceptance_criteria": tuple(criteria),
                 "elena_design_choice": choice,
-                "elena_design_concept": _elena_placeholder(choice),
+                "elena_design_concept": _elena_placeholder(choice, product_type=brief.product_type),
                 "approved_at": None,
                 "approved_revision": None,
                 "approval_fingerprint": None,

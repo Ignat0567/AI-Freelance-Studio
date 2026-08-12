@@ -96,6 +96,39 @@ def test_sparse_description_creates_essential_questions_in_stable_order():
     assert first.order.questions == second.order.questions
 
 
+def test_bot_order_never_asks_the_elena_design_question():
+    # A Telegram bot has no browser UI for Elena's visual design step to describe.
+    sparse_bot = _order("", title="Small bot", product_type="bot")
+
+    started = AlexClarificationService(clock=lambda: NOW).begin(sparse_bot)
+
+    question_ids = tuple(item.id for item in started.order.questions)
+    assert "elena-design" not in question_ids
+    assert "target-users" in question_ids
+    assert "core-features" in question_ids
+
+
+def test_bot_order_brief_has_bot_product_type_and_no_elena_concept():
+    clarification, briefs, _handoffs = _services()
+    order = _order(
+        "Build a Telegram bot that lets users track daily habits: add a habit, mark it done "
+        "today, and see their current streak.",
+        title="Habit Bot",
+        product_type="bot",
+    )
+    started = clarification.begin(order)
+    completed = clarification.use_recommended_defaults(started.order, started.session)
+
+    brief = briefs.generate(completed.order, completed.session)
+
+    assert brief.product_type.value == "bot"
+    assert brief.elena_design_concept is None
+    assert brief.ui_requirements == ()
+    assert "telegram bot" in brief.goal.casefold()
+    assert "telegram" in brief.recommended_stack.backend.casefold()
+    assert brief.recommended_stack.frontend != "React + Vite"
+
+
 def test_complete_web_description_creates_fewer_questions():
     sparse = AlexClarificationService(clock=lambda: NOW).begin(_order("Build an app.", title="Small app"))
     complete = AlexClarificationService(clock=lambda: NOW).begin(

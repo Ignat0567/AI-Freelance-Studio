@@ -17,6 +17,7 @@ export const STAGE_PROGRESS = {
   repair: 90,
   packaging: 95,
   revision: 70,
+  bot_build: 50,
   completed: 100,
 };
 

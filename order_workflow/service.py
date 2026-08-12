@@ -36,8 +36,10 @@ from .models import (
     ExecutionBlocker,
     ExecutionEvent,
     ExecutionMode,
+    ProductType,
     ProjectBrief,
     ProjectExecution,
+    SUPPORTED_PRODUCT_TYPES,
     UserOrder,
     UserOrderStatus,
     new_public_id,
@@ -46,7 +48,7 @@ from .models import (
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
-from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
+from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
     OpenCodeExecutionClient,
@@ -179,21 +181,35 @@ class ConfigurationBackedExecutionAdapter:
         self._environ = environ
 
     def check_readiness(self, brief: ProjectBrief) -> ReadinessResult:
-        return self._adapter().check_readiness(brief)
+        return self._adapter(brief).check_readiness(brief)
 
     def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken):
-        return self._adapter().execute(request, event_sink, cancellation)
+        return self._adapter(request.brief).execute(request, event_sink, cancellation)
 
-    def _adapter(self):
+    def _adapter(self, brief: ProjectBrief | None = None):
         snapshot = self._configuration_provider.snapshot()
         provider = snapshot.provider.provider if snapshot.provider.configured else ""
         model = snapshot.model.model if snapshot.model.supported else ""
         workspace_root = self._configuration_provider.workspace_root
+        is_bot = brief is not None and brief.product_type is ProductType.BOT
         if self._live:
             environ = {"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if snapshot.live_opt_in.enabled else {}
             opencode_client = self._opencode_client or select_coding_execution_client()
             if self._revision:
+                # ReviseProjectExecutionAdapter itself checks request.brief.product_type to
+                # pick web (npm) vs bot (pip/python) QA commands -- same adapter class
+                # either way, see phased_adapter.py.
                 return ReviseProjectExecutionAdapter(
+                    provider_name=provider,
+                    model_name=model,
+                    workspace_root=workspace_root,
+                    opencode_client=opencode_client,
+                    environ=environ,
+                    ai_ask=self._website_section_ai_ask,
+                    qa_runner=_select_qa_runner(self._environ),
+                )
+            if is_bot:
+                return TelegramBotExecutionAdapter(
                     provider_name=provider,
                     model_name=model,
                     workspace_root=workspace_root,
@@ -310,8 +326,8 @@ class OrderWorkflowService:
         return rows
 
     def create_order(self, request: CreateOrderRequest) -> dict[str, Any]:
-        if request.product_type != "web_app":
-            raise OrderWorkflowError("unsupported_product_type", "Only web_app orders are supported.")
+        if request.product_type not in {item.value for item in SUPPORTED_PRODUCT_TYPES}:
+            raise OrderWorkflowError("unsupported_product_type", "Only web_app and bot orders are supported.")
         now = utc_now(self._clock)
         order = UserOrder(
             id=new_public_id("order", self._id_factory),
