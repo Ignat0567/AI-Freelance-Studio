@@ -380,6 +380,46 @@ class FlakyAdapter(FakeProjectExecutionAdapter):
         return super().execute(request, event_sink, cancellation)
 
 
+class FlakyAdapterThatRegistersAnArtifactBeforeFailing(FakeProjectExecutionAdapter):
+    """Like FlakyAdapter, but the failing attempt also records a real artifact first --
+    for asserting retry doesn't leave the failed attempt's stale artifact around."""
+
+    def __init__(self, config: FakeExecutorConfig | None = None) -> None:
+        super().__init__(config or FakeExecutorConfig())
+        self.calls = 0
+
+    def execute(self, request, event_sink, cancellation):
+        self.calls += 1
+        event_sink.artifact(kind="project_summary", name="execution_package.json", summary=f"attempt {self.calls}", reference="execution-package-json")
+        if self.calls == 1:
+            return ExecutionResult(
+                success=False,
+                outcome="failed",
+                summary="Simulated transient provider failure.",
+                test_summary=WorkflowTestSummary(failed=1),
+                errors=("provider_rate_limited",),
+                completed_at=NOW,
+            )
+        return super().execute(request, event_sink, cancellation)
+
+
+def test_retry_clears_the_failed_attempts_stale_artifacts():
+    brief, handoff = _approved_contract()
+    adapter = FlakyAdapterThatRegistersAnArtifactBeforeFailing()
+    service = _service(fake_adapter=adapter)
+
+    first_attempt = service.wait(service.start(brief, handoff).id, 2)
+    assert first_attempt.status is ExecutionStatus.FAILED
+    assert len(first_attempt.artifacts) == 1
+
+    service.retry(first_attempt.id, brief, handoff)
+    finished = service.wait(first_attempt.id, 2)
+
+    assert finished.status is ExecutionStatus.SUCCEEDED
+    names = [item.name for item in finished.artifacts]
+    assert names.count("execution_package.json") == 1
+
+
 def test_retry_reruns_a_failed_execution_reusing_the_same_id():
     brief, handoff = _approved_contract()
     adapter = FlakyAdapter()

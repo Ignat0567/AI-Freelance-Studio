@@ -273,6 +273,10 @@ class ProjectExecutionService:
                     "current_activity": "Queued for retry",
                     "blockers": (),
                     "result": None,
+                    # The failed attempt's artifacts (execution_package.json, delivery_report.md, ...)
+                    # get rewritten with fresh content on retry -- keeping the old records around
+                    # would show duplicate, stale-summary entries for the same filenames.
+                    "artifacts": (),
                     "started_at": None,
                     "finished_at": None,
                     "events": append_bounded_event(record.snapshot.events, retry_event, limit=self._event_limit),
