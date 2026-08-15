@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ai_utils import ask_studio_ai_with_history
-from project_docs import build_architecture_mermaid, build_module_map, build_readme, generate_overview_paragraph
+from project_docs import build_architecture_mermaid, build_module_map, build_overview_paragraph, build_readme
 
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
@@ -273,18 +273,18 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
 
         doc_artifacts: tuple = ()
         if result.success:
-            # The structure (module map, Mermaid diagram) is fully deterministic --
-            # built from the real generated file tree, never AI-imagined -- so it
-            # can never drift out of sync with what was actually delivered. Only
-            # the README's overview paragraph gets one narrow AI call, with a safe
-            # non-AI fallback (generate_overview_paragraph never raises).
+            # Every part of the generated documentation is deterministic: the structure
+            # (module map, Mermaid diagram) is built from the real generated file tree,
+            # and the overview paragraph is assembled from the approved brief. Nothing
+            # here is AI-imagined, so none of it can drift out of sync with what was
+            # actually delivered.
             module_map = build_module_map(workspace.project_path)
             tech_stack = (
                 f"Frontend: {request.brief.recommended_stack.frontend}\n"
                 f"Backend: {request.brief.recommended_stack.backend}\n"
                 f"Storage: {request.brief.recommended_stack.storage}"
             )
-            overview = generate_overview_paragraph(request.brief.goal, request.handoff.requirements, self._website_section_ai_ask)
+            overview = build_overview_paragraph(request.brief.goal, request.brief.target_users)
             readme_text = build_readme(
                 project_name=workspace.project_reference,
                 goal=request.brief.goal,

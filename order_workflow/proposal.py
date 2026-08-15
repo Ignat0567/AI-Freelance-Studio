@@ -61,7 +61,12 @@ def _fallback_value_proposition(goal: str) -> str:
 def generate_value_proposition(brief: ProjectBrief, ai_ask: Callable[[str], str]) -> str:
     """One narrow AI call for a short "why this matters" paragraph. Never raises --
     an unusable AI response degrades to a plain deterministic sentence built from
-    `brief.goal`, same fallback discipline as `project_docs.generate_overview_paragraph`."""
+    `brief.goal`.
+
+    Kept as an AI call, unlike the README overview (`project_docs.build_overview_paragraph`,
+    now assembled from the brief): this is client-facing persuasion for a commercial
+    proposal, which has no deterministic equivalent, and it runs when a human asks for a
+    proposal rather than on every execution."""
     prompt = (
         "Write a single short paragraph (2-3 sentences, no more than 500 characters) for a client-facing "
         "commercial proposal, explaining why this project matters and what value it delivers. Be concrete "

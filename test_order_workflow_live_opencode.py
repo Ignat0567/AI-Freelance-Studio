@@ -269,11 +269,10 @@ def _configuration(tmp_path, *, config=None, opt_in=False):
 
 
 def _no_network_ai_ask(_prompt: str) -> str:
-    """Default stub for _configured_workflow: no test in this file exercises the
-    cinematic-website branch (which is the only thing that used to call this),
-    but documentation generation now calls it on every successful execution too --
-    returning "" makes generate_overview_paragraph fall back deterministically
-    instead of any test silently attempting a real network call."""
+    """Default stub for _configured_workflow: the cinematic-website branch is the only
+    thing that calls this, and no test in this file exercises it. Kept as a guard so a
+    future test cannot silently attempt a real network call. (Documentation generation
+    briefly called this too; it is deterministic again -- see build_overview_paragraph.)"""
     return ""
 
 

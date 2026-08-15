@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_utils import ask_studio_ai_with_history
-from project_docs import build_architecture_mermaid, build_module_map, build_readme, generate_overview_paragraph
+from project_docs import build_architecture_mermaid, build_module_map, build_overview_paragraph, build_readme
 
 from .complexity import classify_phase_complexity, model_for_complexity
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
@@ -469,7 +469,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             f"Backend: {request.brief.recommended_stack.backend}\n"
             f"Storage: {request.brief.recommended_stack.storage}"
         )
-        overview = generate_overview_paragraph(request.brief.goal, request.handoff.requirements, self._ai_ask)
+        overview = build_overview_paragraph(request.brief.goal, request.brief.target_users)
         readme_text = build_readme(
             project_name=workspace.project_reference,
             goal=request.brief.goal,
