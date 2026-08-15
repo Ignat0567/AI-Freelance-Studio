@@ -102,6 +102,10 @@ def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, smoke_check_runn
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
         # Never a real Docker/Playwright call in a unit test.
         smoke_check_runner=smoke_check_runner or _passing_qa,
+        # Mirrors the real construction in service.py -- without this, self.qa_commands
+        # falls back to the base class's ("npm test",) default and the README's "Setup /
+        # Run" section lies about how to run a Python bot.
+        qa_commands=BOT_QA_COMMANDS,
     )
 
 
@@ -190,3 +194,6 @@ def test_bot_build_finalizes_with_readme_and_architecture(tmp_path):
     assert (workspace.project_path / "README.md").is_file()
     assert (workspace.project_path / "ARCHITECTURE.md").is_file()
     assert (workspace.project_path / "bot.py").is_file()
+    readme_text = (workspace.project_path / "README.md").read_text(encoding="utf-8")
+    assert "npm test" not in readme_text
+    assert "pip install -r requirements.txt" in readme_text

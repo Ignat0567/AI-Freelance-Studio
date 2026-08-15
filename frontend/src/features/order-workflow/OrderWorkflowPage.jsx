@@ -23,7 +23,7 @@ function asOrderPayload(form) {
   return {
     title: form.title.trim(),
     description: form.description.trim(),
-    product_type: 'web_app',
+    product_type: form.product_type || 'web_app',
     preferred_language: form.preferred_language || 'en',
     constraints: form.constraints.split('\n').map(item => item.trim()).filter(Boolean),
   };

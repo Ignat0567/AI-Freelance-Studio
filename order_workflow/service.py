@@ -48,7 +48,7 @@ from .models import (
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
-from .phased_adapter import PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
+from .phased_adapter import BOT_QA_COMMANDS, PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
     OpenCodeExecutionClient,
@@ -217,6 +217,7 @@ class ConfigurationBackedExecutionAdapter:
                     environ=environ,
                     ai_ask=self._website_section_ai_ask,
                     qa_runner=_select_qa_runner(self._environ),
+                    qa_commands=BOT_QA_COMMANDS,
                 )
             if resolve_execution_pipeline_mode(self._environ) == "legacy":
                 return LiveOpenCodeExecutionAdapter(
