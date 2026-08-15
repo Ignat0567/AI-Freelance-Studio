@@ -37,6 +37,18 @@ PDF = "Create a browser PDF voice assistant with upload, voice and text chat, gr
 CINEMATIC = "Create a cinematic showcase website with webgl scroll storytelling for a digital agency."
 
 
+def _shared_audience(brief):
+    """A brief whose approved audience is more than one person, so decide_backend_need
+    resolves to "backend needed" from the brief alone. This is how tests reach the third
+    bridging phase now that the gate no longer consults a model.
+
+    Set on the brief rather than in the order description on purpose: the PDF description
+    these tests build from takes brief_service's fixed-spec branch, which rewrites the goal
+    and feature list and would drop any extra sentence added here.
+    """
+    return brief.model_copy(update={"target_users": ("A small internal team",)})
+
+
 class SequenceIds:
     def __init__(self) -> None:
         self.index = 0
@@ -125,21 +137,13 @@ class FakeEventSink:
         return ExecutionArtifact(id="artifact_fixed001", execution_id="execution_fixed001", kind=kind, name=name, summary=summary, reference=reference, created_at=NOW)
 
 
-def _always_needs_no_backend(_prompt: str) -> str:
-    return '{"needs_backend": false, "reasoning": "Single-user client-side app, no sync needed."}'
-
-
-def _always_needs_backend(_prompt: str) -> str:
-    return '{"needs_backend": true, "reasoning": "Multiple users must see synchronized data."}'
-
-
 def _safe_prose_ai_ask(_prompt: str) -> str:
     """Never touches the network -- used as the general-purpose ai_ask in every test
     so the cinematic-website legacy-delegation path can never make a real API call."""
     return "A generated project overview paragraph."
 
 
-def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, decision_ai_ask=None, ai_ask=None, environ=None, smoke_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
+def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
     return PhasedLiveOpenCodeExecutionAdapter(
         provider_name="opencode_bridge",
         model_name="openai/gpt-5.5",
@@ -147,7 +151,6 @@ def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, decision_ai_ask=
         opencode_client=opencode_client or FakePhaseOpenCodeClient(),
         qa_runner=qa_runner or _passing_qa,
         ai_ask=ai_ask or _safe_prose_ai_ask,
-        decision_ai_ask=decision_ai_ask or _always_needs_no_backend,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1", **(environ or {})},
         # Never a real Docker/Playwright call in a unit test by default -- the functional
         # smoke check gets its own dedicated test coverage further down.
@@ -215,8 +218,9 @@ def test_decision_no_completes_after_two_phases_only(tmp_path):
 
 def test_decision_yes_runs_a_third_bridging_phase(tmp_path):
     brief, handoff = _contract()
+    brief = _shared_audience(brief)
     client = FakePhaseOpenCodeClient()
-    adapter = _adapter(tmp_path, opencode_client=client, decision_ai_ask=_always_needs_backend)
+    adapter = _adapter(tmp_path, opencode_client=client)
     sink = FakeEventSink()
 
     result = adapter.execute(_request(brief, handoff), sink, CancellationToken())
@@ -379,30 +383,16 @@ def test_opencode_declines_during_core_feature_phase(tmp_path):
 # --- decision-gate fail-closed behavior ----------------------------------------
 
 
-def test_unparsable_decision_response_fails_closed_to_needing_a_backend(tmp_path):
+def test_unclassifiable_audience_fails_closed_to_needing_a_backend(tmp_path):
     brief, handoff = _contract()
+    brief = brief.model_copy(update={"target_users": ("Whoever my cousin invites",)})
     client = FakePhaseOpenCodeClient()
-    adapter = _adapter(tmp_path, opencode_client=client, decision_ai_ask=lambda _prompt: "not json")
+    adapter = _adapter(tmp_path, opencode_client=client)
 
     result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
 
     assert result.success is True
     assert client.call_count == 3  # bridge phase ran
-
-
-def test_decision_ai_ask_raising_fails_closed_to_needing_a_backend(tmp_path):
-    brief, handoff = _contract()
-    client = FakePhaseOpenCodeClient()
-
-    def _raising_ai_ask(_prompt: str) -> str:
-        raise RuntimeError("provider unavailable")
-
-    adapter = _adapter(tmp_path, opencode_client=client, decision_ai_ask=_raising_ai_ask)
-
-    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
-
-    assert result.success is True
-    assert client.call_count == 3
 
 
 # --- cinematic-website compatibility -------------------------------------------
@@ -557,8 +547,9 @@ def test_resume_skips_a_completed_ui_shell_phase_after_core_feature_fails(tmp_pa
 
 def test_resume_skips_ui_shell_and_core_feature_after_backend_bridge_fails(tmp_path):
     brief, handoff = _contract()
+    brief = _shared_audience(brief)
     client = FlakyOnceClient(fail_at_call=3)  # 1=ui_shell, 2=core_feature, 3=backend bridge (fails once)
-    adapter = _adapter(tmp_path, opencode_client=client, decision_ai_ask=_always_needs_backend)
+    adapter = _adapter(tmp_path, opencode_client=client)
     request = _request(brief, handoff)
 
     first = adapter.execute(request, FakeEventSink(), CancellationToken())
@@ -621,7 +612,6 @@ def _revision_adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=
         opencode_client=opencode_client or FakePhaseOpenCodeClient(),
         qa_runner=qa_runner or _passing_qa,
         ai_ask=ai_ask or _safe_prose_ai_ask,
-        decision_ai_ask=_always_needs_no_backend,  # unused by the revision path, required by the base class
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1", **(environ or {})},
         smoke_check_runner=smoke_check_runner or _passing_qa,
     )

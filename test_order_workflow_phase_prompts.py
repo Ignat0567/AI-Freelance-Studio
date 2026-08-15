@@ -8,10 +8,9 @@ from order_workflow import AgentHandoff, ElenaDesignChoice, ProjectBrief, Recomm
 from order_workflow.phase_context import PhaseContext
 from order_workflow.phase_prompts import (
     build_backend_bridge_prompt,
-    build_backend_decision_prompt,
     build_core_feature_prompt,
     build_ui_shell_prompt,
-    parse_backend_decision,
+    decide_backend_need,
 )
 
 pytestmark = pytest.mark.unit
@@ -87,13 +86,6 @@ def test_core_feature_prompt_does_not_repeat_the_full_ui_shell_instructions():
     assert "do not connect a database" not in prompt.lower()
 
 
-def test_backend_decision_prompt_requests_strict_json():
-    prompt = build_backend_decision_prompt(_brief(), _handoff(), _phase_context("ui_shell"), _phase_context("core_feature"))
-
-    assert '"needs_backend"' in prompt
-    assert "strict json" in prompt.lower()
-
-
 def test_backend_bridge_prompt_states_phases_are_already_implemented():
     prompt = build_backend_bridge_prompt(
         _brief(), _handoff(), _phase_context("ui_shell"), _phase_context("core_feature"),
@@ -106,37 +98,45 @@ def test_backend_bridge_prompt_states_phases_are_already_implemented():
     assert "Implement the approved AI Freelancer Studio project brief." in prompt
 
 
-def test_parse_backend_decision_valid_json():
-    decision = parse_backend_decision('{"needs_backend": false, "reasoning": "Single-user client-only app."}')
+def test_single_local_user_with_no_sharing_needs_no_backend():
+    decision = decide_backend_need(_brief(), _handoff())
 
     assert decision.needs_backend is False
-    assert decision.reasoning == "Single-user client-only app."
-    assert decision.parsed is True
+    assert decision.confident is True
 
 
-def test_parse_backend_decision_strips_code_fence():
-    decision = parse_backend_decision('```json\n{"needs_backend": true, "reasoning": "Needs sync."}\n```')
-
-    assert decision.needs_backend is True
-    assert decision.parsed is True
-
-
-def test_parse_backend_decision_fails_closed_on_invalid_json():
-    decision = parse_backend_decision("not json at all")
+@pytest.mark.parametrize(
+    "audience",
+    ["A small internal team", "Customers using the application", "Public users"],
+)
+def test_shared_audiences_need_a_backend(audience):
+    decision = decide_backend_need(_brief(target_users=(audience,)), _handoff())
 
     assert decision.needs_backend is True
-    assert decision.parsed is False
+    assert decision.confident is True
+    assert audience.casefold() in decision.reasoning.casefold()
 
 
-def test_parse_backend_decision_fails_closed_on_missing_field():
-    decision = parse_backend_decision('{"reasoning": "no needs_backend key"}')
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "Synchronize saved answers between users",
+        "Users sign in before uploading",
+        "Support multi-user workspaces",
+        "Keep documents available across devices",
+    ],
+)
+def test_sharing_requirements_override_a_single_user_audience(requirement):
+    # "Only me, but synced across my laptop and phone" is still a single-user audience
+    # that needs somewhere to sync through.
+    decision = decide_backend_need(_brief(), _handoff(requirements=(requirement,)))
 
     assert decision.needs_backend is True
-    assert decision.parsed is False
+    assert decision.confident is True
 
 
-def test_parse_backend_decision_fails_closed_on_wrong_type():
-    decision = parse_backend_decision('{"needs_backend": "yes", "reasoning": "wrong type"}')
+def test_unrecognised_audience_fails_closed_to_needing_a_backend():
+    decision = decide_backend_need(_brief(target_users=("Whoever my cousin invites",)), _handoff())
 
     assert decision.needs_backend is True
-    assert decision.parsed is False
+    assert decision.confident is False

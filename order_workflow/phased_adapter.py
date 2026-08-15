@@ -19,12 +19,11 @@ from .phase_context import PhaseContext, build_phase_context
 from .phase_prompts import (
     BackendDecision,
     build_backend_bridge_prompt,
-    build_backend_decision_prompt,
     build_bot_prompt,
     build_core_feature_prompt,
     build_revision_prompt,
     build_ui_shell_prompt,
-    parse_backend_decision,
+    decide_backend_need,
 )
 from .phase_repair import run_qa_repair_loop
 from .production_adapter import (
@@ -112,7 +111,7 @@ def _load_backend_decision_checkpoint(workspace) -> BackendDecision | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return BackendDecision(needs_backend=bool(data["needs_backend"]), reasoning=str(data["reasoning"]), parsed=bool(data["parsed"]))
+        return BackendDecision(needs_backend=bool(data["needs_backend"]), reasoning=str(data["reasoning"]), confident=bool(data["confident"]))
     except Exception:
         _logger.warning("Ignoring unreadable backend-decision checkpoint at %s", path, exc_info=True)
         return None
@@ -121,7 +120,7 @@ def _load_backend_decision_checkpoint(workspace) -> BackendDecision | None:
 def _save_backend_decision_checkpoint(workspace, decision: BackendDecision) -> None:
     path = _checkpoint_path(workspace, "backend_decision")
     try:
-        path.write_text(json.dumps({"needs_backend": decision.needs_backend, "reasoning": decision.reasoning, "parsed": decision.parsed}), encoding="utf-8")
+        path.write_text(json.dumps({"needs_backend": decision.needs_backend, "reasoning": decision.reasoning, "confident": decision.confident}), encoding="utf-8")
     except OSError:
         _logger.warning("Could not write backend-decision checkpoint at %s; a retry would re-ask.", path, exc_info=True)
 
@@ -148,19 +147,17 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         environ: dict[str, str] | None = None,
         writable_probe: Callable[[Path], bool] | None = None,
         ai_ask: Callable[[str], str] | None = None,
-        decision_ai_ask: Callable[[str], str] | None = None,
         qa_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
         smoke_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
     ) -> None:
         super().__init__(provider_name=provider_name, model_name=model_name, workspace_root=workspace_root, qa_commands=qa_commands, dry_run=True, writable_probe=writable_probe)
         self._opencode_client = opencode_client or UnavailableOpenCodeExecutionClient()
         self._environ = environ
-        # ai_ask is the general-purpose prose call (README overview, and the cinematic-website
-        # fallback's own section-copy call); decision_ai_ask is specifically for the strict-JSON
-        # backend decision gate. They default to the same real call but are independently
-        # injectable so tests never need a fake that has to serve both shapes at once.
+        # The general-purpose prose call: the README overview, and the cinematic-website
+        # fallback's own section-copy call. The backend-decision gate used to take a second,
+        # separately injectable call of this shape; it is now decided from the brief with no
+        # model in the loop at all (see phase_prompts.decide_backend_need).
         self._ai_ask = ai_ask or self._default_ai_ask
-        self._decision_ai_ask = decision_ai_ask or self._ai_ask
         self._qa_runner = qa_runner or _select_qa_runner(environ)
         # Independently injectable from qa_runner: qa_runner may be swapped to the bare-host
         # runner (FREELANCERSTUDIO_PHASED_QA_BACKEND=host), but the functional smoke check
@@ -253,7 +250,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         if decision is not None:
             event_sink.emit(stage=ExecutionStage.BACKEND_DECISION, agent="Studio", progress=65, message="Resuming: reusing the backend-need decision from an earlier attempt.")
         else:
-            decision = self._decide_backend_need(request, ui_shell.context, core_feature.context)
+            decision = decide_backend_need(request.brief, request.handoff)
             _save_backend_decision_checkpoint(workspace, decision)
         self._emit_milestone(
             event_sink,
@@ -265,14 +262,6 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return self._finalize_success(request, event_sink, workspace, note="No backend was required; the UI shell and core feature are the complete deliverable.")
 
         return self._run_backend_bridge(request, event_sink, cancellation, workspace, ui_shell.context, core_feature.context, decision)
-
-    def _decide_backend_need(self, request: ExecutionRequest, ui_shell_context: PhaseContext, core_feature_context: PhaseContext) -> BackendDecision:
-        prompt = build_backend_decision_prompt(request.brief, request.handoff, ui_shell_context, core_feature_context)
-        try:
-            raw_response = self._decision_ai_ask(prompt)
-        except Exception:
-            raw_response = ""
-        return parse_backend_decision(raw_response)
 
     def _emit_milestone(self, event_sink: ExecutionEventSink, stage: ExecutionStage, message: str) -> None:
         event_sink.emit(

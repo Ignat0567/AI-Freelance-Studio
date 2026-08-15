@@ -98,7 +98,6 @@ def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, smoke_check_runn
         opencode_client=opencode_client or FakeBotOpenCodeClient(),
         qa_runner=qa_runner or _passing_qa,
         ai_ask=_safe_prose_ai_ask,
-        decision_ai_ask=_safe_prose_ai_ask,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
         # Never a real Docker/Playwright call in a unit test.
         smoke_check_runner=smoke_check_runner or _passing_qa,

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
+import re
 
 from .execution_plan import build_prompt
 from .models import AgentHandoff, ProjectBrief
 from .phase_context import PhaseContext
 
-_FAIL_CLOSED_REASONING = "AI response could not be parsed as valid JSON; defaulting to requiring a backend for safety."
+_FAIL_CLOSED_REASONING = "The brief names an audience this rule set does not recognise; defaulting to requiring a backend for safety."
 
 
 def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
@@ -93,33 +93,6 @@ def build_core_feature_prompt(brief: ProjectBrief, handoff: AgentHandoff, ui_she
     return "\n".join(lines)
 
 
-def build_backend_decision_prompt(
-    brief: ProjectBrief,
-    handoff: AgentHandoff,
-    ui_shell_context: PhaseContext,
-    core_feature_context: PhaseContext,
-) -> str:
-    lines = [
-        "You are deciding whether this project needs its own backend and database. Do not write any code.",
-        "",
-        f"Goal: {brief.goal}",
-        f"Context: {handoff.context_summary}",
-        f"Already built (UI shell): {ui_shell_context.summary}",
-        f"Already built (core feature): {core_feature_context.summary}",
-        "",
-        "Requirements:",
-        *[f"- {item}" for item in handoff.requirements],
-        "",
-        "A backend/database is needed only if the app requires: synchronization between different users, "
-        "persistence of history/state across sessions for multiple users, or genuine multi-user scenarios. "
-        "A single-user app that only talks to an external API directly from the client does NOT need a backend.",
-        "",
-        'Respond with ONLY strict JSON, no prose, in exactly this shape: {"needs_backend": true, "reasoning": "..."}',
-        "The reasoning must be a short, concrete sentence explaining the decision.",
-    ]
-    return "\n".join(lines)
-
-
 def build_backend_bridge_prompt(
     brief: ProjectBrief,
     handoff: AgentHandoff,
@@ -144,29 +117,82 @@ def build_backend_bridge_prompt(
 class BackendDecision:
     needs_backend: bool
     reasoning: str
-    parsed: bool
+    # False means the rules below could not classify the audience and fell back to the
+    # safe answer, rather than reaching the conclusion on evidence.
+    confident: bool
 
 
-def parse_backend_decision(raw_response: str) -> BackendDecision:
-    try:
-        payload = json.loads(_strip_code_fence(raw_response))
-    except json.JSONDecodeError:
-        return BackendDecision(needs_backend=True, reasoning=_FAIL_CLOSED_REASONING, parsed=False)
-    if not isinstance(payload, dict) or not isinstance(payload.get("needs_backend"), bool):
-        return BackendDecision(needs_backend=True, reasoning=_FAIL_CLOSED_REASONING, parsed=False)
-    reasoning = payload.get("reasoning")
-    reasoning_text = reasoning.strip() if isinstance(reasoning, str) and reasoning.strip() else "No reasoning was provided."
-    return BackendDecision(needs_backend=payload["needs_backend"], reasoning=reasoning_text[:2000], parsed=True)
+# The strings _target_users() in brief_service.py maps the "target-users" clarification
+# answer onto. Anything outside these two sets is free text the user typed themselves.
+_SINGLE_USER_TARGETS = frozenset({"single local user"})
+_MULTI_USER_TARGETS = frozenset({
+    "a small internal team",
+    "customers using the application",
+    "public users",
+})
+
+# Kept deliberately narrow. A false positive here is not free: it triggers a whole extra
+# backend-bridge phase (another coding-CLI invocation), so vague matches like "shared" or
+# "real-time" -- both of which a client-only app can satisfy on its own -- are left out.
+_BACKEND_REQUIRING_PATTERNS: tuple[str, ...] = (
+    r"\bsynchroni[sz]",
+    r"\bsync\b",
+    r"\bmulti[- ]?user\b",
+    r"\bmultiple users\b",
+    r"\bcollaborat",
+    r"\bacross (devices|browsers|machines)\b",
+    r"\b(sign|log)[- ]?(in|up)\b",
+    r"\blogin\b",
+    r"\bauthenticat",
+    r"\buser accounts?\b",
+)
 
 
-def _strip_code_fence(raw_response: str) -> str:
-    text = raw_response.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-        text = text.strip()
-    return text
+def decide_backend_need(brief: ProjectBrief, handoff: AgentHandoff) -> BackendDecision:
+    """Decide whether this project needs a backend, from the approved brief alone.
+
+    This used to be an extra coding-CLI subprocess per execution (via
+    ask_studio_ai_with_history), asking a model to re-derive "is this multi-user?" from
+    prose that clarification.py had *already* resolved into brief.target_users. The model
+    was not adding information -- it was re-reading a question the pipeline had answered
+    upstream, at the cost of a full CLI round trip on every single order.
+
+    Fails closed (needs_backend=True) on anything the rules cannot classify, matching the
+    behaviour of the JSON parser this replaces.
+    """
+    text = " ".join((
+        brief.goal,
+        *brief.core_features,
+        *brief.acceptance_criteria,
+        *brief.technical_constraints,
+        *handoff.requirements,
+    )).casefold()
+
+    # Checked before target_users on purpose: "only me, but synced across my laptop and
+    # phone" is a single-user audience that still needs somewhere to sync through.
+    for pattern in _BACKEND_REQUIRING_PATTERNS:
+        if re.search(pattern, text):
+            return BackendDecision(
+                needs_backend=True,
+                reasoning="The approved requirements ask for sync, accounts, or multi-user access, which needs server-side state.",
+                confident=True,
+            )
+
+    targets = {item.casefold().strip() for item in brief.target_users}
+    shared_audience = sorted(targets & _MULTI_USER_TARGETS)
+    if shared_audience:
+        return BackendDecision(
+            needs_backend=True,
+            reasoning=f"The brief targets {', '.join(shared_audience)}, so state has to outlive one local browser.",
+            confident=True,
+        )
+    if targets and targets <= _SINGLE_USER_TARGETS:
+        return BackendDecision(
+            needs_backend=False,
+            reasoning="Single local user, with no sync, accounts, or sharing anywhere in the approved requirements.",
+            confident=True,
+        )
+    return BackendDecision(needs_backend=True, reasoning=_FAIL_CLOSED_REASONING, confident=False)
 
 
 def build_bot_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
