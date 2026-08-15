@@ -22,18 +22,51 @@ _COMPLEXITY_KEYWORDS = (
 )
 
 
+def substantive_technical_constraints(brief: ProjectBrief) -> tuple[str, ...]:
+    """Constraints that say something about *this project*, not about the default stack.
+
+    brief_service injects the recommended stack as technical constraints on every generic
+    web app ("React + Vite frontend", "FastAPI backend where required", "SQLite local
+    storage"). Those describe the pipeline's own scaffolding choice and carry no signal
+    about how hard the work is, so counting them as evidence of complexity made the
+    threshold below fire on literally every web_app brief -- including a single static
+    page -- and the classifier always answered "complex".
+    """
+    stack = brief.recommended_stack
+    stack_terms = [term.casefold() for term in (stack.frontend, stack.backend, stack.storage) if term]
+    substantive = []
+    for constraint in brief.technical_constraints:
+        text = constraint.casefold()
+        if any(term in text for term in stack_terms):
+            continue
+        substantive.append(constraint)
+    return tuple(substantive)
+
+
+def describe_phase_complexity(brief: ProjectBrief, *, focus_text: str) -> tuple[PhaseComplexity, str]:
+    """Classify, and say why. The reason is surfaced in the execution event stream so a
+    routing decision can be audited from the outside instead of being taken on trust.
+    """
+    text = focus_text.casefold()
+    matched = [keyword for keyword in _COMPLEXITY_KEYWORDS if keyword in text]
+    if matched:
+        return "complex", f"matched {', '.join(repr(word) for word in matched[:3])}"
+
+    substantive = substantive_technical_constraints(brief)
+    if len(substantive) >= 3:
+        return "complex", f"{len(substantive)} project-specific technical constraints"
+    if len(brief.core_features) >= 5:
+        return "complex", f"{len(brief.core_features)} core features"
+    return "routine", "no complexity keywords, few constraints and features"
+
+
 def classify_phase_complexity(brief: ProjectBrief, *, focus_text: str) -> PhaseComplexity:
     """Heuristic complexity classifier -- no extra AI call, reuses signal already present
     in the approved brief. `focus_text` is whatever this specific phase is actually about
     (e.g. the UI shell's goal/requirements, or the one core feature being wired in), not
     the whole brief, so a simple project with one complex feature still routes correctly.
     """
-    text = focus_text.casefold()
-    if any(keyword in text for keyword in _COMPLEXITY_KEYWORDS):
-        return "complex"
-    if len(brief.technical_constraints) >= 3 or len(brief.core_features) >= 5:
-        return "complex"
-    return "routine"
+    return describe_phase_complexity(brief, focus_text=focus_text)[0]
 
 
 def model_for_complexity(complexity: PhaseComplexity) -> str:

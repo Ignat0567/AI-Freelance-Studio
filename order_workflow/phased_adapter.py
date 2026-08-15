@@ -10,7 +10,8 @@ from pathlib import Path
 from ai_utils import ask_studio_ai_with_history
 from project_docs import build_architecture_mermaid, build_module_map, build_overview_paragraph, build_readme
 
-from .complexity import classify_phase_complexity, model_for_complexity
+from .complexity import classify_phase_complexity, describe_phase_complexity, model_for_complexity
+from .deployment import DeploymentOutcome, build_and_verify_container
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .functional_smoke_check import run_functional_smoke_check_in_docker
@@ -149,6 +150,11 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         ai_ask: Callable[[str], str] | None = None,
         qa_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
         smoke_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
+        # Resolved by the caller from the REAL environment, never from `environ` above --
+        # that is a synthetic live-opt-in-only dict (see service.py), so reading the deploy
+        # flag out of it would silently always be False.
+        container_deploy: bool = False,
+        deploy_runner: Callable[..., DeploymentOutcome] | None = None,
     ) -> None:
         super().__init__(provider_name=provider_name, model_name=model_name, workspace_root=workspace_root, qa_commands=qa_commands, dry_run=True, writable_probe=writable_probe)
         self._opencode_client = opencode_client or UnavailableOpenCodeExecutionClient()
@@ -165,6 +171,8 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # runner regardless of that setting -- see _run_functional_smoke_check's DockerUnavailableError
         # handling for what happens when Docker itself isn't reachable either.
         self._smoke_check_runner = smoke_check_runner or run_functional_smoke_check_in_docker
+        self._container_deploy = container_deploy
+        self._deploy_runner = deploy_runner or build_and_verify_container
         self._legacy_fallback = LiveOpenCodeExecutionAdapter(
             provider_name=provider_name,
             model_name=model_name,
@@ -205,7 +213,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink.emit(stage=ExecutionStage.UI_SHELL, agent="Studio", progress=30, message="Resuming: ui_shell already completed in an earlier attempt, skipping regeneration.")
             ui_shell = _PhaseOutcome(context=ui_shell_checkpoint, failure=None)
         else:
-            ui_shell_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.ui_requirements)}")
+            ui_shell_complexity, ui_shell_reason = describe_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.ui_requirements)}")
             ui_shell = self._run_phase(
                 stage=ExecutionStage.UI_SHELL,
                 prompt=build_ui_shell_prompt(request.brief, request.handoff),
@@ -215,6 +223,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 cancellation=cancellation,
                 request=request,
                 model=model_for_complexity(ui_shell_complexity),
+                model_reason=f"{ui_shell_complexity}: {ui_shell_reason}",
                 run_functional_smoke_check=True,
             )
             if not ui_shell.success:
@@ -227,7 +236,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink.emit(stage=ExecutionStage.CORE_FEATURE, agent="Studio", progress=55, message="Resuming: core_feature already completed in an earlier attempt, skipping regeneration.")
             core_feature = _PhaseOutcome(context=core_feature_checkpoint, failure=None)
         else:
-            core_feature_complexity = classify_phase_complexity(request.brief, focus_text=f"{request.brief.core_features[0]} {request.brief.goal}")
+            core_feature_complexity, core_feature_reason = describe_phase_complexity(request.brief, focus_text=f"{request.brief.core_features[0]} {request.brief.goal}")
             core_feature = self._run_phase(
                 stage=ExecutionStage.CORE_FEATURE,
                 prompt=build_core_feature_prompt(request.brief, request.handoff, ui_shell.context),
@@ -237,6 +246,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 cancellation=cancellation,
                 request=request,
                 model=model_for_complexity(core_feature_complexity),
+                model_reason=f"{core_feature_complexity}: {core_feature_reason}",
                 run_functional_smoke_check=True,
             )
             if not core_feature.success:
@@ -284,13 +294,17 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         cancellation: CancellationToken,
         request: ExecutionRequest,
         model: str | None = None,
+        model_reason: str = "",
         run_functional_smoke_check: bool = False,
     ) -> _PhaseOutcome:
         if cancellation.is_cancelled():
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
         workspace_path = workspace.project_path
         (workspace_path / f"execution_prompt_{stage.value}.md").write_text(prompt, encoding="utf-8")
-        event_sink.emit(stage=stage, agent="Codex", progress=10, message=f"Sending {stage.value} prompt to the coding CLI" + (f" (model: {model})" if model else ""))
+        # The routing reason travels with the event so a model choice can be audited from
+        # the event stream, rather than having to re-run the classifier to find out why.
+        routing = f" (model: {model}{' -- ' + model_reason if model_reason else ''})" if model else ""
+        event_sink.emit(stage=stage, agent="Codex", progress=10, message=f"Sending {stage.value} prompt to the coding CLI{routing}")
         try:
             result = self._opencode_client.execute_project_prompt(prompt, workspace_path, event_sink, cancellation, model=model)
         except Exception:
@@ -452,14 +466,52 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             _save_phase_checkpoint(workspace, ExecutionStage.IMPLEMENTATION, bridge.context)
         return self._finalize_success(request, event_sink, workspace, note=f"A backend was added: {decision.reasoning}")
 
+    def _deploy(self, request: ExecutionRequest, event_sink: ExecutionEventSink, workspace) -> DeploymentOutcome | None:
+        """PACKAGING stage: containerise the build and prove it serves over HTTP.
+
+        Returns None when the stage does not apply (switched off, or a project with no
+        package.json such as a Telegram bot). Never raises -- a project that builds and
+        passes QA is still a good delivery when the host's Docker daemon is unhappy.
+        """
+        if not self._container_deploy or not (workspace.project_path / "package.json").is_file():
+            return None
+        event_sink.emit(stage=ExecutionStage.PACKAGING, agent="Studio", progress=90, message="Building production container image")
+        # The tag has to be a valid Docker reference: lowercase, no underscores at the start.
+        tag = f"freelancerstudio/{request.execution_id.replace('_', '-').casefold()}:latest"
+        try:
+            outcome = self._deploy_runner(workspace.project_path, image_tag=tag)
+        except Exception as exc:
+            _logger.warning("Container deploy stage failed for %s", request.execution_id, exc_info=True)
+            # Capped to ShortText's 240 limit: this string ends up in ExecutionResult.warnings,
+            # and overflowing it would turn a deploy warning into a validation crash.
+            return DeploymentOutcome(succeeded=False, image_tag=tag, status_message=f"Deploy stage error: {exc}"[:240])
+        event_sink.emit(
+            stage=ExecutionStage.PACKAGING,
+            agent="Studio",
+            progress=95,
+            message=outcome.status_message,
+            level=EventLevel.INFO if outcome.succeeded else EventLevel.WARNING,
+            details=(outcome.logs_tail[:2000],) if not outcome.succeeded and outcome.logs_tail else (),
+        )
+        return outcome
+
     def _finalize_success(self, request: ExecutionRequest, event_sink: ExecutionEventSink, workspace, *, note: str) -> ExecutionResult:
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
+        deployment = self._deploy(request, event_sink, workspace)
+        deployment_lines = ""
+        if deployment is not None:
+            deployment_lines = (
+                f"\nContainer deployment: {deployment.status_message}\n"
+                f"Image: {deployment.image_tag}\n"
+                + (f"Run locally: {deployment.run_command}\n" if deployment.run_command else "")
+            )
         delivery_report = (
             "Phased live execution completed.\n"
             f"{note}\n"
             f"Meaningful artifacts detected: {len(meaningful_artifacts)}.\n"
             f"Workspace files inspected: {summary['files_created']}.\n"
+            f"{deployment_lines}"
         )
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 
@@ -490,12 +542,16 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink.artifact(kind=ArtifactKind.PROJECT_DOCUMENTATION, name="ARCHITECTURE.md", summary="Real Mermaid architecture diagram built from the generated file tree.", reference="architecture-md"),
         )
         event_sink.emit(stage=ExecutionStage.COMPLETED, agent="Product Judge", progress=100, message="Delivery summary prepared")
+        deployment_note = f" {deployment.status_message}" if deployment is not None else ""
         return ExecutionResult(
             success=True,
             outcome="succeeded",
-            summary=f"Project generated by the phased live execution pipeline. {note}",
+            summary=f"Project generated by the phased live execution pipeline. {note}{deployment_note}",
             artifact_ids=tuple(item.id for item in artifacts),
             test_summary=TestSummary(skipped=1),
+            # A failed deploy is a warning, not a failed delivery: the project itself
+            # built, tested and rendered before this stage ever ran.
+            warnings=() if deployment is None or deployment.succeeded else (deployment.status_message[:240],),
             final_stage=ExecutionStage.COMPLETED,
             completed_at=request.brief.updated_at,
         )

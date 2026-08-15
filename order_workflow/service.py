@@ -48,6 +48,7 @@ from .models import (
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
+from .deployment import container_deploy_enabled
 from .phased_adapter import BOT_QA_COMMANDS, PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
@@ -239,6 +240,8 @@ class ConfigurationBackedExecutionAdapter:
                 # branch just above); the QA backend must be resolved from the real env source instead,
                 # or a real FREELANCERSTUDIO_PHASED_QA_BACKEND=host setting would be silently ignored.
                 qa_runner=_select_qa_runner(self._environ),
+                # Same reason: the deploy flag has to come from the real environment too.
+                container_deploy=container_deploy_enabled(self._environ),
             )
         return ProductionProjectExecutionAdapter(provider_name=provider, model_name=model, workspace_root=workspace_root)
 
