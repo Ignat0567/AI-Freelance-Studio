@@ -249,7 +249,40 @@ right instrument".
 
 ---
 
-## 4. Honest limitations
+## 4. What one real run looks like
+
+A live run of `demo/run_end_to_end_demo.py` against the order *"a pomodoro focus timer that
+runs entirely offline, with a desktop notification when the session ends"*:
+
+```
+[ORDER]     3 clarification questions asked, answered from recommended defaults
+[PLANNER]   brief rev1 — 1 core feature, 3 constraints, Elena concept requested   6s
+[UI_SHELL]  coding CLI (opus — complex: matched 'offline', 'notification')     8m 01s
+            npm run build .............................................. passed  10s
+            Playwright render check .................................... passed  10s
+[CORE_FEAT] coding CLI (opus — complex: matched 'offline', 'notification')     6m 30s
+            npm test ................................................... passed  10s
+            Playwright render check .................................... passed  10s
+[DECISION]  backend not needed — single local user, no sync/accounts       instant
+[PACKAGING] docker build + HTTP probe → 200                                    15s
+                                                                        ─────────
+                                                              total       ~15m 40s
+```
+
+Repair attempts on this run: zero — QA passed first time at every gate. That is the
+uninteresting case, and worth showing precisely because a demo that only works when
+something goes wrong is not a demo of a working pipeline.
+
+The generated project is a real React + TypeScript + Vite application: a countdown ring,
+start/pause/reset, per-day session streak, and an honest "notifications are blocked"
+state when the browser denies permission. It is served by the container the pipeline
+built, on HTTP 200, and the timer counts down.
+
+The two decisions this document is about are both visible in that trace: the model choice
+carries its own justification, and every gate between the coding calls is a program rather
+than a second opinion.
+
+## 5. Honest limitations
 
 - **No visual-fidelity check.** The pipeline verifies that a page renders and is
   interactive. It does not verify that it looks like the design specification it was given.
@@ -266,7 +299,7 @@ right instrument".
 
 ---
 
-## Reproducing it
+## 6. Reproducing it
 
 ```bash
 python demo/run_end_to_end_demo.py
