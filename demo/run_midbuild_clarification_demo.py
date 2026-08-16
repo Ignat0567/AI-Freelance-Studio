@@ -32,10 +32,13 @@ PORT = 8100
 BASE_URL = f"http://127.0.0.1:{PORT}"
 TOKEN = "test-only-local-token-32-bytes-long"
 
-# A deliberately small order. It scaffolds to the current Vite major (8 at the time of
-# writing), which is the path the browser gates were blind on until the QA image moved to
-# Node 22 -- so this demo now exercises the checkpoint *and* that fix. Small also means the
-# build ahead of the checkpoint stays well inside the coding CLI's 900s ceiling.
+# A deliberately small order: the build ahead of the checkpoint then stays well inside the
+# coding CLI's 900s ceiling, which is what this demo needs to reach the pause reliably.
+#
+# Which Vite major the CLI scaffolds is not controllable from here and varies between runs
+# (observed both 5.x and 8.x for this same order). So this script does not stand in for
+# coverage of the Vite 8 toolchain -- that is verified directly against a known Vite 8
+# workspace instead, see the Node 22 pin in docker_qa_runner.
 DEMO_ORDER = {
     "title": "Reading List",
     "description": (
