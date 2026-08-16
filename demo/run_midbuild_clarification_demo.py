@@ -32,16 +32,15 @@ PORT = 8100
 BASE_URL = f"http://127.0.0.1:{PORT}"
 TOKEN = "test-only-local-token-32-bytes-long"
 
-# The Focus Timer order, reused verbatim from the main demo. This script exists to prove
-# the pause -> answer -> resume loop, so the build ahead of the checkpoint should be the
-# least risky variable available rather than a fresh one.
+# A deliberately small order. It scaffolds to the current Vite major (8 at the time of
+# writing), which is the path the browser gates were blind on until the QA image moved to
+# Node 22 -- so this demo now exercises the checkpoint *and* that fix. Small also means the
+# build ahead of the checkpoint stays well inside the coding CLI's 900s ceiling.
 DEMO_ORDER = {
-    "title": "Focus Timer",
+    "title": "Reading List",
     "description": (
-        "A pomodoro focus timer that runs entirely offline in the browser. The user can "
-        "start, pause and reset a 25-minute focus session, sees a large animated countdown "
-        "ring, and gets a desktop notification when the session ends. Completed sessions "
-        "for the day are shown as a simple streak of dots."
+        "A single-page browser list of books I am reading. I can type a book title, add it "
+        "to the list, and tick it off when finished. Nothing else."
     ),
     "product_type": "web_app",
     "preferred_language": "en",
@@ -50,7 +49,7 @@ DEMO_ORDER = {
 
 # What the "client" answers when the pipeline stops to ask. Free text on the open question
 # so the correction is visible in the next phase's prompt.
-CLIENT_CORRECTION = "Show today's completed-session count at the top, above the countdown ring."
+CLIENT_CORRECTION = "Show the count of finished books at the top, above the list."
 
 
 def log(message: str, *, prefix: str = "  ") -> None:

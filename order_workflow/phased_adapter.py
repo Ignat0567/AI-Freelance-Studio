@@ -388,13 +388,25 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             # rate-limit message -- and the only way to tell them apart is to go read the
             # raw CLI log and compare durations by hand.
             timed_out = getattr(result, "timed_out", False)
-            error_code = "coding_cli_timeout" if timed_out else "opencode_execution_failed"
-            summary = (
-                f"The coding CLI hit its {CLAUDE_CODE_TASK_TIMEOUT}s limit during the {stage.value} phase "
-                "and was stopped before it finished."
-                if timed_out
-                else f"Live OpenCode execution did not succeed during the {stage.value} phase."
-            )
+            client_errors = tuple(getattr(result, "errors", ()) or ())
+            if timed_out:
+                error_code = "coding_cli_timeout"
+                summary = (
+                    f"The coding CLI hit its {CLAUDE_CODE_TASK_TIMEOUT}s limit during the {stage.value} phase "
+                    "and was stopped before it finished."
+                )
+            else:
+                # The client already worked out *why* it failed and said so; replacing that
+                # with a generic phase message throws away the only actionable part (an
+                # expired login, a rejected model, a provider error) and sends whoever reads
+                # the execution record digging through the raw CLI log to recover it.
+                error_code = client_errors[0] if client_errors else "opencode_execution_failed"
+                detail = (getattr(result, "summary", "") or "").strip()
+                summary = (
+                    f"The {stage.value} phase did not complete: {detail}"
+                    if detail
+                    else f"Live OpenCode execution did not succeed during the {stage.value} phase."
+                )
             return _PhaseOutcome(
                 context=None,
                 failure=self._phase_failure(

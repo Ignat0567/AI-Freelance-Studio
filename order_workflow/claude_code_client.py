@@ -174,6 +174,20 @@ class ConfiguredClaudeCodeExecutionClient:
 
         if returncode != 0:
             failure_text = (payload.get("result") if isinstance(payload, dict) else None) or (stderr_text or stdout_text)[-2000:]
+            # An expired CLI login is not a coding failure and no amount of retrying or
+            # repairing fixes it -- it needs a human to run `claude` and sign in again. It
+            # arrives as a normal-looking nonzero exit with a full JSON payload, so without
+            # naming it here it reads as "the model declined", which sends the next person
+            # looking at prompts instead of at their session.
+            status = payload.get("api_error_status") if isinstance(payload, dict) else None
+            if status == 401:
+                return OpenCodeExecutionResult(
+                    success=False,
+                    summary="The Claude Code CLI is no longer signed in: its OAuth token has expired. Run `claude` and re-authenticate, then retry this execution.",
+                    errors=("claude_code_auth_expired",),
+                    usage=usage,
+                    rate_limit_message=rate_limit_message,
+                )
             return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {failure_text}", errors=("claude_code_process_failed",), usage=usage, rate_limit_message=rate_limit_message)
 
         if payload is None:

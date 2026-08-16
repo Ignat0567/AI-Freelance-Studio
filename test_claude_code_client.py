@@ -277,3 +277,30 @@ def test_non_rate_limit_failure_has_no_rate_limit_message(monkeypatch, tmp_path)
     assert result.success is False
     assert result.rate_limit_message is None
     assert result.usage is not None
+
+
+def test_an_expired_cli_login_is_named_rather_than_reported_as_a_coding_failure(monkeypatch, tmp_path):
+    # An expired OAuth token arrives as an ordinary nonzero exit carrying a full JSON
+    # payload. Left unnamed it reads as "the model declined", which sends the next person
+    # looking at prompts instead of at their own session. No retry or repair can fix it.
+    payload = json.dumps({
+        "api_error_status": 401,
+        "result": "Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.",
+        "type": "result",
+    })
+    fake_popen = _SequencedFakePopen([_FakeProcess(stdout=payload, returncode=1)])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+
+    class _Sink:
+        def emit(self, **_kwargs):
+            pass
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("build it", tmp_path, _Sink(), CancellationToken())
+
+    assert result.success is False
+    assert result.errors == ("claude_code_auth_expired",)
+    assert "re-authenticate" in result.summary.casefold()
+    # Output was present, so the silent-crash retry must not have fired.
+    assert fake_popen.call_count == 1
