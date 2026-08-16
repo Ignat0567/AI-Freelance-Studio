@@ -14,6 +14,7 @@ from .complexity import classify_phase_complexity, describe_phase_complexity, mo
 from .deployment import DeploymentOutcome, build_and_verify_container
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
+from .claude_code_client import CLAUDE_CODE_TASK_TIMEOUT
 from .functional_smoke_check import run_functional_smoke_check_in_docker
 from .midbuild_clarification import build_midbuild_questions, corrections_from_answers
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProductType, ProjectBrief, TestSummary, TokenUsage
@@ -382,10 +383,22 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         if repair.cancelled:
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
         if not result.success:
+            # A timeout is worth saying out loud. Flattened into the generic failure code it
+            # is indistinguishable from a model-level refusal -- same empty usage, same null
+            # rate-limit message -- and the only way to tell them apart is to go read the
+            # raw CLI log and compare durations by hand.
+            timed_out = getattr(result, "timed_out", False)
+            error_code = "coding_cli_timeout" if timed_out else "opencode_execution_failed"
+            summary = (
+                f"The coding CLI hit its {CLAUDE_CODE_TASK_TIMEOUT}s limit during the {stage.value} phase "
+                "and was stopped before it finished."
+                if timed_out
+                else f"Live OpenCode execution did not succeed during the {stage.value} phase."
+            )
             return _PhaseOutcome(
                 context=None,
                 failure=self._phase_failure(
-                    request, stage, "opencode_execution_failed", f"Live OpenCode execution did not succeed during the {stage.value} phase.",
+                    request, stage, error_code, summary,
                     usage=result.usage, rate_limit_message=result.rate_limit_message,
                 ),
             )

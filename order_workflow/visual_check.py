@@ -218,7 +218,28 @@ const PAGE_PROBE = () => {{
 async function main() {{
   const browser = await chromium.launch();
   const page = await browser.newPage({{ viewport: {{ width: 1280, height: 900 }} }});
-  await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: 20000 }});
+
+  // The preview server is started in the background by the shell command that launches
+  // this script, so it may not be listening yet. Without this retry a slow start reports
+  // as ERR_CONNECTION_REFUSED, the gate fails, and the repair loop then asks the coding
+  // CLI to fix a design problem that does not exist -- burning both its attempts.
+  let lastError = null;
+  for (let attempt = 0; attempt < 15; attempt += 1) {{
+    try {{
+      await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: 20000 }});
+      lastError = null;
+      break;
+    }} catch (err) {{
+      lastError = err;
+      await page.waitForTimeout(2000);
+    }}
+  }}
+  if (lastError) {{
+    await browser.close();
+    console.error('VISUAL CHECK FAILED: the preview server never accepted a connection.');
+    console.error(String(lastError && lastError.message ? lastError.message : lastError));
+    process.exit(1);
+  }}
   await page.waitForTimeout(1200);
 
   const desktop = await page.evaluate(PAGE_PROBE);

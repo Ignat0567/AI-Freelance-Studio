@@ -32,11 +32,17 @@ PORT = 8100
 BASE_URL = f"http://127.0.0.1:{PORT}"
 TOKEN = "test-only-local-token-32-bytes-long"
 
+# The Focus Timer order, reused verbatim from the main demo because it is the one order
+# proven to build and pass every gate on this machine. This script exists to prove the
+# pause -> answer -> resume loop, so the build ahead of the checkpoint should be the least
+# risky one available, not a fresh variable.
 DEMO_ORDER = {
-    "title": "Reading List",
+    "title": "Focus Timer",
     "description": (
-        "A small offline browser app for tracking books I am reading. I can add a book, "
-        "mark how far through it I am, and see what I finished this month."
+        "A pomodoro focus timer that runs entirely offline in the browser. The user can "
+        "start, pause and reset a 25-minute focus session, sees a large animated countdown "
+        "ring, and gets a desktop notification when the session ends. Completed sessions "
+        "for the day are shown as a simple streak of dots."
     ),
     "product_type": "web_app",
     "preferred_language": "en",
@@ -45,7 +51,7 @@ DEMO_ORDER = {
 
 # What the "client" answers when the pipeline stops to ask. Free text on the open question
 # so the correction is visible in the next phase's prompt.
-CLIENT_CORRECTION = "Show the finished-this-month count at the top, above the reading list."
+CLIENT_CORRECTION = "Show today's completed-session count at the top, above the countdown ring."
 
 
 def log(message: str, *, prefix: str = "  ") -> None:
