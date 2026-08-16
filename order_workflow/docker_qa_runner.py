@@ -12,6 +12,20 @@ _NODE_IMAGE = "node:20-slim"
 _PYTHON_IMAGE = "python:3.12-slim"
 _LOG_TAIL_CHARS = 4000
 
+# The browser-based checks (functional_smoke_check, visual_check) share this pair, and it
+# lives here rather than in each of them because the two values are only correct together.
+#
+#   * the npm `playwright` version must match the browsers baked into the image
+#     (PLAYWRIGHT_BROWSERS_PATH), or Playwright downloads a browser at QA time instead of
+#     reusing the cached one
+#   * the image's Node must be new enough for the toolchain of the projects being checked.
+#     The previous pin (v1.48.0-jammy) shipped Node 20.18.0; Vite 8 pulls rolldown, which
+#     requires ^20.19.0 || >=22.12.0, so its native binding was never installed and
+#     `npm run preview` died on startup -- which both gates then reported as a broken page.
+#     v1.55.0-noble ships Node 22.18.0.
+PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.55.0-noble"
+PLAYWRIGHT_NPM_VERSION = "1.55.0"
+
 
 class DockerUnavailableError(RuntimeError):
     """Raised when the Docker engine itself cannot be reached (not a QA command failure)."""

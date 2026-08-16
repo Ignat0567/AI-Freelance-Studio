@@ -4,7 +4,7 @@ import pytest
 
 from order_workflow.docker_qa_runner import DockerUnavailableError
 from order_workflow.functional_smoke_check import (
-    _PLAYWRIGHT_IMAGE,
+    PLAYWRIGHT_IMAGE,
     _SMOKE_CHECK_FILENAME,
     run_functional_smoke_check_in_docker,
 )
@@ -75,8 +75,8 @@ def test_smoke_check_runs_against_the_playwright_image_not_the_plain_node_image(
 
     run_functional_smoke_check_in_docker(("functional smoke check",), tmp_path, docker_client_factory=_factory(client))
 
-    assert client.containers.run_calls[0]["image"] == _PLAYWRIGHT_IMAGE
-    assert _PLAYWRIGHT_IMAGE != "node:20-slim"
+    assert client.containers.run_calls[0]["image"] == PLAYWRIGHT_IMAGE
+    assert PLAYWRIGHT_IMAGE != "node:20-slim"
 
 
 def test_smoke_check_passes_on_zero_exit_code(tmp_path):

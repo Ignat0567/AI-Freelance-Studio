@@ -176,3 +176,34 @@ def test_the_bound_runner_matches_the_repair_loop_signature(tmp_path, monkeypatc
     outcome = runner(("label",), Path(tmp_path))
 
     assert outcome.passed is True
+
+
+# --- the shared Playwright pin ---------------------------------------------------------
+
+
+def test_both_browser_checks_use_the_same_pinned_image_and_npm_version():
+    # They were pinned independently once, which is how one of them could have been bumped
+    # for a Node-version fix while the other silently kept failing.
+    from order_workflow import functional_smoke_check, visual_check as vc
+
+    assert vc.PLAYWRIGHT_IMAGE is functional_smoke_check.PLAYWRIGHT_IMAGE
+    assert vc.PLAYWRIGHT_NPM_VERSION is functional_smoke_check.PLAYWRIGHT_NPM_VERSION
+
+
+def test_the_pinned_image_tag_and_npm_version_agree():
+    # A mismatch makes Playwright download a browser at QA time instead of reusing the one
+    # baked into the image.
+    from order_workflow.docker_qa_runner import PLAYWRIGHT_IMAGE as image, PLAYWRIGHT_NPM_VERSION as npm_version
+
+    assert f"v{npm_version}-" in image, f"{image} does not carry playwright {npm_version}"
+
+
+def test_the_pinned_image_is_new_enough_for_a_modern_frontend_toolchain():
+    # v1.48.0-jammy shipped Node 20.18.0. Vite 8 pulls rolldown, which requires
+    # ^20.19.0 || >=22.12.0, so its native binding was never installed and `npm run preview`
+    # died on startup -- reported by both gates as a broken page. Pinning back to a jammy
+    # tag would bring that back silently.
+    from order_workflow.docker_qa_runner import PLAYWRIGHT_IMAGE as image
+
+    assert "jammy" not in image, "jammy images ship Node 20.18, which Vite 8's toolchain rejects"
+    assert "noble" in image

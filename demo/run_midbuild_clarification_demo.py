@@ -32,10 +32,9 @@ PORT = 8100
 BASE_URL = f"http://127.0.0.1:{PORT}"
 TOKEN = "test-only-local-token-32-bytes-long"
 
-# The Focus Timer order, reused verbatim from the main demo because it is the one order
-# proven to build and pass every gate on this machine. This script exists to prove the
-# pause -> answer -> resume loop, so the build ahead of the checkpoint should be the least
-# risky one available, not a fresh variable.
+# The Focus Timer order, reused verbatim from the main demo. This script exists to prove
+# the pause -> answer -> resume loop, so the build ahead of the checkpoint should be the
+# least risky variable available rather than a fresh one.
 DEMO_ORDER = {
     "title": "Focus Timer",
     "description": (

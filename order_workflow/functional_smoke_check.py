@@ -17,14 +17,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .docker_qa_runner import run_qa_commands_in_docker
+from .docker_qa_runner import PLAYWRIGHT_IMAGE, PLAYWRIGHT_NPM_VERSION, run_qa_commands_in_docker
 from .qa_runner import QAOutcome
-
-# Pinned together on purpose: the npm `playwright` package version installed inside the
-# container must match the browsers already baked into this image (PLAYWRIGHT_BROWSERS_PATH),
-# or Playwright tries to download browsers at QA time instead of reusing the cached ones.
-_PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.48.0-jammy"
-_PLAYWRIGHT_NPM_VERSION = "1.48.0"
 
 _SMOKE_CHECK_FILENAME = "___freelancerstudio_smoke_check.mjs"
 _PREVIEW_URL = "http://localhost:4173"
@@ -92,7 +86,7 @@ main().catch((err) => {{
 
 _SHELL_COMMAND = (
     "npm install --no-audit --no-fund >/dev/null 2>&1 && "
-    f"npm install --no-save --no-audit --no-fund playwright@{_PLAYWRIGHT_NPM_VERSION} >/dev/null 2>&1 && "
+    f"npm install --no-save --no-audit --no-fund playwright@{PLAYWRIGHT_NPM_VERSION} >/dev/null 2>&1 && "
     "(npm run preview >/tmp/freelancerstudio-preview.log 2>&1 &) && "
     "sleep 4 && "
     f"node {_SMOKE_CHECK_FILENAME}; "
@@ -128,7 +122,7 @@ def run_functional_smoke_check_in_docker(
         return run_qa_commands_in_docker(
             (_SHELL_COMMAND,),
             cwd,
-            image=_PLAYWRIGHT_IMAGE,
+            image=PLAYWRIGHT_IMAGE,
             timeout_seconds=timeout_seconds,
             docker_client_factory=docker_client_factory,
         )
