@@ -69,14 +69,31 @@ def build_revision_prompt(brief: ProjectBrief, handoff: AgentHandoff, revision_n
     return "\n".join(lines)
 
 
-def build_core_feature_prompt(brief: ProjectBrief, handoff: AgentHandoff, ui_shell_context: PhaseContext) -> str:
+def build_core_feature_prompt(
+    brief: ProjectBrief,
+    handoff: AgentHandoff,
+    ui_shell_context: PhaseContext,
+    *,
+    corrections: tuple[str, ...] = (),
+) -> str:
     core_feature = brief.core_features[0]
+    # Placed before the feature instruction on purpose: these came from the client looking
+    # at the actual shell at the mid-build checkpoint, so they outrank what the brief
+    # assumed in the abstract, and the shell may need adjusting before the feature lands
+    # on top of it.
+    correction_lines = [
+        "The client reviewed the shell and asked for these corrections. Apply them first, then "
+        "wire in the feature below:",
+        *[f"- {item}" for item in corrections],
+        "",
+    ] if corrections else []
     lines = [
         "The UI shell for this project is already implemented in this workspace. Do not rewrite or "
         "restructure the existing screens or navigation.",
         "",
         f"Already built: {ui_shell_context.summary}",
         "",
+        *correction_lines,
         f"Now wire in exactly ONE central feature: {core_feature}",
         "Integrate it into the existing UI shell's loading/skeleton slot for this feature — replace the "
         "placeholder state with the real working feature, do not add new screens.",

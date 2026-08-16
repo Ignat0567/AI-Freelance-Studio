@@ -674,3 +674,31 @@ def test_order_routes_are_registered_through_system_router_seam():
     app.include_router(system_router)
     response = _client(app).post("/api/orders", json=_order_payload())
     assert response.status_code == 200
+
+
+def test_answering_execution_questions_rejects_an_execution_that_is_not_paused():
+    # The endpoint must not silently accept answers for a run that never asked anything --
+    # that would look like it worked while changing nothing.
+    client = _client(_app())
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+
+    response = client.post(
+        f"/api/orders/{order_id}/execution/answers",
+        json={"answers": [{"question_id": "midbuild-assumption-1", "value": "Keep it as assumed"}]},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] in {"execution_not_awaiting_answers", "execution_already_completed"}
+
+
+def test_answering_execution_questions_requires_a_started_execution():
+    client = _client(_app())
+    order_id, _ = _approve(client)
+
+    response = client.post(
+        f"/api/orders/{order_id}/execution/answers",
+        json={"answers": [{"question_id": "midbuild-assumption-1", "value": "Keep it as assumed"}]},
+    )
+
+    assert response.status_code in {404, 409}, response.text

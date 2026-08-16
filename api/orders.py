@@ -42,6 +42,7 @@ _STATUS_BY_CODE = {
     "execution_not_found": 404,
     "execution_not_retryable": 409,
     "execution_not_revisable": 409,
+    "execution_not_awaiting_answers": 409,
     "revision_note_required": 422,
     "unsupported_product_type": 400,
     "invalid_answer": 422,
@@ -287,6 +288,17 @@ def cancel_execution(order_id: str, request: Request):
 @router.post("/{order_id}/execution/retry")
 def retry_execution(order_id: str, request: Request):
     return _call(get_order_workflow_service(request).retry_execution, order_id)
+
+
+@router.post("/{order_id}/execution/answers")
+async def answer_execution_questions(order_id: str, request: Request):
+    """Answer a mid-build clarification checkpoint so the paused run can continue."""
+    payload = await _body(request, AnswersRequest)
+    return _call(
+        get_order_workflow_service(request).answer_execution_questions,
+        order_id,
+        [item.model_dump() for item in payload.answers],
+    )
 
 
 @router.post("/{order_id}/execution/revise")

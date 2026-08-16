@@ -451,7 +451,12 @@ class TokenUsage(StrictDomainModel):
 class ExecutionResult(StrictDomainModel):
     success: bool
     summary: LongText
+    # "succeeded" | "failed" | "cancelled" | "qa_failed" | "docker_unavailable" |
+    # "awaiting_user" -- the last one is not a finish at all: the run paused at a phase
+    # boundary to ask the client something, and resumes from its checkpoints once answered.
     outcome: ShortText | None = None
+    # Populated only alongside outcome="awaiting_user".
+    questions: tuple[ClarificationQuestion, ...] = ()
     artifact_ids: tuple[PublicId, ...] = ()
     test_summary: TestSummary = Field(default_factory=TestSummary)
     warnings: tuple[ShortText, ...] = ()
@@ -483,6 +488,10 @@ class ProjectExecution(StrictDomainModel):
     progress: Annotated[int, Field(ge=0, le=100)] = 0
     current_activity: ShortText = "Queued for execution"
     blockers: tuple[ExecutionBlocker, ...] = ()
+    # Set while status is AWAITING_USER: the run paused at a phase boundary to ask the
+    # client something. Answering them resumes the same execution from its checkpoints.
+    pending_questions: tuple[ClarificationQuestion, ...] = ()
+    midbuild_answers: tuple[ClarificationAnswer, ...] = ()
     events: tuple[ExecutionEvent, ...] = ()
     artifacts: tuple[ExecutionArtifact, ...] = ()
     result: ExecutionResult | None = None

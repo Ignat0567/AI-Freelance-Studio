@@ -15,6 +15,7 @@ from .deployment import DeploymentOutcome, build_and_verify_container
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .functional_smoke_check import run_functional_smoke_check_in_docker
+from .midbuild_clarification import build_midbuild_questions, corrections_from_answers
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProductType, ProjectBrief, TestSummary, TokenUsage
 from .phase_context import PhaseContext, build_phase_context
 from .phase_prompts import (
@@ -155,6 +156,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # Resolved by the caller from the REAL environment, never from `environ` above --
         # that is a synthetic live-opt-in-only dict (see service.py), so reading the deploy
         # flag out of it would silently always be False.
+        midbuild_clarification: bool = False,
         container_deploy: bool = False,
         deploy_runner: Callable[..., DeploymentOutcome] | None = None,
     ) -> None:
@@ -177,6 +179,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # per-execution, because it has to carry that brief's approved palette. Tests
         # inject a fake so a unit test never reaches Docker.
         self._visual_check_runner = visual_check_runner
+        self._midbuild_clarification = midbuild_clarification
         self._container_deploy = container_deploy
         self._deploy_runner = deploy_runner or build_and_verify_container
         self._legacy_fallback = LiveOpenCodeExecutionAdapter(
@@ -238,6 +241,28 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             _save_phase_checkpoint(workspace, ExecutionStage.UI_SHELL, ui_shell.context)
         self._emit_milestone(event_sink, ExecutionStage.UI_SHELL, "UI shell complete: screens and navigation build cleanly, no backend/auth/external calls wired.")
 
+        # The one point where the client can still correct the shape cheaply: the screens
+        # exist and build, and nothing has been wired on top of them yet. Only pauses on a
+        # first pass -- a resumed run already carries the answers.
+        if self._midbuild_clarification and not request.midbuild_answers:
+            questions = build_midbuild_questions(request.brief, shell_summary=ui_shell.context.summary)
+            if questions:
+                event_sink.emit(
+                    stage=ExecutionStage.UI_SHELL,
+                    agent="Alex",
+                    progress=45,
+                    message=f"Paused for {len(questions)} clarification question(s) before wiring the core feature.",
+                    level=EventLevel.INFO,
+                )
+                return ExecutionResult(
+                    success=False,
+                    outcome="awaiting_user",
+                    summary="Paused at the UI-shell checkpoint to confirm assumptions before building on them.",
+                    questions=questions,
+                    final_stage=ExecutionStage.UI_SHELL,
+                    completed_at=request.brief.updated_at,
+                )
+
         core_feature_checkpoint = _load_phase_checkpoint(workspace, ExecutionStage.CORE_FEATURE)
         if core_feature_checkpoint is not None:
             event_sink.emit(stage=ExecutionStage.CORE_FEATURE, agent="Studio", progress=55, message="Resuming: core_feature already completed in an earlier attempt, skipping regeneration.")
@@ -246,7 +271,15 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             core_feature_complexity, core_feature_reason = describe_phase_complexity(request.brief, focus_text=f"{request.brief.core_features[0]} {request.brief.goal}")
             core_feature = self._run_phase(
                 stage=ExecutionStage.CORE_FEATURE,
-                prompt=build_core_feature_prompt(request.brief, request.handoff, ui_shell.context),
+                prompt=build_core_feature_prompt(
+                    request.brief,
+                    request.handoff,
+                    ui_shell.context,
+                    corrections=corrections_from_answers(
+                        build_midbuild_questions(request.brief, shell_summary=ui_shell.context.summary),
+                        tuple(request.midbuild_answers),
+                    ),
+                ),
                 qa_commands=CORE_FEATURE_QA_COMMANDS,
                 workspace=workspace,
                 event_sink=event_sink,

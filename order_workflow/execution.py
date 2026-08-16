@@ -18,6 +18,7 @@ from .executors import (
 from .models import (
     AgentHandoff,
     ArtifactKind,
+    ClarificationAnswer,
     ExecutionArtifact,
     ExecutionBlocker,
     ExecutionEvent,
@@ -469,6 +470,7 @@ class ProjectExecutionService:
         *,
         revision_note: str | None = None,
         revised_from_execution_id: str | None = None,
+        midbuild_answers: tuple = (),
     ) -> None:
         with self._lock:
             record = self._records[execution_id]
@@ -486,6 +488,7 @@ class ProjectExecutionService:
                 title=title,
                 revision_note=revision_note,
                 revised_from_execution_id=revised_from_execution_id,
+                midbuild_answers=midbuild_answers,
             )
         try:
             simulated = adapter is not self._live_adapter and adapter is not self._revision_adapter
@@ -493,6 +496,13 @@ class ProjectExecutionService:
             status = ExecutionStatus.SUCCEEDED if result.success else ExecutionStatus.FAILED
             if result.outcome == "cancelled" or record.token.is_cancelled():
                 status = ExecutionStatus.CANCELLED
+            # Not a finish: the run stopped at a phase boundary to ask the client something
+            # and will resume from its own checkpoints once answered. AWAITING_USER is
+            # deliberately outside TERMINAL_EXECUTION_STATUSES so the record stays live.
+            elif result.outcome == "awaiting_user" and result.questions:
+                with self._lock:
+                    self._pause_for_questions_locked(record, result)
+                return
             with self._lock:
                 finished_event = self._finish_locked(record, result, status)
             if finished_event is not None:
@@ -665,6 +675,116 @@ class ProjectExecutionService:
             }
         )
         self._save(record.snapshot)
+
+    def _pause_for_questions_locked(self, record: _ExecutionRecord, result: ExecutionResult) -> None:
+        """Park the execution on the client's answer without finishing it.
+
+        No result is stored and finished_at stays unset: this run is not over, and writing
+        a result here would make the snapshot look terminal to every consumer that checks
+        for one.
+        """
+        if record.snapshot.status in TERMINAL_EXECUTION_STATUSES:
+            return
+        now = utc_now(self._clock)
+        event = ExecutionEvent(
+            id=new_public_id("event", self._id_factory),
+            execution_id=record.snapshot.id,
+            kind=EventKind.MILESTONE,
+            level=EventLevel.INFO,
+            message=result.summary[:240],
+            stage=result.final_stage or ExecutionStage.UI_SHELL,
+            agent="Alex",
+            progress=45,
+            created_at=now,
+        )
+        record.snapshot = record.snapshot.model_copy(
+            update={
+                "status": ExecutionStatus.AWAITING_USER,
+                "current_activity": "Waiting for the client to answer before continuing",
+                "pending_questions": result.questions,
+                "events": append_bounded_event(record.snapshot.events, event, limit=self._event_limit),
+                "updated_at": now,
+            }
+        )
+        self._save(record.snapshot)
+
+    def resume_with_answers(
+        self,
+        execution_id: str,
+        brief: ProjectBrief,
+        handoff: AgentHandoff,
+        answers: tuple[ClarificationAnswer, ...],
+        *,
+        title: str = "",
+    ) -> ProjectExecution:
+        """Continue a paused execution once the client has answered.
+
+        Deliberately the same shape as retry(): same execution_id, so the adapter resolves
+        the same owned workspace and every phase that already finished is skipped via its
+        checkpoint. The only difference is that the answers ride along on the request, so
+        the phase after the checkpoint sees them as corrections.
+        """
+        self._validate_handoff(brief, handoff)
+        with self._lock:
+            if not self._accepting:
+                raise ExecutionServiceError("execution_service_stopping")
+            record = self._records.get(execution_id)
+            if record is None:
+                raise ExecutionServiceError("execution_not_found")
+            if record.snapshot.order_id != brief.order_id or record.snapshot.brief_id != brief.id:
+                raise ExecutionServiceError("execution_not_found")
+            if record.snapshot.status is not ExecutionStatus.AWAITING_USER:
+                raise ExecutionServiceError("execution_not_awaiting_answers")
+            asked = {question.id for question in record.snapshot.pending_questions}
+            if not asked:
+                raise ExecutionServiceError("execution_not_awaiting_answers")
+            unknown = [answer.question_id for answer in answers if answer.question_id not in asked]
+            if unknown:
+                raise ExecutionServiceError("unknown_question_id")
+            active_mode = record.snapshot.mode
+            live = record.snapshot.live
+        adapter = self._adapter(active_mode, live=live)
+        if adapter is None:
+            raise ExecutionServiceError("live_execution_opt_in_required" if live else "execution_provider_not_configured")
+        now = utc_now(self._clock)
+        resume_event = ExecutionEvent(
+            id=new_public_id("event", self._id_factory),
+            execution_id=execution_id,
+            kind=EventKind.ACTIVITY,
+            level=EventLevel.INFO,
+            message=f"Resuming with {len(answers)} client answer(s); completed phases are reused from checkpoints.",
+            stage=ExecutionStage.UI_SHELL,
+            agent="Studio",
+            created_at=now,
+        )
+        with self._lock:
+            record = self._records[execution_id]
+            if record.snapshot.status is not ExecutionStatus.AWAITING_USER:
+                raise ExecutionServiceError("execution_not_awaiting_answers")
+            updated = record.snapshot.model_copy(
+                update={
+                    "status": ExecutionStatus.QUEUED,
+                    "current_activity": "Queued to continue with your answers",
+                    "pending_questions": (),
+                    "midbuild_answers": tuple(answers),
+                    "blockers": (),
+                    "events": append_bounded_event(record.snapshot.events, resume_event, limit=self._event_limit),
+                    "updated_at": now,
+                }
+            )
+            record.snapshot = updated
+            record.token = CancellationToken()
+            self._save(updated)
+            worker = self._thread_factory(
+                target=self._run,
+                args=(execution_id, brief, handoff, adapter, title),
+                kwargs={"midbuild_answers": tuple(answers)},
+                name=f"order-execution-{execution_id}-resume",
+                daemon=True,
+            )
+            record.worker = worker
+            worker.start()
+            return self._snapshot(record.snapshot)
 
     def _finish_locked(
         self,

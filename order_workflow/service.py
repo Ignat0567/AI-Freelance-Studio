@@ -27,6 +27,8 @@ from .order_store import InMemoryOrderStore, OrderStateStore, dump_order_workflo
 from .execution_readiness import ExecutionReadinessView, readiness_blocker_view, readiness_check
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .handoffs import AgentHandoffService
+from pydantic import ValidationError
+
 from .models import (
     AgentHandoff,
     ClarificationAnswer,
@@ -49,6 +51,7 @@ from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
 from .deployment import container_deploy_enabled
+from .midbuild_clarification import midbuild_clarification_enabled
 from .phased_adapter import BOT_QA_COMMANDS, PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
@@ -240,8 +243,9 @@ class ConfigurationBackedExecutionAdapter:
                 # branch just above); the QA backend must be resolved from the real env source instead,
                 # or a real FREELANCERSTUDIO_PHASED_QA_BACKEND=host setting would be silently ignored.
                 qa_runner=_select_qa_runner(self._environ),
-                # Same reason: the deploy flag has to come from the real environment too.
+                # Same reason: these flags have to come from the real environment too.
                 container_deploy=container_deploy_enabled(self._environ),
+                midbuild_clarification=midbuild_clarification_enabled(self._environ),
             )
         return ProductionProjectExecutionAdapter(provider_name=provider, model_name=model, workspace_root=workspace_root)
 
@@ -610,6 +614,32 @@ class OrderWorkflowService:
         self._persist()
         return self.snapshot(order_id)
 
+    def answer_execution_questions(self, order_id: str, answers: list[dict[str, Any]]) -> dict[str, Any]:
+        """Answer a mid-build clarification checkpoint and let the run continue."""
+        with self._lock:
+            order = self._order(order_id)
+            brief = self._require_brief(order_id)
+            handoff = self._handoff_by_order.get(order_id)
+            execution_id = self._execution_by_order.get(order_id)
+        if handoff is None:
+            raise OrderWorkflowError("brief_not_approved", "Approve the current brief before execution.")
+        if execution_id is None:
+            raise OrderWorkflowError("execution_not_found")
+        try:
+            parsed = tuple(ClarificationAnswer(question_id=str(item["question_id"]), value=item["value"]) for item in answers)
+        except (KeyError, TypeError, ValidationError):
+            raise OrderWorkflowError("invalid_answer", "Each answer needs a question_id and a value.") from None
+        try:
+            # Same title reasoning as retry_execution(): it feeds the workspace slug, and a
+            # mismatch would resume against a brand-new empty directory.
+            self._executions.resume_with_answers(execution_id, brief, handoff, parsed, title=order.title)
+        except ExecutionServiceError as exc:
+            raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
+        with self._lock:
+            self._orders[order_id] = self._orders[order_id].model_copy(update={"status": UserOrderStatus.QUEUED})
+        self._persist()
+        return self.snapshot(order_id)
+
     def revise_execution(self, order_id: str, revision_note: str) -> dict[str, Any]:
         with self._lock:
             order = self._order(order_id)
@@ -890,6 +920,8 @@ class OrderWorkflowService:
             "execution_not_found": "execution_not_found",
             "execution_not_retryable": "execution_not_retryable",
             "execution_not_revisable": "execution_not_revisable",
+            "execution_not_awaiting_answers": "execution_not_awaiting_answers",
+            "unknown_question_id": "unknown_question_id",
             "revision_note_required": "revision_note_required",
             "brief_not_approved": "brief_not_approved",
             "live_execution_opt_in_required": "live_execution_opt_in_required",

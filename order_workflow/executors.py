@@ -62,6 +62,10 @@ class ExecutionRequest:
     # which identifies this new execution's own event/artifact history).
     revision_note: str | None = None
     revised_from_execution_id: str | None = None
+    # Answers to a mid-build clarification checkpoint. Present only on a run that was
+    # paused at a phase boundary and is now resuming; the phase that asked skips straight
+    # past its checkpoint, and the next phase's prompt carries these as corrections.
+    midbuild_answers: tuple = ()
 
 
 class ProjectExecutionAdapter(Protocol):
