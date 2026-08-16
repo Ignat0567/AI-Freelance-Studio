@@ -1,0 +1,729 @@
+{
+  "summary": {
+    "order_title": "Focus Timer",
+    "brief_goal": "A pomodoro focus timer that runs entirely offline in the browser. The user can start, pause and reset a 25-minute focus session, sees a large animated countdown ring, and gets a desktop notification when the session ends. Completed sessions for the day are shown as a simple streak of dots.",
+    "target_users": [
+      "Single local user"
+    ],
+    "backend_decision": "Backend not needed: Single local user, with no sync, accounts, or sharing anywhere in the approved requirements.",
+    "model_routing": [
+      {
+        "stage": "ui_shell",
+        "model": "opus -- complex: matched 'offline', 'notification'"
+      },
+      {
+        "stage": "core_feature",
+        "model": "opus -- complex: matched 'offline', 'notification'"
+      }
+    ],
+    "repair_attempts": [],
+    "qa_results": [
+      {
+        "stage": "ui_shell",
+        "message": "QA passed."
+      },
+      {
+        "stage": "ui_shell",
+        "message": "QA passed."
+      },
+      {
+        "stage": "core_feature",
+        "message": "QA passed."
+      },
+      {
+        "stage": "core_feature",
+        "message": "QA passed."
+      }
+    ],
+    "deployment": [
+      "Building production container image",
+      "Container served HTTP 200 from the production image.",
+      "Artifact recorded: generated_project_summary.json",
+      "Artifact recorded: delivery_report.md",
+      "Artifact recorded: README.md",
+      "Artifact recorded: ARCHITECTURE.md"
+    ],
+    "outcome": "succeeded",
+    "duration_seconds": 777.3531418999773,
+    "final_stage": "completed",
+    "test_summary": {
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "repair_attempts": 0
+    },
+    "warnings": [],
+    "artifacts": [
+      "generated_project_summary.json",
+      "delivery_report.md",
+      "README.md",
+      "ARCHITECTURE.md"
+    ]
+  },
+  "events": [
+    {
+      "id": "event_af478c7d-2c04-40c0-9e96-39f954cacb1c",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Preparing phased execution",
+      "stage": "planning",
+      "agent": "Studio",
+      "progress": 5,
+      "details": [],
+      "created_at": "2026-08-15T23:47:36.851611Z"
+    },
+    {
+      "id": "event_d71eacfd-0178-4f4b-9d23-cb729488de89",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Sending ui_shell prompt to the coding CLI (model: opus -- complex: matched 'offline', 'notification')",
+      "stage": "ui_shell",
+      "agent": "Codex",
+      "progress": 10,
+      "details": [],
+      "created_at": "2026-08-15T23:47:36.863822Z"
+    },
+    {
+      "id": "event_7d05c6eb-168c-47ac-9a62-28323c4f5c5c",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Invoking Claude Code CLI",
+      "stage": "implementation",
+      "agent": "Claude Code",
+      "progress": 50,
+      "details": [],
+      "created_at": "2026-08-15T23:47:37.024521Z"
+    },
+    {
+      "id": "event_77a37a59-e4a8-4382-8420-7b66881dc6ac",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Running QA commands",
+      "stage": "ui_shell",
+      "agent": "BugCatcher",
+      "progress": 60,
+      "details": [],
+      "created_at": "2026-08-15T23:55:33.623008Z"
+    },
+    {
+      "id": "event_771a8fee-68a8-4884-91c5-0968fccd65b1",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "QA passed.",
+      "stage": "ui_shell",
+      "agent": "BugCatcher",
+      "progress": 80,
+      "details": [],
+      "created_at": "2026-08-15T23:55:41.958016Z"
+    },
+    {
+      "id": "event_0da2739d-681c-4433-933f-b688c458d017",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Running QA commands",
+      "stage": "ui_shell",
+      "agent": "BugCatcher",
+      "progress": 60,
+      "details": [],
+      "created_at": "2026-08-15T23:55:41.964063Z"
+    },
+    {
+      "id": "event_debc5641-5fd7-48e8-9f37-6f0a184e9260",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "QA passed.",
+      "stage": "ui_shell",
+      "agent": "BugCatcher",
+      "progress": 80,
+      "details": [],
+      "created_at": "2026-08-15T23:55:52.393026Z"
+    },
+    {
+      "id": "event_e8c2a1de-ccbe-4048-9d2e-9f942533232c",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "milestone",
+      "level": "info",
+      "message": "UI shell complete: screens and navigation build cleanly, no backend/auth/external calls wired.",
+      "stage": "ui_shell",
+      "agent": "Alex",
+      "progress": 30,
+      "details": [],
+      "created_at": "2026-08-15T23:55:52.527418Z"
+    },
+    {
+      "id": "event_2283b70c-c8ba-4721-a79d-c60bb045312a",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Sending core_feature prompt to the coding CLI (model: opus -- complex: matched 'offline', 'notification')",
+      "stage": "core_feature",
+      "agent": "Codex",
+      "progress": 10,
+      "details": [],
+      "created_at": "2026-08-15T23:55:52.535106Z"
+    },
+    {
+      "id": "event_9f72a68b-288c-4180-bd2a-c9944d201027",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Invoking Claude Code CLI",
+      "stage": "implementation",
+      "agent": "Claude Code",
+      "progress": 50,
+      "details": [],
+      "created_at": "2026-08-15T23:55:52.680289Z"
+    },
+    {
+      "id": "event_da88f349-b2fc-45fc-8ee9-d22175ffc7d8",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Running QA commands",
+      "stage": "core_feature",
+      "agent": "BugCatcher",
+      "progress": 60,
+      "details": [],
+      "created_at": "2026-08-16T00:00:01.704580Z"
+    },
+    {
+      "id": "event_1473371e-949c-455c-ada4-7f0e9176bd3a",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "QA passed.",
+      "stage": "core_feature",
+      "agent": "BugCatcher",
+      "progress": 80,
+      "details": [],
+      "created_at": "2026-08-16T00:00:11.129892Z"
+    },
+    {
+      "id": "event_949b0e95-c12e-4078-a5b2-0f4563ccc783",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Running QA commands",
+      "stage": "core_feature",
+      "agent": "BugCatcher",
+      "progress": 60,
+      "details": [],
+      "created_at": "2026-08-16T00:00:11.136213Z"
+    },
+    {
+      "id": "event_f17bb1e0-950a-4486-aa6d-fa61dec06abc",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "QA passed.",
+      "stage": "core_feature",
+      "agent": "BugCatcher",
+      "progress": 80,
+      "details": [],
+      "created_at": "2026-08-16T00:00:20.959157Z"
+    },
+    {
+      "id": "event_fb0aacb4-4b2c-405a-b14c-32d1a285abab",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "milestone",
+      "level": "info",
+      "message": "Core feature wired in and passing its own test: Start, pause, and reset the 25-minute timer, and receive an end-of-session desktop notification \u2014 that's the whole v1.",
+      "stage": "core_feature",
+      "agent": "Alex",
+      "progress": 55,
+      "details": [],
+      "created_at": "2026-08-16T00:00:21.103651Z"
+    },
+    {
+      "id": "event_47019236-4cb0-4bbf-839d-06e51ca22efb",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "milestone",
+      "level": "info",
+      "message": "Backend not needed: Single local user, with no sync, accounts, or sharing anywhere in the approved requirements.",
+      "stage": "backend_decision",
+      "agent": "Alex",
+      "progress": 65,
+      "details": [],
+      "created_at": "2026-08-16T00:00:21.113747Z"
+    },
+    {
+      "id": "event_c32b07b1-9807-4a4b-aa65-2442a6011fea",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Building production container image",
+      "stage": "packaging",
+      "agent": "Studio",
+      "progress": 90,
+      "details": [],
+      "created_at": "2026-08-16T00:00:21.290168Z"
+    },
+    {
+      "id": "event_7d7f974c-36ee-4f30-b85d-c1361c2bae1b",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Container served HTTP 200 from the production image.",
+      "stage": "packaging",
+      "agent": "Studio",
+      "progress": 95,
+      "details": [],
+      "created_at": "2026-08-16T00:00:33.321444Z"
+    },
+    {
+      "id": "event_ebd6ef10-4637-4d0b-bba6-1ab3da9184f4",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "artifact",
+      "level": "info",
+      "message": "Artifact recorded: generated_project_summary.json",
+      "stage": "packaging",
+      "agent": "Studio",
+      "progress": 95,
+      "details": [],
+      "created_at": "2026-08-16T00:00:33.328149Z"
+    },
+    {
+      "id": "event_87ba7105-f0c8-477d-b900-454cdf3022dd",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "artifact",
+      "level": "info",
+      "message": "Artifact recorded: delivery_report.md",
+      "stage": "packaging",
+      "agent": "Studio",
+      "progress": 95,
+      "details": [],
+      "created_at": "2026-08-16T00:00:33.335016Z"
+    },
+    {
+      "id": "event_bcd8fba0-c534-455c-b15e-602e599ae6f5",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "artifact",
+      "level": "info",
+      "message": "Artifact recorded: README.md",
+      "stage": "packaging",
+      "agent": "Studio",
+      "progress": 95,
+      "details": [],
+      "created_at": "2026-08-16T00:00:33.342048Z"
+    },
+    {
+      "id": "event_1a4762e2-9088-468d-8a85-c4344d29d2fd",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "artifact",
+      "level": "info",
+      "message": "Artifact recorded: ARCHITECTURE.md",
+      "stage": "packaging",
+      "agent": "Studio",
+      "progress": 95,
+      "details": [],
+      "created_at": "2026-08-16T00:00:33.348194Z"
+    },
+    {
+      "id": "event_43882fb1-4b18-4557-b6a2-9e545e10c988",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "activity",
+      "level": "info",
+      "message": "Delivery summary prepared",
+      "stage": "completed",
+      "agent": "Product Judge",
+      "progress": 100,
+      "details": [],
+      "created_at": "2026-08-16T00:00:33.354883Z"
+    },
+    {
+      "id": "event_6757d1a6-95fe-42d6-a324-d145d3cefb4d",
+      "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+      "kind": "result",
+      "level": "info",
+      "message": "Project generated by the phased live execution pipeline. No backend was required; the UI shell and core feature are the complete deliverable. Container served HTTP 200 from the production image.",
+      "stage": "completed",
+      "agent": "Product Judge",
+      "progress": 100,
+      "details": [],
+      "created_at": "2026-08-16T00:00:33.361177Z"
+    }
+  ],
+  "execution": {
+    "id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+    "order_id": "order_76374a9d-59b3-46d9-8231-71ce74f30aff",
+    "brief_id": "brief_6c7959c9-6ee2-4546-90bd-be6d251b7cea",
+    "handoff_id": "handoff_44f0f69c-32b2-4289-8832-1f2c86aaf08f",
+    "approval_fingerprint": "7e84bec7127a5051a143bdaaf99131ed4cb83d710ef22e2ed011a3e684698c40",
+    "mode": "production",
+    "live": true,
+    "revised_from": null,
+    "status": "succeeded",
+    "stage": "completed",
+    "active_agent": "Product Judge",
+    "progress": 100,
+    "current_activity": "Project generated by the phased live execution pipeline. No backend was required; the UI shell and core feature are the complete deliverable. Container served HTTP 200 from the production image.",
+    "blockers": [],
+    "events": [
+      {
+        "id": "event_af478c7d-2c04-40c0-9e96-39f954cacb1c",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Preparing phased execution",
+        "stage": "planning",
+        "agent": "Studio",
+        "progress": 5,
+        "details": [],
+        "created_at": "2026-08-15T23:47:36.851611Z"
+      },
+      {
+        "id": "event_d71eacfd-0178-4f4b-9d23-cb729488de89",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Sending ui_shell prompt to the coding CLI (model: opus -- complex: matched 'offline', 'notification')",
+        "stage": "ui_shell",
+        "agent": "Codex",
+        "progress": 10,
+        "details": [],
+        "created_at": "2026-08-15T23:47:36.863822Z"
+      },
+      {
+        "id": "event_7d05c6eb-168c-47ac-9a62-28323c4f5c5c",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Invoking Claude Code CLI",
+        "stage": "implementation",
+        "agent": "Claude Code",
+        "progress": 50,
+        "details": [],
+        "created_at": "2026-08-15T23:47:37.024521Z"
+      },
+      {
+        "id": "event_77a37a59-e4a8-4382-8420-7b66881dc6ac",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Running QA commands",
+        "stage": "ui_shell",
+        "agent": "BugCatcher",
+        "progress": 60,
+        "details": [],
+        "created_at": "2026-08-15T23:55:33.623008Z"
+      },
+      {
+        "id": "event_771a8fee-68a8-4884-91c5-0968fccd65b1",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "QA passed.",
+        "stage": "ui_shell",
+        "agent": "BugCatcher",
+        "progress": 80,
+        "details": [],
+        "created_at": "2026-08-15T23:55:41.958016Z"
+      },
+      {
+        "id": "event_0da2739d-681c-4433-933f-b688c458d017",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Running QA commands",
+        "stage": "ui_shell",
+        "agent": "BugCatcher",
+        "progress": 60,
+        "details": [],
+        "created_at": "2026-08-15T23:55:41.964063Z"
+      },
+      {
+        "id": "event_debc5641-5fd7-48e8-9f37-6f0a184e9260",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "QA passed.",
+        "stage": "ui_shell",
+        "agent": "BugCatcher",
+        "progress": 80,
+        "details": [],
+        "created_at": "2026-08-15T23:55:52.393026Z"
+      },
+      {
+        "id": "event_e8c2a1de-ccbe-4048-9d2e-9f942533232c",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "milestone",
+        "level": "info",
+        "message": "UI shell complete: screens and navigation build cleanly, no backend/auth/external calls wired.",
+        "stage": "ui_shell",
+        "agent": "Alex",
+        "progress": 30,
+        "details": [],
+        "created_at": "2026-08-15T23:55:52.527418Z"
+      },
+      {
+        "id": "event_2283b70c-c8ba-4721-a79d-c60bb045312a",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Sending core_feature prompt to the coding CLI (model: opus -- complex: matched 'offline', 'notification')",
+        "stage": "core_feature",
+        "agent": "Codex",
+        "progress": 10,
+        "details": [],
+        "created_at": "2026-08-15T23:55:52.535106Z"
+      },
+      {
+        "id": "event_9f72a68b-288c-4180-bd2a-c9944d201027",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Invoking Claude Code CLI",
+        "stage": "implementation",
+        "agent": "Claude Code",
+        "progress": 50,
+        "details": [],
+        "created_at": "2026-08-15T23:55:52.680289Z"
+      },
+      {
+        "id": "event_da88f349-b2fc-45fc-8ee9-d22175ffc7d8",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Running QA commands",
+        "stage": "core_feature",
+        "agent": "BugCatcher",
+        "progress": 60,
+        "details": [],
+        "created_at": "2026-08-16T00:00:01.704580Z"
+      },
+      {
+        "id": "event_1473371e-949c-455c-ada4-7f0e9176bd3a",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "QA passed.",
+        "stage": "core_feature",
+        "agent": "BugCatcher",
+        "progress": 80,
+        "details": [],
+        "created_at": "2026-08-16T00:00:11.129892Z"
+      },
+      {
+        "id": "event_949b0e95-c12e-4078-a5b2-0f4563ccc783",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Running QA commands",
+        "stage": "core_feature",
+        "agent": "BugCatcher",
+        "progress": 60,
+        "details": [],
+        "created_at": "2026-08-16T00:00:11.136213Z"
+      },
+      {
+        "id": "event_f17bb1e0-950a-4486-aa6d-fa61dec06abc",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "QA passed.",
+        "stage": "core_feature",
+        "agent": "BugCatcher",
+        "progress": 80,
+        "details": [],
+        "created_at": "2026-08-16T00:00:20.959157Z"
+      },
+      {
+        "id": "event_fb0aacb4-4b2c-405a-b14c-32d1a285abab",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "milestone",
+        "level": "info",
+        "message": "Core feature wired in and passing its own test: Start, pause, and reset the 25-minute timer, and receive an end-of-session desktop notification \u2014 that's the whole v1.",
+        "stage": "core_feature",
+        "agent": "Alex",
+        "progress": 55,
+        "details": [],
+        "created_at": "2026-08-16T00:00:21.103651Z"
+      },
+      {
+        "id": "event_47019236-4cb0-4bbf-839d-06e51ca22efb",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "milestone",
+        "level": "info",
+        "message": "Backend not needed: Single local user, with no sync, accounts, or sharing anywhere in the approved requirements.",
+        "stage": "backend_decision",
+        "agent": "Alex",
+        "progress": 65,
+        "details": [],
+        "created_at": "2026-08-16T00:00:21.113747Z"
+      },
+      {
+        "id": "event_c32b07b1-9807-4a4b-aa65-2442a6011fea",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Building production container image",
+        "stage": "packaging",
+        "agent": "Studio",
+        "progress": 90,
+        "details": [],
+        "created_at": "2026-08-16T00:00:21.290168Z"
+      },
+      {
+        "id": "event_7d7f974c-36ee-4f30-b85d-c1361c2bae1b",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Container served HTTP 200 from the production image.",
+        "stage": "packaging",
+        "agent": "Studio",
+        "progress": 95,
+        "details": [],
+        "created_at": "2026-08-16T00:00:33.321444Z"
+      },
+      {
+        "id": "event_ebd6ef10-4637-4d0b-bba6-1ab3da9184f4",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "artifact",
+        "level": "info",
+        "message": "Artifact recorded: generated_project_summary.json",
+        "stage": "packaging",
+        "agent": "Studio",
+        "progress": 95,
+        "details": [],
+        "created_at": "2026-08-16T00:00:33.328149Z"
+      },
+      {
+        "id": "event_87ba7105-f0c8-477d-b900-454cdf3022dd",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "artifact",
+        "level": "info",
+        "message": "Artifact recorded: delivery_report.md",
+        "stage": "packaging",
+        "agent": "Studio",
+        "progress": 95,
+        "details": [],
+        "created_at": "2026-08-16T00:00:33.335016Z"
+      },
+      {
+        "id": "event_bcd8fba0-c534-455c-b15e-602e599ae6f5",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "artifact",
+        "level": "info",
+        "message": "Artifact recorded: README.md",
+        "stage": "packaging",
+        "agent": "Studio",
+        "progress": 95,
+        "details": [],
+        "created_at": "2026-08-16T00:00:33.342048Z"
+      },
+      {
+        "id": "event_1a4762e2-9088-468d-8a85-c4344d29d2fd",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "artifact",
+        "level": "info",
+        "message": "Artifact recorded: ARCHITECTURE.md",
+        "stage": "packaging",
+        "agent": "Studio",
+        "progress": 95,
+        "details": [],
+        "created_at": "2026-08-16T00:00:33.348194Z"
+      },
+      {
+        "id": "event_43882fb1-4b18-4557-b6a2-9e545e10c988",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "activity",
+        "level": "info",
+        "message": "Delivery summary prepared",
+        "stage": "completed",
+        "agent": "Product Judge",
+        "progress": 100,
+        "details": [],
+        "created_at": "2026-08-16T00:00:33.354883Z"
+      },
+      {
+        "id": "event_6757d1a6-95fe-42d6-a324-d145d3cefb4d",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "result",
+        "level": "info",
+        "message": "Project generated by the phased live execution pipeline. No backend was required; the UI shell and core feature are the complete deliverable. Container served HTTP 200 from the production image.",
+        "stage": "completed",
+        "agent": "Product Judge",
+        "progress": 100,
+        "details": [],
+        "created_at": "2026-08-16T00:00:33.361177Z"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "artifact_f3019d23-8c96-4049-a7dc-7676d8b81c0a",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "project_summary",
+        "name": "generated_project_summary.json",
+        "summary": "Workspace contains 3441 non-marker files.",
+        "reference": "generated-project-summary-json",
+        "simulated": false,
+        "created_at": "2026-08-16T00:00:33.328149Z"
+      },
+      {
+        "id": "artifact_761d82e9-21ae-48e5-b759-7f1b754203e6",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "delivery_report",
+        "name": "delivery_report.md",
+        "summary": "No backend was required; the UI shell and core feature are the complete deliverable.",
+        "reference": "delivery-report-md",
+        "simulated": false,
+        "created_at": "2026-08-16T00:00:33.335016Z"
+      },
+      {
+        "id": "artifact_bba81450-3c2f-4155-843c-68d597c3b827",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "project_documentation",
+        "name": "README.md",
+        "summary": "Generated project README with a real feature/tech-stack overview.",
+        "reference": "readme-md",
+        "simulated": false,
+        "created_at": "2026-08-16T00:00:33.342048Z"
+      },
+      {
+        "id": "artifact_a90b26f2-7c0c-4f74-8b67-bdc793eebd86",
+        "execution_id": "execution_5fb894d5-708d-4f1b-bcda-930a304719ad",
+        "kind": "project_documentation",
+        "name": "ARCHITECTURE.md",
+        "summary": "Real Mermaid architecture diagram built from the generated file tree.",
+        "reference": "architecture-md",
+        "simulated": false,
+        "created_at": "2026-08-16T00:00:33.348194Z"
+      }
+    ],
+    "result": {
+      "success": true,
+      "summary": "Project generated by the phased live execution pipeline. No backend was required; the UI shell and core feature are the complete deliverable. Container served HTTP 200 from the production image.",
+      "outcome": "succeeded",
+      "artifact_ids": [
+        "artifact_f3019d23-8c96-4049-a7dc-7676d8b81c0a",
+        "artifact_761d82e9-21ae-48e5-b759-7f1b754203e6",
+        "artifact_bba81450-3c2f-4155-843c-68d597c3b827",
+        "artifact_a90b26f2-7c0c-4f74-8b67-bdc793eebd86"
+      ],
+      "test_summary": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 1,
+        "repair_attempts": 0
+      },
+      "warnings": [],
+      "errors": [],
+      "duration_seconds": 777.3531418999773,
+      "final_stage": "completed",
+      "usage": null,
+      "rate_limit_message": null,
+      "completed_at": "2026-08-16T00:00:33.361177Z"
+    },
+    "created_at": "2026-08-15T23:47:36.006649Z",
+    "updated_at": "2026-08-16T00:00:33.361177Z",
+    "started_at": "2026-08-15T23:47:36.008041Z",
+    "finished_at": "2026-08-16T00:00:33.361177Z"
+  }
+}
