@@ -1,5 +1,5 @@
 # Run artifacts. One successful transcript is committed as a worked example; the rest
 # are produced locally by run_end_to_end_demo.py.
 transcripts/*
-!transcripts/demo-20260816T000037Z.json
+!transcripts/demo-20260816T055026Z.json
 screenshots/node_modules/

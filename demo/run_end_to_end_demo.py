@@ -142,9 +142,9 @@ def summarise(events: list[dict], execution: dict, brief: dict) -> dict:
             model = message.split("model:")[-1].strip(" )") if "model:" in message else "(default)"
             routing.append({"stage": stage, "model": model})
         if "QA failed; asking" in message:
-            repairs.append({"stage": event.get("stage", "?"), "message": message})
+            repairs.append({"stage": event.get("stage", "?"), "agent": event.get("agent", "?"), "message": message})
         if message.startswith("QA passed") or message.startswith("QA failed after"):
-            qa_results.append({"stage": event.get("stage", "?"), "message": message})
+            qa_results.append({"stage": event.get("stage", "?"), "agent": event.get("agent", "?"), "message": message})
 
     result = execution.get("result") or {}
     return {
@@ -159,6 +159,11 @@ def summarise(events: list[dict], execution: dict, brief: dict) -> dict:
         "qa_results": qa_results,
         "deployment": [
             e.get("message") for e in events if e.get("stage") == "packaging"
+        ],
+        # The visual gate runs under Elena rather than BugCatcher, which is what separates
+        # its QA lines from the build/test ones in the shared repair-loop event shape.
+        "visual_check": [
+            e.get("message") for e in events if e.get("agent") == "Elena"
         ],
         "outcome": result.get("outcome"),
         "duration_seconds": result.get("duration_seconds"),
@@ -240,7 +245,11 @@ def main() -> int:
         else:
             log("  no QA failures -- nothing to repair this run", prefix="    ")
         for entry in summary["qa_results"]:
-            log(f"  {entry['stage']:<17} {entry['message']}", prefix="    ")
+            log(f"  {entry['stage']:<15} [{entry['agent']}] {entry['message']}", prefix="    ")
+        log("")
+        log("visual check (palette / WCAG contrast / mobile layout):")
+        for message in summary["visual_check"] or ["  (gate did not run)"]:
+            log(f"  {message}", prefix="    ")
         log("")
         log(f"backend decision: {summary['backend_decision']}")
         log("")

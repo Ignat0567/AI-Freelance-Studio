@@ -7,9 +7,10 @@ check: launch a real (headless) browser against the built app and confirm it ren
 visible content, has at least one usable interactive element, and produced no console/
 page errors.
 
-Deliberately NOT covered here (see the design discussion this shipped from): AI-authored
-acceptance-criteria scenarios, or visual/design-fidelity judging. Both are real, separate,
-more expensive features -- this module only proves the app is alive, not that it is correct.
+Scope: this module proves the app is alive, not that it is correct and not that it looks
+like what was designed. Design fidelity is a separate gate -- see visual_check.py, which
+measures the painted palette, WCAG contrast and mobile layout against the approved design.
+Still not covered anywhere: AI-authored acceptance-criteria scenarios.
 """
 
 from __future__ import annotations

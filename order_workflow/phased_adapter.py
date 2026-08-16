@@ -38,6 +38,7 @@ from .production_adapter import (
 )
 from .qa_runner import QAOutcome, run_qa_commands
 from .readiness import LIVE_EXECUTION_OPT_IN_REQUIRED, ReadinessResult
+from .visual_check import build_visual_check_runner, palette_from_concept
 from .website_generation import detect_cinematic_website_intent
 from .workspace import reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
@@ -150,6 +151,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         ai_ask: Callable[[str], str] | None = None,
         qa_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
         smoke_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
+        visual_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
         # Resolved by the caller from the REAL environment, never from `environ` above --
         # that is a synthetic live-opt-in-only dict (see service.py), so reading the deploy
         # flag out of it would silently always be False.
@@ -171,6 +173,10 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # runner regardless of that setting -- see _run_functional_smoke_check's DockerUnavailableError
         # handling for what happens when Docker itself isn't reachable either.
         self._smoke_check_runner = smoke_check_runner or run_functional_smoke_check_in_docker
+        # Left None by default on purpose: the real runner cannot be built here, only
+        # per-execution, because it has to carry that brief's approved palette. Tests
+        # inject a fake so a unit test never reaches Docker.
+        self._visual_check_runner = visual_check_runner
         self._container_deploy = container_deploy
         self._deploy_runner = deploy_runner or build_and_verify_container
         self._legacy_fallback = LiveOpenCodeExecutionAdapter(
@@ -225,6 +231,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 model=model_for_complexity(ui_shell_complexity),
                 model_reason=f"{ui_shell_complexity}: {ui_shell_reason}",
                 run_functional_smoke_check=True,
+                run_visual_check=True,
             )
             if not ui_shell.success:
                 return ui_shell.failure
@@ -296,6 +303,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         model: str | None = None,
         model_reason: str = "",
         run_functional_smoke_check: bool = False,
+        run_visual_check: bool = False,
     ) -> _PhaseOutcome:
         if cancellation.is_cancelled():
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
@@ -356,6 +364,11 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             if failure is not None:
                 return _PhaseOutcome(context=None, failure=failure)
 
+        if run_visual_check:
+            failure = self._run_visual_check(stage, workspace, event_sink, cancellation, request, model)
+            if failure is not None:
+                return _PhaseOutcome(context=None, failure=failure)
+
         context = build_phase_context(stage.value, workspace, repair.qa_outcome)
         return _PhaseOutcome(context=context, failure=None)
 
@@ -406,6 +419,81 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 stage,
                 "functional_smoke_check_failed",
                 f"The app did not pass a functional smoke check after the {stage.value} phase. {smoke_repair.qa_status_message}",
+                outcome="qa_failed",
+            )
+        return None
+
+    def _run_visual_check(
+        self,
+        stage: ExecutionStage,
+        workspace,
+        event_sink: ExecutionEventSink,
+        cancellation: CancellationToken,
+        request: ExecutionRequest,
+        model: str | None,
+    ) -> ExecutionResult | None:
+        """QA depth level (b): did the built page adopt the design it was given?
+
+        Runs on the UI-shell phase only. That is the phase whose prompt actually carries
+        the style spec, so it is where design drift originates and where the repair is
+        cheapest -- and one Playwright container per execution rather than one per phase.
+        The tradeoff is real and worth stating: a later phase that repaints the ground
+        would not be caught.
+
+        Skipped entirely when the brief carries no colour direction (no Elena concept and
+        no hex values in the style spec) -- there is then no approved palette to measure
+        against, and asserting one the coding CLI was never given would be inventing a
+        standard rather than enforcing one.
+        """
+        runner = self._visual_check_runner or build_visual_check_runner(
+            palette_from_concept(
+                request.brief.elena_design_concept,
+                style_spec=" ".join(request.handoff.design_preview_summary),
+            )
+        )
+        if runner is None:
+            event_sink.emit(
+                stage=stage,
+                agent="Elena",
+                progress=79,
+                message="Visual check skipped: this brief carries no approved colour palette to verify against.",
+                level=EventLevel.INFO,
+            )
+            return None
+        try:
+            visual_repair = run_qa_repair_loop(
+                opencode_client=self._opencode_client,
+                opencode_succeeded=True,
+                workspace_path=workspace.project_path,
+                qa_commands=("Visual check: the built page must paint the approved palette, meet WCAG AA "
+                             "contrast, and fit a 375px phone viewport without horizontal overflow.",),
+                qa_cwd=workspace.project_path,
+                qa_runner=runner,
+                event_sink=event_sink,
+                cancellation=cancellation,
+                stage=stage,
+                agent="Elena",
+                max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
+                fix_prompt_builder=_build_qa_fix_prompt,
+                model=model,
+            )
+        except DockerUnavailableError:
+            event_sink.emit(
+                stage=stage,
+                agent="Elena",
+                progress=79,
+                message="Visual check skipped: Docker engine is not reachable.",
+                level=EventLevel.WARNING,
+            )
+            return None
+        if visual_repair.cancelled:
+            return _cancelled_result(request)
+        if visual_repair.qa_outcome is None or not visual_repair.qa_outcome.passed:
+            return self._phase_failure(
+                request,
+                stage,
+                "visual_check_failed",
+                f"The built page did not match the approved design after the {stage.value} phase. {visual_repair.qa_status_message}",
                 outcome="qa_failed",
             )
         return None

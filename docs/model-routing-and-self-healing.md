@@ -182,6 +182,7 @@ An oracle is an external source of truth the model cannot argue with. In this pi
 | `npm run build` | compiler | the code is syntactically valid and type-consistent |
 | `npm test` | test runner | the asserted behaviour holds |
 | Playwright in Docker | a real headless browser | the page renders visible content, has interactive elements, throws no console errors |
+| visual check | computed styles + WCAG maths | the painted palette matches the approved one, text clears AA contrast, the layout fits 375px |
 | `pip install` + `python -c "import bot"` | interpreter | dependencies resolve, the module imports cleanly |
 | `docker build` + HTTP probe | Docker + the network | the artifact runs as a deployable container |
 
@@ -193,6 +194,52 @@ correlates with the same model's failure modes, and tends toward agreeableness.
 Empirically, across this project's live runs, every bug the pipeline caught was caught by
 a compiler, a container, a browser, or an interpreter. None was caught by a model
 reviewing another model's output.
+
+### The hard case: making "does it look right" an oracle
+
+Design fidelity is the assertion that most obviously wants a model. The design system
+specifies a palette; the coding CLI ships something else; a human notices instantly. The
+tempting fix is to hand a screenshot to a vision model and ask whether it matches.
+
+Most of it does not need one. The approved design is not a vibe — it is a set of hex
+values in `ElenaDesignConcept.light_theme`, and the browser will report exactly what it
+painted. So the gate reads computed styles out of the live page and does arithmetic:
+
+- **Palette adherence** — every colour actually painted, weighted by the area it covers,
+  matched against the approved palette by Euclidean distance in RGB
+- **WCAG AA contrast** — text colour against its *effective* background (walking up the
+  tree past transparent parents), by the standard luminance formula
+- **Mobile layout** — `scrollWidth - clientWidth` at 375px, and tap targets under 24px
+- **Dark mode** — does the ground actually repaint under `prefers-color-scheme: dark`
+
+Pointed at a Focus Timer the pipeline had already delivered — one that passed the build,
+the tests and the render check, and looks perfectly decent in a screenshot:
+
+```
+Palette: 1/4 approved colours painted (25%).
+Dark mode: page does not repaint under prefers-color-scheme: dark.
+VISUAL CHECK FAILED:
+- Only 25% of the approved palette appears on the page. Missing: #ffffff, #172033,
+  #356cf6. Largest colours actually painted: #e9eef2, #7c8794, #2b3138, #5c6672.
+  Use the approved palette instead of framework defaults.
+- Contrast 3.13:1 (needs 4.5:1) -- #7c8794 on #e9eef2, affecting 8 text elements
+  (e.g. "Workspace", "Sessions today"). Darken this text colour or lighten its
+  background until it clears 4.5:1.
+```
+
+Both findings are real, and neither is arguable. The accent the designer chose never made
+it onto the page. Eight labels sit below the accessibility floor — which no screenshot
+review would have caught, because 3.13:1 looks fine until you measure it.
+
+The output shape matters as much as the finding. Failures are grouped by colour pair, not
+listed per element: one muted token reused across eight labels is *one* fix, and eight
+near-identical lines would bury everything else. Each line carries the measured value, the
+expected value, and the action. That is what makes the repair prompt that follows one pass
+instead of three rounds of "make it look better".
+
+What still needs a human: whether the layout is *good*, whether the copy is right, whether
+the thing is beautiful. The gate does not pretend to know. It answers the mechanical half
+completely and leaves the rest visibly alone.
 
 ### Why bounded, and why per-phase
 
@@ -284,11 +331,15 @@ than a second opinion.
 
 ## 5. Honest limitations
 
-- **No visual-fidelity check.** The pipeline verifies that a page renders and is
-  interactive. It does not verify that it looks like the design specification it was given.
-  `functional_smoke_check.py` says so in its own docstring. This is the largest open gap.
+- **Visual fidelity is checked mechanically, not aesthetically.** Palette, contrast and
+  mobile layout are measured; whether the layout is *good* is not. Nothing here catches a
+  page that hits every colour and is still ugly, or one whose copy contradicts itself.
+- **The visual gate runs on the UI-shell phase only.** That is where the style spec enters
+  the prompt and where repair is cheapest, and it keeps the run to one Playwright container.
+  A later phase that repaints the ground would not be caught.
 - **Clarification is front-loaded.** Questions are asked before the brief exists, capped at
-  three rounds. There is no mechanism to ask the client something mid-build.
+  three rounds. There is no mechanism to ask the client something mid-build. With the visual
+  gap closed, this is now the largest open one.
 - **The complexity classifier is keyword-based** and will misjudge projects whose difficulty
   is not signalled by vocabulary.
 - **The repair loop fixes local errors, not architectural ones.** It closes the gap between

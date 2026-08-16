@@ -1,0 +1,391 @@
+"""QA depth, level (b): did the built page actually adopt the design it was given?
+
+`npm run build` proves it compiles. The functional smoke check proves it renders and is
+alive. Neither notices that the design system specified a near-black ground with a soft
+blue accent and the coding CLI shipped default white with browser-blue links -- the gap
+this module closes, and the one the pipeline's own docs called its largest.
+
+Every assertion here is measured, not judged:
+
+  * palette adherence -- computed colors actually painted on the page, compared to the
+    approved palette's hex values in RGB space
+  * WCAG AA contrast  -- computed text colour against its effective background, a number
+  * mobile overflow   -- scrollWidth > clientWidth at 375px, a boolean
+  * dark-mode response -- does the page repaint under prefers-color-scheme: dark
+
+No model looks at the page and reports whether it is pretty. A model asked to grade its
+own output grades generously, and shares every blind spot with the model that produced it;
+a contrast ratio does not. The output is a list of exact deltas ("--surface painted
+#FFFFFF, approved palette says #182236"), which is what makes the repair prompt that
+follows surgical instead of "make it look better".
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+from .docker_qa_runner import run_qa_commands_in_docker
+from .models import ElenaDesignConcept
+from .qa_runner import QAOutcome
+
+_PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.48.0-jammy"
+_PLAYWRIGHT_NPM_VERSION = "1.48.0"
+_VISUAL_CHECK_FILENAME = "___freelancerstudio_visual_check.mjs"
+_PREVIEW_URL = "http://localhost:4173"
+DEFAULT_VISUAL_CHECK_TIMEOUT_SECONDS = 240
+
+# Two colours count as "the same intended colour" within this Euclidean RGB distance.
+# Loose enough to survive a designer-ish nudge or an alpha composite, tight enough that a
+# different hue never passes for the approved one.
+COLOR_MATCH_TOLERANCE = 26
+
+# Below this share of the approved palette actually appearing on the page, the build has
+# not adopted the design -- it has its own.
+MIN_PALETTE_COVERAGE = 0.5
+
+# WCAG 2.1 AA for body text. Large text is allowed 3.0 and the script applies that itself.
+MIN_CONTRAST_NORMAL = 4.5
+MIN_CONTRAST_LARGE = 3.0
+
+_HEX_PATTERN = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b")
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedPalette:
+    """The approved colours, flattened out of whatever the brief carries."""
+
+    background: str
+    colors: tuple[str, ...]
+
+    def as_json(self) -> str:
+        return json.dumps({"background": self.background, "colors": list(self.colors)})
+
+
+def _normalise_hex(value: str) -> str:
+    text = value.strip().lower()
+    if len(text) == 4:  # #abc -> #aabbcc
+        return "#" + "".join(char * 2 for char in text[1:])
+    return text
+
+
+def palette_from_concept(concept: ElenaDesignConcept | None, *, style_spec: str = "") -> ExpectedPalette | None:
+    """Flatten the approved design into a list of hex colours to look for.
+
+    Prefers the structured ThemePalette on the Elena concept; falls back to scraping hex
+    literals out of the style-pack prose, which is where the nine style packs keep their
+    real values. Returns None when the brief carries no colour direction at all -- there is
+    then nothing to check adherence against, and the gate skips rather than inventing a
+    standard the coding CLI was never told about.
+    """
+    if concept is not None:
+        light = concept.light_theme
+        values = [light.background, light.surface, light.text, light.accent]
+        colors = tuple(dict.fromkeys(_normalise_hex(v) for v in values if isinstance(v, str) and v.strip()))
+        if colors:
+            return ExpectedPalette(background=_normalise_hex(light.background), colors=colors)
+
+    scraped = tuple(dict.fromkeys(_normalise_hex(m) for m in _HEX_PATTERN.findall(style_spec or "")))
+    if not scraped:
+        return None
+    return ExpectedPalette(background=scraped[0], colors=scraped[:8])
+
+
+def _build_script(palette: ExpectedPalette) -> str:
+    return f"""import {{ chromium }} from 'playwright';
+
+const TARGET_URL = {_PREVIEW_URL!r};
+const EXPECTED = {palette.as_json()};
+const TOLERANCE = {COLOR_MATCH_TOLERANCE};
+const MIN_COVERAGE = {MIN_PALETTE_COVERAGE};
+const MIN_CONTRAST_NORMAL = {MIN_CONTRAST_NORMAL};
+const MIN_CONTRAST_LARGE = {MIN_CONTRAST_LARGE};
+
+function hexToRgb(hex) {{
+  const clean = hex.replace('#', '');
+  return [parseInt(clean.slice(0, 2), 16), parseInt(clean.slice(2, 4), 16), parseInt(clean.slice(4, 6), 16)];
+}}
+function rgbToHex([r, g, b]) {{
+  return '#' + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+}}
+function distance(a, b) {{
+  return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
+}}
+
+// Everything below runs in the page: colours have to be read as the browser actually
+// painted them, not as they were authored. Thresholds are inlined rather than referenced
+// -- this function body is serialised and evaluated in the browser context, where none of
+// the Node-scope constants above exist.
+const PAGE_PROBE = () => {{
+  const MIN_CONTRAST_NORMAL = {MIN_CONTRAST_NORMAL};
+  const MIN_CONTRAST_LARGE = {MIN_CONTRAST_LARGE};
+  function parse(color) {{
+    const m = color.match(/rgba?\\(([^)]+)\\)/);
+    if (!m) return null;
+    const parts = m[1].split(',').map((p) => parseFloat(p.trim()));
+    if (parts.length >= 4 && parts[3] === 0) return null;   // fully transparent
+    return [parts[0], parts[1], parts[2]];
+  }}
+  function effectiveBackground(node) {{
+    let current = node;
+    while (current && current !== document.documentElement) {{
+      const bg = parse(getComputedStyle(current).backgroundColor);
+      if (bg) return bg;
+      current = current.parentElement;
+    }}
+    const rootBg = parse(getComputedStyle(document.documentElement).backgroundColor);
+    return rootBg || [255, 255, 255];
+  }}
+  function luminance([r, g, b]) {{
+    const chan = [r, g, b].map((v) => {{
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    }});
+    return 0.2126 * chan[0] + 0.7152 * chan[1] + 0.0722 * chan[2];
+  }}
+  function contrast(fg, bg) {{
+    const l1 = luminance(fg), l2 = luminance(bg);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }}
+
+  const painted = new Map();
+  const contrastFailures = [];
+  const smallTargets = [];
+
+  const bodyBg = effectiveBackground(document.body);
+
+  for (const node of document.querySelectorAll('*')) {{
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) continue;
+    const style = getComputedStyle(node);
+    if (style.visibility === 'hidden' || style.display === 'none' || parseFloat(style.opacity) === 0) continue;
+
+    const area = rect.width * rect.height;
+    const bg = parse(style.backgroundColor);
+    if (bg) {{
+      const key = bg.join(',');
+      painted.set(key, (painted.get(key) || 0) + area);
+    }}
+
+    // Only nodes holding their own text are candidates for a contrast reading.
+    const ownText = Array.from(node.childNodes)
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.textContent.trim())
+      .join('')
+      .trim();
+    if (ownText.length > 1) {{
+      const fg = parse(style.color);
+      if (fg) {{
+        const key = fg.join(',');
+        painted.set(key, (painted.get(key) || 0) + area * 0.25);
+        const size = parseFloat(style.fontSize) || 16;
+        const weight = parseInt(style.fontWeight, 10) || 400;
+        const isLarge = size >= 24 || (size >= 18.66 && weight >= 700);
+        const ratio = contrast(fg, effectiveBackground(node));
+        const floor = isLarge ? MIN_CONTRAST_LARGE : MIN_CONTRAST_NORMAL;
+        if (ratio < floor) {{
+          contrastFailures.push({{
+            text: ownText.slice(0, 40),
+            ratio: Math.round(ratio * 100) / 100,
+            required: floor,
+            fg: parse(style.color),
+            bg: effectiveBackground(node),
+            fontSize: Math.round(size),
+          }});
+        }}
+      }}
+    }}
+
+    if (node.matches('a[href], button, [role="button"], input:not([type="hidden"]), select')) {{
+      if (rect.width < 24 || rect.height < 24) {{
+        smallTargets.push({{ tag: node.tagName.toLowerCase(), w: Math.round(rect.width), h: Math.round(rect.height) }});
+      }}
+    }}
+  }}
+
+  return {{
+    bodyBg,
+    painted: Array.from(painted.entries()).map(([k, area]) => ({{ rgb: k.split(',').map(Number), area }})),
+    contrastFailures: contrastFailures.sort((a, b) => a.ratio - b.ratio).slice(0, 8),
+    smallTargets: smallTargets.slice(0, 6),
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  }};
+}};
+
+async function main() {{
+  const browser = await chromium.launch();
+  const page = await browser.newPage({{ viewport: {{ width: 1280, height: 900 }} }});
+  await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: 20000 }});
+  await page.waitForTimeout(1200);
+
+  const desktop = await page.evaluate(PAGE_PROBE);
+
+  await page.setViewportSize({{ width: 375, height: 812 }});
+  await page.waitForTimeout(600);
+  const mobile = await page.evaluate(PAGE_PROBE);
+
+  await page.emulateMedia({{ colorScheme: 'dark' }});
+  await page.waitForTimeout(600);
+  const dark = await page.evaluate(PAGE_PROBE);
+
+  await browser.close();
+
+  const failures = [];
+  const notes = [];
+
+  // --- 1. palette adherence -------------------------------------------------
+  const expected = EXPECTED.colors.map(hexToRgb);
+  const paintedSorted = desktop.painted.sort((a, b) => b.area - a.area);
+  const matched = [];
+  const missing = [];
+  EXPECTED.colors.forEach((hex, i) => {{
+    const target = expected[i];
+    const hit = paintedSorted.find((p) => distance(p.rgb, target) <= TOLERANCE);
+    (hit ? matched : missing).push(hex);
+  }});
+  const coverage = matched.length / EXPECTED.colors.length;
+  notes.push(`Palette: ${{matched.length}}/${{EXPECTED.colors.length}} approved colours painted (${{Math.round(coverage * 100)}}%).`);
+
+  const bgTarget = hexToRgb(EXPECTED.background);
+  const bgActual = desktop.bodyBg;
+  const bgDelta = distance(bgActual, bgTarget);
+  if (bgDelta > TOLERANCE) {{
+    failures.push(
+      `Page background is ${{rgbToHex(bgActual)}} but the approved palette specifies ${{EXPECTED.background}}. ` +
+      `Apply the approved background colour to the page ground.`
+    );
+  }}
+  if (coverage < MIN_COVERAGE) {{
+    const topPainted = paintedSorted.slice(0, 5).map((p) => rgbToHex(p.rgb)).join(', ');
+    failures.push(
+      `Only ${{Math.round(coverage * 100)}}% of the approved palette appears on the page. ` +
+      `Missing: ${{missing.join(', ')}}. Largest colours actually painted: ${{topPainted}}. ` +
+      `Use the approved palette instead of framework defaults.`
+    );
+  }}
+
+  // --- 2. WCAG AA contrast --------------------------------------------------
+  // Grouped by colour pair, not listed per element: one muted token reused across a dozen
+  // labels is one fix, and a repair prompt listing it a dozen times buries the other
+  // findings under duplicates.
+  function groupContrast(entries) {{
+    const groups = new Map();
+    for (const f of entries) {{
+      const key = `${{rgbToHex(f.fg)}}|${{rgbToHex(f.bg)}}`;
+      if (!groups.has(key)) groups.set(key, {{ ...f, count: 0, samples: [] }});
+      const g = groups.get(key);
+      g.count += 1;
+      if (g.samples.length < 3) g.samples.push(f.text);
+      if (f.ratio < g.ratio) g.ratio = f.ratio;
+    }}
+    return Array.from(groups.values()).sort((a, b) => a.ratio - b.ratio);
+  }}
+
+  for (const g of groupContrast(desktop.contrastFailures).slice(0, 4)) {{
+    const where = g.count === 1 ? `text "${{g.samples[0]}}"` : `${{g.count}} text elements (e.g. "${{g.samples.join('", "')}}")`;
+    failures.push(
+      `Contrast ${{g.ratio}}:1 (needs ${{g.required}}:1) -- ${{rgbToHex(g.fg)}} on ${{rgbToHex(g.bg)}}, affecting ${{where}}. ` +
+      `Darken this text colour or lighten its background until it clears ${{g.required}}:1.`
+    );
+  }}
+
+  // --- 3. mobile layout -----------------------------------------------------
+  if (mobile.overflow > 1) {{
+    failures.push(
+      `The page scrolls horizontally at 375px wide (overflowing by ${{mobile.overflow}}px). ` +
+      `Make the layout fit a phone viewport -- no fixed widths wider than the screen.`
+    );
+  }}
+  if (mobile.smallTargets.length > 0) {{
+    const listed = mobile.smallTargets.map((t) => `${{t.tag}} ${{t.w}}x${{t.h}}px`).join(', ');
+    failures.push(`Tap targets under 24x24px at phone width: ${{listed}}. Enlarge them.`);
+  }}
+
+  // --- 4. dark mode ---------------------------------------------------------
+  const darkChanged = distance(dark.bodyBg, desktop.bodyBg) > TOLERANCE;
+  notes.push(darkChanged
+    ? `Dark mode: page repaints under prefers-color-scheme: dark (${{rgbToHex(desktop.bodyBg)}} -> ${{rgbToHex(dark.bodyBg)}}).`
+    : `Dark mode: page does not repaint under prefers-color-scheme: dark.`);
+  // Only meaningful once the page has actually repainted. A page that ignores the media
+  // query reports its light-mode contrast here too, and reporting the same defect twice
+  // just pads the repair prompt.
+  if (darkChanged && dark.contrastFailures.length > 0) {{
+    const worst = groupContrast(dark.contrastFailures)[0];
+    failures.push(
+      `In dark mode, contrast drops to ${{worst.ratio}}:1 (${{rgbToHex(worst.fg)}} on ${{rgbToHex(worst.bg)}}), ` +
+      `affecting e.g. "${{worst.samples[0]}}". Fix the dark palette on its own terms, do not only invert the light one.`
+    );
+  }}
+
+  for (const note of notes) console.log(note);
+
+  if (failures.length > 0) {{
+    console.error('VISUAL CHECK FAILED:');
+    for (const failure of failures) console.error(`- ${{failure}}`);
+    process.exit(1);
+  }}
+  console.log('VISUAL CHECK PASSED');
+  process.exit(0);
+}}
+
+main().catch((err) => {{
+  console.error('VISUAL CHECK FAILED: script error');
+  console.error(String(err && err.stack ? err.stack : err));
+  process.exit(1);
+}});
+"""
+
+
+_SHELL_COMMAND = (
+    "npm install --no-audit --no-fund >/dev/null 2>&1 && "
+    f"npm install --no-save --no-audit --no-fund playwright@{_PLAYWRIGHT_NPM_VERSION} >/dev/null 2>&1 && "
+    "(npm run preview >/tmp/freelancerstudio-preview.log 2>&1 &) && "
+    "sleep 4 && "
+    f"node {_VISUAL_CHECK_FILENAME}; "
+    "STATUS=$?; "
+    "pkill -f 'preview' >/dev/null 2>&1 || true; "
+    "exit $STATUS"
+)
+
+
+def run_visual_check_in_docker(
+    qa_commands: tuple[str, ...],
+    cwd: Path,
+    *,
+    palette: ExpectedPalette,
+    timeout_seconds: int = DEFAULT_VISUAL_CHECK_TIMEOUT_SECONDS,
+    docker_client_factory=None,
+) -> QAOutcome:
+    script_path = cwd / _VISUAL_CHECK_FILENAME
+    try:
+        script_path.write_text(_build_script(palette), encoding="utf-8")
+        return run_qa_commands_in_docker(
+            (_SHELL_COMMAND,),
+            cwd,
+            image=_PLAYWRIGHT_IMAGE,
+            timeout_seconds=timeout_seconds,
+            docker_client_factory=docker_client_factory,
+        )
+    finally:
+        try:
+            script_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def build_visual_check_runner(palette: ExpectedPalette | None) -> Callable[[tuple[str, ...], Path], QAOutcome] | None:
+    """Bind the approved palette into the `(qa_commands, cwd) -> QAOutcome` shape the
+    per-phase QA/repair machinery already expects. Returns None when the brief carries no
+    colour direction, so the caller can skip the gate instead of asserting a standard
+    nobody specified.
+    """
+    if palette is None:
+        return None
+
+    def _runner(qa_commands: tuple[str, ...], cwd: Path) -> QAOutcome:
+        return run_visual_check_in_docker(qa_commands, cwd, palette=palette)
+
+    return _runner

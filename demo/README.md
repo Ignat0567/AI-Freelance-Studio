@@ -46,6 +46,7 @@ worked example.
 | planner | approved brief rev1, Elena design concept, handoff ready |
 | coder | two scoped phases, each its own CLI call with its own model |
 | reviewer | `npm run build`, `npm test`, Playwright render check — all in Docker |
+| visual gate | painted palette vs the approved one, WCAG AA contrast, 375px layout |
 | self-healing | repair attempts per phase, bounded at 2 |
 | container | `docker build` + HTTP probe from outside the container → 200 |
 
