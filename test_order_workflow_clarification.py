@@ -480,3 +480,53 @@ def test_reference_title_is_not_hard_coded_in_workflow_services():
     root = Path(__file__).parent / "order_workflow"
     source = "\n".join((root / name).read_text(encoding="utf-8") for name in ("clarification.py", "brief_service.py", "handoffs.py"))
     assert "PDF Voice Assistant" not in source
+
+
+# --- an answer listing several capabilities becomes several features --------------------
+
+
+def test_a_semicolon_separated_answer_becomes_one_feature_each():
+    from order_workflow.brief_service import _split_capabilities
+
+    # The real answer that shipped a four-in-one "feature": the core-feature prompt says
+    # "wire in exactly ONE central feature" and was handed all four at once.
+    answer = (
+        "Start, pause, and reset the 25-minute timer; show a live countdown ring; "
+        "fire a desktop notification on completion; and log today's completed sessions."
+    )
+
+    features = _split_capabilities(answer)
+
+    assert len(features) == 4
+    assert features[0] == "Start, pause, and reset the 25-minute timer"
+    assert features[3].startswith("log today")  # the joining "and" is dropped
+
+
+def test_commas_and_and_are_not_treated_as_separators():
+    from order_workflow.brief_service import _split_capabilities
+
+    # "start, pause, and reset the timer" is one capability with three verbs. Splitting it
+    # would invent features nobody asked for.
+    assert _split_capabilities("Start, pause, and reset the timer") == ("Start, pause, and reset the timer",)
+
+
+def test_a_bulleted_answer_is_split_on_the_bullets():
+    from order_workflow.brief_service import _split_capabilities
+
+    features = _split_capabilities("- Add a book\n- Mark it finished\n- See the count")
+
+    assert features == ("Add a book", "Mark it finished", "See the count")
+
+
+def test_punctuation_noise_is_not_mistaken_for_a_feature():
+    from order_workflow.brief_service import _split_capabilities
+
+    assert _split_capabilities("Add a book;;; ; mark it read") == ("Add a book", "mark it read")
+
+
+def test_each_capability_gets_its_own_acceptance_criterion():
+    from order_workflow.brief_service import _generic_acceptance, _split_capabilities
+
+    features = _split_capabilities("Add a book; mark it finished; see the monthly count")
+
+    assert len(_generic_acceptance(features)) == 3

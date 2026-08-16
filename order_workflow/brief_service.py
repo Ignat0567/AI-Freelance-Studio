@@ -160,11 +160,42 @@ def _pdf_features(signals) -> tuple[str, ...]:
     return _unique(features)
 
 
+_FEATURE_SEPARATORS = re.compile(r"[\n;]+|^\s*(?:[-*•]|\d+[.)])\s+", re.MULTILINE)
+_MAX_GENERIC_FEATURES = 8
+
+
+def _split_capabilities(text: str) -> tuple[str, ...]:
+    """Break an answer listing several capabilities into one entry each.
+
+    Only newlines, semicolons and bullet markers are treated as separators. Commas and
+    "and" are deliberately left alone: "start, pause, and reset the timer" is one capability
+    expressed with three verbs, and splitting it would invent features nobody asked for.
+
+    Collapsing everything into a single entry -- which is what this did before -- quietly
+    distorted the whole pipeline downstream: the core-feature prompt says "wire in exactly
+    ONE central feature" and was handed four, acceptance criteria came out as a single
+    restatement of the blob, and complexity routing's `len(core_features) >= 5` rule could
+    never fire.
+    """
+    parts = [
+        # A trailing item usually reads "...; and log the result" -- the conjunction joined
+        # it to the previous clause and means nothing once it stands alone.
+        sanitize_public_text(re.sub(r"^\s*(?:and|or)\s+", "", part, flags=re.IGNORECASE))[:240]
+        for part in _FEATURE_SEPARATORS.split(text)
+        if part and part.strip()
+    ]
+    # A fragment too short to be a capability is punctuation noise, not a feature.
+    meaningful = [part for part in parts if len(part) > 3]
+    return tuple(dict.fromkeys(meaningful))[:_MAX_GENERIC_FEATURES]
+
+
 def _generic_features(order: UserOrder) -> tuple[str, ...]:
     answer = _answers(order).get("core-features")
-    if isinstance(answer, str) and answer.strip():
-        return (sanitize_public_text(answer)[:240],)
-    return (sanitize_public_text(order.description[:1_500])[:240],)
+    source = answer if isinstance(answer, str) and answer.strip() else order.description[:1_500]
+    split = _split_capabilities(source)
+    if split:
+        return split
+    return (sanitize_public_text(source)[:240],)
 
 
 _SECTION_HEADING = re.compile(r"^\s*\d+\.\s+(.+)$", re.MULTILINE)
