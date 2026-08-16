@@ -53,6 +53,20 @@ worked example.
 The reviewer is deliberately not a model. It is a compiler, a test runner and a real
 headless browser. See [`docs/model-routing-and-self-healing.md`](../docs/model-routing-and-self-healing.md).
 
+## The mid-build checkpoint
+
+```bash
+python demo/run_midbuild_clarification_demo.py
+```
+
+Same chain, with `FREELANCERSTUDIO_ENABLE_MIDBUILD_CLARIFICATION=1`. The run stops after the
+UI shell, prints the questions it wants answered, answers them programmatically as the
+client would, and resumes — reusing the shell from its checkpoint rather than rebuilding it.
+The script then asserts the correction actually reached the core-feature prompt.
+
+Off by default in normal operation: an unattended run must never stop halfway waiting for a
+human who is not there.
+
 ## Recording it
 
 The script is written to be filmed: single command, no interaction, readable output.

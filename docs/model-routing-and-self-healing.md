@@ -337,9 +337,13 @@ than a second opinion.
 - **The visual gate runs on the UI-shell phase only.** That is where the style spec enters
   the prompt and where repair is cheapest, and it keeps the run to one Playwright container.
   A later phase that repaints the ground would not be caught.
-- **Clarification is front-loaded.** Questions are asked before the brief exists, capped at
-  three rounds. There is no mechanism to ask the client something mid-build. With the visual
-  gap closed, this is now the largest open one.
+- **Mid-build clarification asks at one boundary, not continuously.** The run stops once,
+  after the UI shell, and only about assumptions the brief already recorded. It cannot
+  notice mid-phase that something the client never mentioned has become important.
+- **The mid-build checkpoint is opt-in** (`FREELANCERSTUDIO_ENABLE_MIDBUILD_CLARIFICATION=1`)
+  and blocks until answered. An unattended run must not stop halfway waiting for a human,
+  so the default is off — which means the default pipeline still ships whatever the brief
+  assumed.
 - **The complexity classifier is keyword-based** and will misjudge projects whose difficulty
   is not signalled by vocabulary.
 - **The repair loop fixes local errors, not architectural ones.** It closes the gap between
@@ -350,7 +354,35 @@ than a second opinion.
 
 ---
 
-## 6. Reproducing it
+## 6. Asking the client mid-build
+
+The same "does this need a model" question applies to the pipeline's own dialogue.
+
+Clarification runs entirely before the brief exists, against a client with nothing to look
+at. Anything they could not picture in the abstract gets resolved by a recommended default
+and recorded as an assumption — and the first time they see the consequence is when the
+finished project lands.
+
+So the run now stops once, at the UI-shell boundary: the screens exist and build, nothing is
+wired on top of them, and a correction is still cheap. It asks about the assumptions the
+brief itself recorded, plus one open question for whatever nobody anticipated.
+
+The questions are a lookup, not a model call. *Which of your own assumptions should the
+client confirm* is not a judgement, and a model asked to invent questions about a project it
+just built produces plausible filler. A brief with no assumptions asks nothing at all —
+a checkpoint that always fires teaches people to click through it.
+
+The pause does not park a thread. The attempt ends cleanly with `AWAITING_USER` — already a
+legal transition, and already outside the terminal set — and answering resumes exactly like
+a retry: same execution id, same owned workspace, every finished phase skipped via its
+checkpoint. Only the answers ride along, landing in the next phase's prompt *above* the
+feature instruction, because a client who has seen the real shell outranks what the brief
+assumed in the abstract.
+
+Answers that confirm the build produce no corrections at all, rather than being forwarded
+as instructions the coding CLI has to interpret.
+
+## 7. Reproducing it
 
 ```bash
 python demo/run_end_to_end_demo.py
@@ -359,3 +391,11 @@ python demo/run_end_to_end_demo.py
 Runs the whole chain against a real backend over real HTTP with live execution enabled,
 prints every stage transition, and saves a JSON transcript to `demo/transcripts/`. Requires
 Docker running and an authenticated `claude` CLI.
+
+```bash
+python demo/run_midbuild_clarification_demo.py
+```
+
+Same, with the mid-build checkpoint switched on. The script plays the client's part
+programmatically, so the pause → answer → resume loop can be watched without a human sitting
+in front of it.
