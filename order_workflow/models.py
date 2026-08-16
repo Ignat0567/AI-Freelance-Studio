@@ -492,6 +492,9 @@ class ProjectExecution(StrictDomainModel):
     # client something. Answering them resumes the same execution from its checkpoints.
     pending_questions: tuple[ClarificationQuestion, ...] = ()
     midbuild_answers: tuple[ClarificationAnswer, ...] = ()
+    # Kept on the snapshot so a retry re-sends what the client asked for rather than
+    # silently reverting to the unedited prompt.
+    prompt_additions: LongText | None = None
     events: tuple[ExecutionEvent, ...] = ()
     artifacts: tuple[ExecutionArtifact, ...] = ()
     result: ExecutionResult | None = None

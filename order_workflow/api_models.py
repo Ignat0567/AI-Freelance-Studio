@@ -75,6 +75,9 @@ class ApproveDesignPreviewRequest(StrictApiModel):
 class StartExecutionRequest(StrictApiModel):
     mode: Literal["fake", "production"] = "fake"
     live: bool = False
+    # Free text the client added after reading the prepared prompt. Bounded because it
+    # is concatenated into a prompt that already has a budget.
+    prompt_additions: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] = ""
 
 
 class ReviseExecutionRequest(StrictApiModel):

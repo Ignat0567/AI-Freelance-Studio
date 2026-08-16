@@ -52,6 +52,7 @@ from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
 from .deployment import container_deploy_enabled
 from .midbuild_clarification import midbuild_clarification_enabled
+from .phase_prompts import build_ui_shell_prompt
 from .phased_adapter import BOT_QA_COMMANDS, PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
@@ -569,7 +570,7 @@ class OrderWorkflowService:
                 raise OrderWorkflowError("handoff_blocked", "Approve the current brief before requesting a handoff.")
         return self.snapshot(order_id)
 
-    def start_execution(self, order_id: str, mode: ExecutionMode, *, live: bool = False) -> dict[str, Any]:
+    def start_execution(self, order_id: str, mode: ExecutionMode, *, live: bool = False, prompt_additions: str = "") -> dict[str, Any]:
         if live and mode is not ExecutionMode.PRODUCTION:
             raise OrderWorkflowError("invalid_execution_mode", "Live execution requires production mode.")
         with self._lock:
@@ -579,7 +580,7 @@ class OrderWorkflowService:
         if handoff is None:
             raise OrderWorkflowError("design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved", "Approve the current brief and Elena preview before execution.")
         try:
-            execution = self._executions.start(brief, handoff, mode=mode, live=live, title=order.title)
+            execution = self._executions.start(brief, handoff, mode=mode, live=live, title=order.title, prompt_additions=prompt_additions)
         except ExecutionServiceError as exc:
             raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
         with self._lock:
@@ -588,6 +589,31 @@ class OrderWorkflowService:
             self._orders[order_id] = order.model_copy(update={"execution_id": execution.id, "status": next_status})
         self._persist()
         return self.snapshot(order_id)
+
+    def execution_prompt_preview(self, order_id: str, prompt_additions: str = "") -> dict[str, Any]:
+        """The exact instruction the coding CLI will receive for the first build phase.
+
+        Built with the same function the adapter calls, so this is a preview rather than a
+        description of one -- a separately worded summary would drift from what is actually
+        sent, which is the one thing this screen exists to rule out. Pure: no execution is
+        created or modified.
+        """
+        with self._lock:
+            brief = self._require_brief(order_id)
+            handoff = self._handoff_by_order.get(order_id)
+        if handoff is None:
+            raise OrderWorkflowError(
+                "design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved",
+                "Approve the brief and Elena preview before previewing the build instruction.",
+            )
+        return {
+            "stage": "ui_shell",
+            "prompt": build_ui_shell_prompt(brief, handoff, additions=prompt_additions),
+            # The client can add to the instruction but cannot remove from it: every strict
+            # rule in there is what a later gate checks against (the preview script the
+            # browser checks connect to, the no-backend rule the decision gate assumes).
+            "additions_are_append_only": True,
+        }
 
     def retry_execution(self, order_id: str) -> dict[str, Any]:
         with self._lock:

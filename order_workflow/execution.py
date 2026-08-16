@@ -169,6 +169,7 @@ class ProjectExecutionService:
         mode: ExecutionMode | None = None,
         live: bool = False,
         title: str = "",
+        prompt_additions: str = "",
     ) -> ProjectExecution:
         active_mode = mode or self._mode
         self._validate_handoff(brief, handoff)
@@ -203,6 +204,7 @@ class ProjectExecutionService:
             stage=ExecutionStage.REQUIREMENTS,
             progress=0,
             current_activity="Queued for execution",
+            prompt_additions=prompt_additions or None,
             created_at=now,
             updated_at=now,
         )
@@ -216,6 +218,7 @@ class ProjectExecutionService:
             worker = self._thread_factory(
                 target=self._run,
                 args=(execution.id, brief, handoff, adapter, title),
+                kwargs={"prompt_additions": prompt_additions},
                 name=f"order-execution-{execution.id}",
                 daemon=True,
             )
@@ -293,6 +296,7 @@ class ProjectExecutionService:
             worker = self._thread_factory(
                 target=self._run,
                 args=(execution_id, brief, handoff, adapter, title),
+                kwargs={"prompt_additions": updated.prompt_additions or ""},
                 name=f"order-execution-{execution_id}-retry",
                 daemon=True,
             )
@@ -471,6 +475,7 @@ class ProjectExecutionService:
         revision_note: str | None = None,
         revised_from_execution_id: str | None = None,
         midbuild_answers: tuple = (),
+        prompt_additions: str = "",
     ) -> None:
         with self._lock:
             record = self._records[execution_id]
@@ -489,6 +494,7 @@ class ProjectExecutionService:
                 revision_note=revision_note,
                 revised_from_execution_id=revised_from_execution_id,
                 midbuild_answers=midbuild_answers,
+                prompt_additions=prompt_additions,
             )
         try:
             simulated = adapter is not self._live_adapter and adapter is not self._revision_adapter
@@ -778,7 +784,7 @@ class ProjectExecutionService:
             worker = self._thread_factory(
                 target=self._run,
                 args=(execution_id, brief, handoff, adapter, title),
-                kwargs={"midbuild_answers": tuple(answers)},
+                kwargs={"midbuild_answers": tuple(answers), "prompt_additions": updated.prompt_additions or ""},
                 name=f"order-execution-{execution_id}-resume",
                 daemon=True,
             )

@@ -39,6 +39,7 @@ from .production_adapter import (
     live_opencode_execution_enabled,
 )
 from .qa_runner import QAOutcome, run_qa_commands
+from .state_continuity_check import run_state_continuity_check_in_docker
 from .readiness import LIVE_EXECUTION_OPT_IN_REQUIRED, ReadinessResult
 from .visual_check import build_visual_check_runner, palette_from_concept
 from .website_generation import detect_cinematic_website_intent
@@ -154,6 +155,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         qa_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
         smoke_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
         visual_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
+        state_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
         # Resolved by the caller from the REAL environment, never from `environ` above --
         # that is a synthetic live-opt-in-only dict (see service.py), so reading the deploy
         # flag out of it would silently always be False.
@@ -180,6 +182,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # per-execution, because it has to carry that brief's approved palette. Tests
         # inject a fake so a unit test never reaches Docker.
         self._visual_check_runner = visual_check_runner
+        self._state_check_runner = state_check_runner or run_state_continuity_check_in_docker
         self._midbuild_clarification = midbuild_clarification
         self._container_deploy = container_deploy
         self._deploy_runner = deploy_runner or build_and_verify_container
@@ -226,7 +229,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             ui_shell_complexity, ui_shell_reason = describe_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.ui_requirements)}")
             ui_shell = self._run_phase(
                 stage=ExecutionStage.UI_SHELL,
-                prompt=build_ui_shell_prompt(request.brief, request.handoff),
+                prompt=build_ui_shell_prompt(request.brief, request.handoff, additions=request.prompt_additions),
                 qa_commands=UI_SHELL_QA_COMMANDS,
                 workspace=workspace,
                 event_sink=event_sink,
@@ -289,6 +292,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 model=model_for_complexity(core_feature_complexity),
                 model_reason=f"{core_feature_complexity}: {core_feature_reason}",
                 run_functional_smoke_check=True,
+                run_state_check=True,
             )
             if not core_feature.success:
                 return core_feature.failure
@@ -338,6 +342,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         model_reason: str = "",
         run_functional_smoke_check: bool = False,
         run_visual_check: bool = False,
+        run_state_check: bool = False,
     ) -> _PhaseOutcome:
         if cancellation.is_cancelled():
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
@@ -427,6 +432,11 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             if failure is not None:
                 return _PhaseOutcome(context=None, failure=failure)
 
+        if run_state_check:
+            failure = self._run_state_continuity_check(stage, workspace, event_sink, cancellation, request, model)
+            if failure is not None:
+                return _PhaseOutcome(context=None, failure=failure)
+
         context = build_phase_context(stage.value, workspace, repair.qa_outcome)
         return _PhaseOutcome(context=context, failure=None)
 
@@ -477,6 +487,60 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 stage,
                 "functional_smoke_check_failed",
                 f"The app did not pass a functional smoke check after the {stage.value} phase. {smoke_repair.qa_status_message}",
+                outcome="qa_failed",
+            )
+        return None
+
+    def _run_state_continuity_check(
+        self,
+        stage: ExecutionStage,
+        workspace,
+        event_sink: ExecutionEventSink,
+        cancellation: CancellationToken,
+        request: ExecutionRequest,
+        model: str | None,
+    ) -> ExecutionResult | None:
+        """QA depth level (c): does the app hold its own state?
+
+        Runs on the core-feature phase, not the UI shell: a shell legitimately has
+        placeholder state, but once the feature is wired the app is the deliverable, and a
+        control that forgets what the user typed the moment they change screens is a facade
+        rather than a product. Every gate before this one passes on a facade.
+        """
+        try:
+            state_repair = run_qa_repair_loop(
+                opencode_client=self._opencode_client,
+                opencode_succeeded=True,
+                workspace_path=workspace.project_path,
+                qa_commands=("State continuity check: a value the user changes must survive navigating "
+                             "to another screen and back, not reset to its initial value.",),
+                qa_cwd=workspace.project_path,
+                qa_runner=self._state_check_runner,
+                event_sink=event_sink,
+                cancellation=cancellation,
+                stage=stage,
+                agent="BugCatcher",
+                max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
+                fix_prompt_builder=_build_qa_fix_prompt,
+                model=model,
+            )
+        except DockerUnavailableError:
+            event_sink.emit(
+                stage=stage,
+                agent="BugCatcher",
+                progress=79,
+                message="State continuity check skipped: Docker engine is not reachable.",
+                level=EventLevel.WARNING,
+            )
+            return None
+        if state_repair.cancelled:
+            return _cancelled_result(request)
+        if state_repair.qa_outcome is None or not state_repair.qa_outcome.passed:
+            return self._phase_failure(
+                request,
+                stage,
+                "state_continuity_failed",
+                f"The app loses state the user entered after the {stage.value} phase. {state_repair.qa_status_message}",
                 outcome="qa_failed",
             )
         return None

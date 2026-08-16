@@ -66,6 +66,8 @@ class ExecutionRequest:
     # paused at a phase boundary and is now resuming; the phase that asked skips straight
     # past its checkpoint, and the next phase's prompt carries these as corrections.
     midbuild_answers: tuple = ()
+    # Client text appended to the ui_shell prompt after they reviewed it in the UI.
+    prompt_additions: str = ""
 
 
 class ProjectExecutionAdapter(Protocol):

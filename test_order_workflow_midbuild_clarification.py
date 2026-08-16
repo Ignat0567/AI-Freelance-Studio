@@ -215,6 +215,7 @@ def _adapter(tmp_path, client, *, midbuild: bool):
         qa_runner=_passing_qa,
         smoke_check_runner=_passing_qa,
         visual_check_runner=_passing_qa,
+        state_check_runner=_passing_qa,
         ai_ask=lambda _p: "overview",
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"},
         midbuild_clarification=midbuild,

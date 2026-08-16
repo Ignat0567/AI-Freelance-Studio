@@ -143,7 +143,7 @@ def _safe_prose_ai_ask(_prompt: str) -> str:
     return "A generated project overview paragraph."
 
 
-def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None, visual_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
+def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None, visual_check_runner=None, state_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
     return PhasedLiveOpenCodeExecutionAdapter(
         provider_name="opencode_bridge",
         model_name="openai/gpt-5.5",
@@ -158,6 +158,7 @@ def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, env
         # Docker-backed one from the brief's approved palette and every test would hit it.
         smoke_check_runner=smoke_check_runner or _passing_qa,
         visual_check_runner=visual_check_runner or _passing_qa,
+        state_check_runner=state_check_runner or _passing_qa,
     )
 
 

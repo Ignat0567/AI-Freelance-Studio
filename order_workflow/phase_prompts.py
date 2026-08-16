@@ -10,7 +10,22 @@ from .phase_context import PhaseContext
 _FAIL_CLOSED_REASONING = "The brief names an audience this rule set does not recognise; defaulting to requiring a backend for safety."
 
 
-def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
+def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additions: str = "") -> str:
+    """`additions` is free text the client wrote after reading this prompt in the UI.
+
+    It is placed after the requirements but *before* the strict rules, and the rules then
+    declare themselves authoritative. Every one of those rules is load-bearing for a gate
+    that runs later -- the preview script is what the smoke and visual checks connect to,
+    "no database/auth" is what makes the backend-decision gate meaningful, and the skeleton
+    states are what the core-feature phase attaches to. Letting client text land after them,
+    or letting it replace them, would let someone disarm the QA chain by accident and see
+    the consequence several minutes later as a confusing gate failure.
+
+    This is ordering, not enforcement: a prompt cannot force a model to obey. The actual
+    guarantee is that the gates measure the built result independently, so an addition that
+    breaks the contract fails a check rather than shipping.
+    """
+    addition_text = " ".join(additions.split()) if additions else ""
     lines = [
         "Implement ONLY the UI shell for this project: screens and navigation between them.",
         "",
@@ -23,7 +38,12 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
         *(["Visual design direction (from Elena's approved design preview -- follow it precisely, it is not optional flavor):",
            *[f"- {item}" for item in handoff.design_preview_summary],
            ""] if handoff.design_preview_summary else []),
-        "Strict rules for this phase:",
+        *(["Additional notes from the client, who reviewed this instruction before it was sent:",
+           addition_text,
+           ""] if addition_text else []),
+        "Strict rules for this phase (these take precedence over the client's additional notes above):"
+        if addition_text
+        else "Strict rules for this phase:",
         "- Do NOT connect a database or any persistence layer.",
         "- Do NOT implement authentication or user accounts.",
         "- Do NOT call any external API or AI service.",
