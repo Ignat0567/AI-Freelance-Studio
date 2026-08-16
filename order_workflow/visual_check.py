@@ -204,12 +204,77 @@ const PAGE_PROBE = () => {{
     }}
   }}
 
+  // --- layout defects -------------------------------------------------------
+  // Only the objectively wrong ones. "Badly composed" is not measurable and is left to a
+  // human; "this text sits on top of that text" and "this label is silently cut in half"
+  // are, and both are what "elements hang wrong" usually turns out to be.
+  function describe(node) {{
+    const text = (node.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 32);
+    return text ? `"${{text}}"` : `<${{node.tagName.toLowerCase()}}>`;
+  }}
+
+  const textBoxes = [];
+  const clipped = [];
+  const pastViewport = [];
+  const viewportWidth = document.documentElement.clientWidth;
+
+  for (const node of document.querySelectorAll('*')) {{
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 4 || rect.height < 4) continue;
+    const style = getComputedStyle(node);
+    if (style.visibility === 'hidden' || style.display === 'none' || parseFloat(style.opacity) === 0) continue;
+
+    // Content silently cut off: the box clips its own overflow and has more to show, with
+    // no ellipsis to signal it. A scrollable region is excluded -- there the overflow is
+    // reachable rather than lost.
+    const clips = style.overflow === 'hidden' || style.overflowX === 'hidden';
+    const scrollable = style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflowX === 'auto' || style.overflowX === 'scroll';
+    if (clips && !scrollable && style.textOverflow !== 'ellipsis' && node.scrollWidth > node.clientWidth + 2 && node.clientWidth > 0) {{
+      clipped.push({{ what: describe(node), lost: node.scrollWidth - node.clientWidth }});
+    }}
+
+    // Static only. An absolutely or fixed positioned box sitting outside the viewport is a
+    // placement decision, not a flow bug -- the skip link every accessible page starts with
+    // lives at left:-9999px on purpose, and failing it would send the repair loop to delete
+    // an accessibility feature. A box laid out by normal flow has no such excuse.
+    if (style.position === 'static' && (rect.left < -1 || rect.right > viewportWidth + 1)) {{
+      pastViewport.push({{ what: describe(node), overhang: Math.round(Math.max(-rect.left, rect.right - viewportWidth)) }});
+    }}
+
+    // Own text only, and only statically positioned boxes: absolute/fixed layering is a
+    // design choice (badges, tooltips, modals), not a bug.
+    const ownText = Array.from(node.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join('').trim();
+    if (ownText.length > 1 && style.position === 'static' && textBoxes.length < 160) {{
+      textBoxes.push({{ node, rect, label: describe(node) }});
+    }}
+  }}
+
+  const overlaps = [];
+  for (let i = 0; i < textBoxes.length && overlaps.length < 6; i += 1) {{
+    for (let j = i + 1; j < textBoxes.length && overlaps.length < 6; j += 1) {{
+      const a = textBoxes[i];
+      const b = textBoxes[j];
+      if (a.node.contains(b.node) || b.node.contains(a.node)) continue;
+      const width = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
+      const height = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
+      if (width <= 1 || height <= 1) continue;
+      const smaller = Math.min(a.rect.width * a.rect.height, b.rect.width * b.rect.height);
+      // A quarter of the smaller box: brushing borders are normal, half-covered text is not.
+      if (smaller > 0 && (width * height) / smaller > 0.25) {{
+        overlaps.push({{ a: a.label, b: b.label, percent: Math.round(((width * height) / smaller) * 100) }});
+      }}
+    }}
+  }}
+
   return {{
     bodyBg,
     painted: Array.from(painted.entries()).map(([k, area]) => ({{ rgb: k.split(',').map(Number), area }})),
     contrastFailures: contrastFailures.sort((a, b) => a.ratio - b.ratio).slice(0, 8),
     smallTargets: smallTargets.slice(0, 6),
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    clipped: clipped.slice(0, 4),
+    pastViewport: pastViewport.slice(0, 4),
+    overlaps,
   }};
 }};
 
@@ -321,6 +386,29 @@ async function main() {{
   if (mobile.smallTargets.length > 0) {{
     const listed = mobile.smallTargets.map((t) => `${{t.tag}} ${{t.w}}x${{t.h}}px`).join(', ');
     failures.push(`Tap targets under 24x24px at phone width: ${{listed}}. Enlarge them.`);
+  }}
+
+  // --- 3b. layout ------------------------------------------------------------
+  // Reported per width, because a layout that is fine at 1280 and broken at 375 is the
+  // usual shape of "the elements hang wrong" -- and the reverse happens too.
+  for (const [label, probe] of [['desktop (1280px)', desktop], ['phone (375px)', mobile]]) {{
+    for (const overlap of probe.overlaps) {{
+      failures.push(
+        `On ${{label}}, ${{overlap.a}} and ${{overlap.b}} overlap by ${{overlap.percent}}% of the smaller box. `
+        + `Two statically positioned text elements are sitting on top of each other -- fix the spacing or the container width.`
+      );
+    }}
+    for (const item of probe.clipped) {{
+      failures.push(
+        `On ${{label}}, ${{item.what}} is cut off by ${{item.lost}}px: its container hides the overflow with no ellipsis, `
+        + `so the end of the content is silently invisible. Let it wrap, widen the container, or add text-overflow: ellipsis.`
+      );
+    }}
+    for (const item of probe.pastViewport) {{
+      failures.push(
+        `On ${{label}}, ${{item.what}} extends ${{item.overhang}}px outside the viewport. Keep it inside the visible area.`
+      );
+    }}
   }}
 
   // --- 4. dark mode ---------------------------------------------------------

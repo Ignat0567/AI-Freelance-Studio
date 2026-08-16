@@ -207,3 +207,49 @@ def test_the_pinned_image_is_new_enough_for_a_modern_frontend_toolchain():
 
     assert "jammy" not in image, "jammy images ship Node 20.18, which Vite 8's toolchain rejects"
     assert "noble" in image
+
+
+# --- layout defects --------------------------------------------------------------------
+
+
+def test_layout_checks_are_limited_to_objectively_wrong_things():
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    # Overlapping text, silently clipped content, and a box laid out past the viewport.
+    # "Badly composed" is not measurable and is deliberately absent.
+    assert "overlaps" in script and "clipped" in script and "pastViewport" in script
+
+
+def test_only_statically_positioned_boxes_are_judged_for_overlap_and_overflow():
+    # An absolutely positioned box that overlaps or sits off-screen is a placement decision:
+    # badges, tooltips, modals -- and the skip link every accessible page opens with, which
+    # lives at left:-9999px. Failing that would send the repair loop to delete an
+    # accessibility feature. This was a real false positive before it was narrowed.
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    assert "style.position === 'static' && (rect.left < -1" in script
+    assert "style.position === 'static' && textBoxes.length" in script
+    assert "accessibility feature" in script
+
+
+def test_overlap_needs_to_be_substantial_before_it_counts():
+    # Boxes brushing borders by a pixel are normal; half-covered text is not.
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    assert "> 0.25" in script
+    assert "a.node.contains(b.node) || b.node.contains(a.node)" in script
+
+
+def test_a_scrollable_region_is_not_reported_as_clipped():
+    # There the overflow is reachable rather than lost.
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    assert "scrollable" in script
+    assert "textOverflow !== 'ellipsis'" in script
+
+
+def test_layout_is_judged_at_both_widths():
+    # A layout that is fine at 1280 and broken at 375 is the usual shape of the complaint.
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    assert "'desktop (1280px)'" in script and "'phone (375px)'" in script

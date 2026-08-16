@@ -806,8 +806,12 @@ class ReviseProjectExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
             cancellation=cancellation,
             request=request,
             model=model_for_complexity(complexity),
-            # The functional smoke check is Playwright/browser-only -- meaningless for a bot.
+            # All three are Playwright/browser-only -- meaningless for a bot. A revision
+            # produces a deliverable exactly like a first build does, so it is gated the
+            # same way: the very first revision this pipeline ran was a fix for lost state,
+            # and without this the gate that proves such a fix worked would not have run.
             run_functional_smoke_check=not is_bot,
+            run_state_check=not is_bot,
         )
         if not revision.success:
             return revision.failure

@@ -608,7 +608,7 @@ def test_corrupt_checkpoint_file_is_ignored_and_the_phase_reruns(tmp_path):
 # --- revision (Level 1: revise an already-delivered project) --------------------
 
 
-def _revision_adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None) -> ReviseProjectExecutionAdapter:
+def _revision_adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None, state_check_runner=None) -> ReviseProjectExecutionAdapter:
     return ReviseProjectExecutionAdapter(
         provider_name="opencode_bridge",
         model_name="openai/gpt-5.5",
@@ -617,7 +617,10 @@ def _revision_adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=
         qa_runner=qa_runner or _passing_qa,
         ai_ask=ai_ask or _safe_prose_ai_ask,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1", **(environ or {})},
+        # A revision is gated like a first build, so both browser checks have to be faked
+        # here too or every revision test reaches real Docker.
         smoke_check_runner=smoke_check_runner or _passing_qa,
+        state_check_runner=state_check_runner or _passing_qa,
     )
 
 
