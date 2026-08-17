@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 import re
-from threading import RLock, Thread
+from threading import BoundedSemaphore, RLock, Thread
 from time import monotonic
 from uuid import uuid4
 
@@ -111,6 +111,16 @@ class ProjectExecutionService:
     Concurrency policy: multiple different orders may run concurrently, but one approved
     brief fingerprint can be executed only once. Duplicate active starts return the
     existing snapshot; duplicate terminal starts are rejected until a future retry API.
+
+    Live runs are additionally bounded by `live_slots` (default 1). A live run holds a
+    coding-CLI subprocess and a Docker QA container for ~20 minutes on the machine Studio
+    itself runs on; two at once means two of each, which on a laptop degrades both instead
+    of finishing either. Extra live starts stay QUEUED and begin when a slot frees, rather
+    than being rejected -- a client who pressed start should get their build, just not
+    simultaneously. Simulated and dry runs are unbounded: they hold nothing.
+
+    A run parked at AWAITING_USER gives its slot back, because it is waiting on a human and
+    holding nothing; answering it re-queues for a slot like any other start.
     """
 
     def __init__(
@@ -128,9 +138,12 @@ class ProjectExecutionService:
         event_limit: int = 200,
         collaboration_sink: Callable[[ExecutionEvent], None] | None = None,
         preflight: Callable[[], ReadinessResult] | None = None,
+        live_slots: int = 1,
     ) -> None:
         if event_limit <= 0:
             raise ValueError("event_limit must be positive")
+        if live_slots < 0:
+            raise ValueError("live_slots must not be negative")
         self._mode = mode
         self._fake_adapter = fake_adapter or FakeProjectExecutionAdapter()
         self._production_adapter = production_adapter
@@ -143,6 +156,8 @@ class ProjectExecutionService:
         self._event_limit = event_limit
         self._collaboration_sink = collaboration_sink
         self._preflight = preflight
+        # 0 means unbounded, for a caller that knows it has the machine to spare.
+        self._live_slots = BoundedSemaphore(live_slots) if live_slots else None
         self._lock = RLock()
         self._records: dict[str, _ExecutionRecord] = {}
         self._by_approval: dict[tuple[str, str, str], str] = {}
@@ -506,6 +521,46 @@ class ProjectExecutionService:
         midbuild_answers: tuple = (),
         prompt_additions: str = "",
     ) -> None:
+        simulated = adapter is not self._live_adapter and adapter is not self._revision_adapter
+        # Taken before the record is marked RUNNING, so a queued run reads as queued rather
+        # than as a build that has started and is producing nothing. Acquired outside
+        # self._lock: this waits for as long as the run ahead takes, and holding the
+        # registry lock for that would freeze every snapshot and event in the process.
+        slot = None if simulated else self._live_slots
+        if slot is not None and not slot.acquire(blocking=False):
+            self._note_queued_behind_running_build(execution_id)
+            slot.acquire()
+        try:
+            self._execute_run(
+                execution_id,
+                brief,
+                handoff,
+                adapter,
+                title,
+                simulated=simulated,
+                revision_note=revision_note,
+                revised_from_execution_id=revised_from_execution_id,
+                midbuild_answers=midbuild_answers,
+                prompt_additions=prompt_additions,
+            )
+        finally:
+            if slot is not None:
+                slot.release()
+
+    def _execute_run(
+        self,
+        execution_id: str,
+        brief: ProjectBrief,
+        handoff: AgentHandoff,
+        adapter: ProjectExecutionAdapter,
+        title: str = "",
+        *,
+        simulated: bool,
+        revision_note: str | None = None,
+        revised_from_execution_id: str | None = None,
+        midbuild_answers: tuple = (),
+        prompt_additions: str = "",
+    ) -> None:
         with self._lock:
             record = self._records[execution_id]
             if record.token.is_cancelled():
@@ -526,7 +581,6 @@ class ProjectExecutionService:
                 prompt_additions=prompt_additions,
             )
         try:
-            simulated = adapter is not self._live_adapter and adapter is not self._revision_adapter
             result = adapter.execute(request, _Sink(self, execution_id, simulated=simulated), record.token)
             status = ExecutionStatus.SUCCEEDED if result.success else ExecutionStatus.FAILED
             if result.outcome == "cancelled" or record.token.is_cancelled():
@@ -599,6 +653,40 @@ class ProjectExecutionService:
                     "events": append_bounded_event(record.snapshot.events, event, limit=self._event_limit),
                     "updated_at": event.created_at,
                     "started_at": record.snapshot.started_at or event.created_at,
+                }
+            )
+            record.snapshot = updated
+            self._save(updated)
+        self._notify_collaboration(event)
+
+    def _note_queued_behind_running_build(self, execution_id: str) -> None:
+        """Say why nothing is happening yet, without claiming the run has started.
+
+        _emit() would be the obvious call here and is the wrong one: it sets status to
+        RUNNING and stamps started_at, so a queued order would read as a build in progress
+        that produces no events for however long the run ahead takes -- and its duration,
+        measured from started_at, would silently include the queue.
+        """
+        with self._lock:
+            record = self._records.get(execution_id)
+            if record is None or record.snapshot.status is not ExecutionStatus.QUEUED:
+                return
+            event = ExecutionEvent(
+                id=new_public_id("event", self._id_factory),
+                execution_id=execution_id,
+                kind=EventKind.STATUS,
+                level=EventLevel.INFO,
+                message="Waiting for the build already running to finish",
+                stage=record.snapshot.stage,
+                agent="Studio",
+                progress=record.snapshot.progress,
+                created_at=utc_now(self._clock),
+            )
+            updated = record.snapshot.model_copy(
+                update={
+                    "current_activity": event.message,
+                    "events": append_bounded_event(record.snapshot.events, event, limit=self._event_limit),
+                    "updated_at": event.created_at,
                 }
             )
             record.snapshot = updated

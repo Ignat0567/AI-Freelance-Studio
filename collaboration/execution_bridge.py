@@ -18,6 +18,7 @@ _STAGE_CHANNELS: dict[ExecutionStage, str] = {
     ExecutionStage.PACKAGING: "deployment",
     ExecutionStage.REVISION: "backend",
     ExecutionStage.BOT_BUILD: "backend",
+    ExecutionStage.STATIC_PAGE_BUILD: "frontend",
     ExecutionStage.COMPLETED: "general",
 }
 
@@ -34,6 +35,7 @@ _STAGE_PRESENCE: dict[ExecutionStage, PresenceStatus] = {
     ExecutionStage.PACKAGING: PresenceStatus.REVIEWING,
     ExecutionStage.REVISION: PresenceStatus.CODING,
     ExecutionStage.BOT_BUILD: PresenceStatus.CODING,
+    ExecutionStage.STATIC_PAGE_BUILD: PresenceStatus.CODING,
     ExecutionStage.COMPLETED: PresenceStatus.IDLE,
 }
 
