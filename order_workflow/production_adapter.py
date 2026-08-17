@@ -57,6 +57,9 @@ class OpenCodeExecutionClient(Protocol):
         event_sink: ExecutionEventSink,
         cancellation: CancellationToken,
         model: str | None = None,
+        # Per-call wall-clock budget in seconds; None means the implementation's own default.
+        # Repair calls pass a smaller one than from-scratch builds (see run_qa_repair_loop).
+        timeout: int | None = None,
     ) -> OpenCodeExecutionResult: ...
 
 
@@ -64,7 +67,7 @@ class UnavailableOpenCodeExecutionClient:
     def check_readiness(self) -> ReadinessResult:
         return ReadinessResult.blocked(OPENCODE_UNAVAILABLE)
 
-    def execute_project_prompt(self, prompt: str, workspace_path: Path, event_sink: ExecutionEventSink, cancellation: CancellationToken, model: str | None = None) -> OpenCodeExecutionResult:
+    def execute_project_prompt(self, prompt: str, workspace_path: Path, event_sink: ExecutionEventSink, cancellation: CancellationToken, model: str | None = None, timeout: int | None = None) -> OpenCodeExecutionResult:
         raise RuntimeError("OpenCode client is unavailable")
 
 

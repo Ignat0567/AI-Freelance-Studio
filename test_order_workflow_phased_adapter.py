@@ -18,6 +18,7 @@ from order_workflow import (
     TokenUsage,
     UserOrder,
 )
+from order_workflow.claude_code_client import CLAUDE_CODE_REPAIR_TIMEOUT
 from order_workflow.docker_qa_runner import DockerUnavailableError, run_qa_commands_in_docker
 from order_workflow.models import ExecutionStage, EventKind
 from order_workflow.phased_adapter import (
@@ -94,7 +95,7 @@ class FakePhaseOpenCodeClient:
 
         return ReadinessResult.blocked(readiness_blocker("opencode_unavailable", "OpenCode is not available."))
 
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
         self.call_count += 1
         self.prompts.append(prompt)
         if self.call_count in self.raise_on_call:
@@ -310,7 +311,7 @@ class RateLimitedOpenCodeClient:
     def check_readiness(self):
         return ReadinessResult.ready_result()
 
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
         return OpenCodeExecutionResult(
             success=False,
             summary="Claude Code execution failed: You've hit your session limit",
@@ -359,6 +360,97 @@ def test_ui_shell_qa_failure_then_repair_succeeds(tmp_path):
     result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
 
     assert result.success is True
+
+
+class TimingOutRepairClient(FakePhaseOpenCodeClient):
+    """Every repair call is stopped by its own clock; the first build call succeeds.
+
+    Mirrors a real run: the ui_shell build finished, a gate failed, and the repair call
+    was killed at its wall-clock limit with nothing captured on either stream.
+    """
+
+    def __init__(self, *, timeout_on_repairs: int = 99) -> None:
+        super().__init__()
+        self.timeout_on_repairs = timeout_on_repairs
+        self.repair_calls = 0
+        self.repair_timeouts: list[int | None] = []
+
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
+        # A per-call budget is what marks a repair: phase builds are sent without one and
+        # take the client's own default.
+        if timeout is not None:
+            self.repair_calls += 1
+            self.call_count += 1
+            self.repair_timeouts.append(timeout)
+            if self.repair_calls <= self.timeout_on_repairs:
+                return OpenCodeExecutionResult(
+                    success=False,
+                    summary="Claude Code execution timed out after 450s.",
+                    errors=("claude_code_execution_timeout",),
+                    timed_out=True,
+                )
+        return super().execute_project_prompt(prompt, workspace_path, event_sink, cancellation, model=model)
+
+
+def test_a_timed_out_repair_still_spends_the_remaining_attempt(tmp_path):
+    # Regression, found on a live run: the repair loop treated *any* unsuccessful fix call
+    # as terminal and broke out, so a repair killed by its own timeout silently consumed
+    # the phase's whole repair budget after one attempt. Running out of clock says nothing
+    # about whether the code is fixable, so the second attempt has to still happen.
+    brief, handoff = _contract()
+    client = TimingOutRepairClient(timeout_on_repairs=1)
+    qa_runner = ScriptedQARunner([
+        # fail -> repair 1 times out -> the re-check below still fails -> repair 2 lands
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="still broken", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    sink = FakeEventSink()
+    adapter = _adapter(tmp_path, opencode_client=client, qa_runner=qa_runner)
+
+    result = adapter.execute(_request(brief, handoff), sink, CancellationToken())
+
+    messages = [event["message"] for event in sink.events]
+    assert "The repair call ran out of time and was stopped before it finished." in messages
+    assert "QA failed; asking Codex to fix (attempt 2 of 2)" in messages
+    assert result.success is True
+    # The shorter repair budget actually reaches the client, rather than the build's.
+    assert client.repair_timeouts == [CLAUDE_CODE_REPAIR_TIMEOUT, CLAUDE_CODE_REPAIR_TIMEOUT]
+
+
+def test_a_timed_out_repair_that_already_landed_its_fix_is_not_repeated(tmp_path):
+    # The CLI writes files through tool calls as it works, so a call killed by its clock can
+    # leave a complete fix behind. Re-asking the gate costs seconds; spending the remaining
+    # repair attempt costs the whole budget and starts from a state nobody has checked.
+    brief, handoff = _contract()
+    client = TimingOutRepairClient()  # every repair call times out
+    qa_runner = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    sink = FakeEventSink()
+    adapter = _adapter(tmp_path, opencode_client=client, qa_runner=qa_runner)
+
+    result = adapter.execute(_request(brief, handoff), sink, CancellationToken())
+
+    assert result.success is True
+    assert client.repair_calls == 1  # the second attempt was never needed
+    assert "QA failed; asking Codex to fix (attempt 2 of 2)" not in [event["message"] for event in sink.events]
+
+
+def test_a_repair_timeout_is_reported_instead_of_blaming_the_gate(tmp_path):
+    # The failure summary used to read as a verdict on the code ("QA failed after 1 repair
+    # attempt(s)") when what actually happened was that the repair never finished. A person
+    # reading that went looking at the project instead of at the provider call.
+    brief, handoff = _contract()
+    client = TimingOutRepairClient()
+    adapter = _adapter(tmp_path, opencode_client=client, qa_runner=_failing_qa)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert "stopped by its time limit" in result.summary
+    assert client.repair_calls == 2  # both attempts spent, not one
 
 
 def test_opencode_exception_during_a_phase_fails_at_that_phase(tmp_path):
@@ -519,7 +611,7 @@ class FlakyOnceClient(FakePhaseOpenCodeClient):
         self._fail_at_call = fail_at_call
         self._already_failed = False
 
-    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None):
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
         self.call_count += 1
         self.prompts.append(prompt)
         Path(workspace_path, f"call-{self.call_count}-marker.txt").write_text("generated", encoding="utf-8")

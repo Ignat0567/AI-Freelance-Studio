@@ -83,6 +83,7 @@ class ConfiguredOpenCodeExecutionClient:
         event_sink: ExecutionEventSink,
         cancellation: CancellationToken,
         model: str | None = None,
+        timeout: int | None = None,
     ) -> OpenCodeExecutionResult:
         # model is ignored here: OpenCode's model comes from the connection's own bridge
         # config (set once when the connection is saved), not a per-call choice -- the
@@ -98,7 +99,9 @@ class ConfiguredOpenCodeExecutionClient:
             {
                 "user_content": prompt,
                 "requested_model": connection.get("configured_model"),
-                "timeout": 900,
+                # Unlike model, the per-call timeout IS honoured here: the bridge already
+                # takes one, so a repair's shorter budget carries through to OpenCode too.
+                "timeout": timeout or 900,
                 "workspace_path": str(Path(workspace_path).expanduser().resolve()),
             }
         )

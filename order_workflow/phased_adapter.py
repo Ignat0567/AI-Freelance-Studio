@@ -14,7 +14,7 @@ from .complexity import classify_phase_complexity, describe_phase_complexity, mo
 from .deployment import DeploymentOutcome, build_and_verify_container
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
-from .claude_code_client import CLAUDE_CODE_TASK_TIMEOUT
+from .claude_code_client import CLAUDE_CODE_REPAIR_TIMEOUT, CLAUDE_CODE_TASK_TIMEOUT
 from .functional_smoke_check import run_functional_smoke_check_in_docker
 from .midbuild_clarification import build_midbuild_questions, corrections_from_answers
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventKind, EventLevel, ProductType, ProjectBrief, TestSummary, TokenUsage
@@ -374,6 +374,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
                 fix_prompt_builder=_build_qa_fix_prompt,
                 model=model,
+                fix_timeout=CLAUDE_CODE_REPAIR_TIMEOUT,
             )
         except DockerUnavailableError as exc:
             event_sink.emit(
@@ -469,6 +470,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
                 fix_prompt_builder=_build_qa_fix_prompt,
                 model=model,
+                fix_timeout=CLAUDE_CODE_REPAIR_TIMEOUT,
             )
         except DockerUnavailableError:
             event_sink.emit(
@@ -523,6 +525,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
                 fix_prompt_builder=_build_qa_fix_prompt,
                 model=model,
+                fix_timeout=CLAUDE_CODE_REPAIR_TIMEOUT,
             )
         except DockerUnavailableError:
             event_sink.emit(
@@ -598,6 +601,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 max_attempts=MAX_PHASE_REPAIR_ATTEMPTS,
                 fix_prompt_builder=_build_qa_fix_prompt,
                 model=model,
+                fix_timeout=CLAUDE_CODE_REPAIR_TIMEOUT,
             )
         except DockerUnavailableError:
             event_sink.emit(
