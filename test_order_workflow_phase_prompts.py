@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from order_workflow import AgentHandoff, ElenaDesignChoice, ProjectBrief, RecommendedStack
+from order_workflow.models import ElenaDesignConcept, ThemePalette
 from order_workflow.phase_context import PhaseContext
 from order_workflow.phase_prompts import (
     build_backend_bridge_prompt,
@@ -66,6 +67,51 @@ def test_ui_shell_prompt_forbids_backend_auth_and_external_calls_and_requires_sk
     assert "provide conversational search across uploaded pdf documents" in lowered
     assert "`preview` script" in prompt
     assert "4173" in prompt
+
+
+def test_ui_shell_prompt_states_the_visual_gate_s_own_thresholds():
+    # The gate measures these numbers on the built page. Leaving them out of the prompt that
+    # produces the page made every one of them a discovery at Playwright speed: one live run
+    # spent both repair attempts on a 4.05:1 label and a layout 236px too wide for a phone.
+    prompt = build_ui_shell_prompt(_brief(), _handoff())
+
+    assert "4.5:1" in prompt
+    assert "3.0:1" in prompt
+    assert "375x812" in prompt
+    assert "24x24px" in prompt
+    assert "overlap" in prompt.lower()
+
+
+def test_ui_shell_prompt_names_the_approved_palette_when_there_is_one():
+    concept = ElenaDesignConcept(
+        visual_direction="Calm editorial",
+        layout="Two-column shell with a persistent sidebar.",
+        screens=("Library",),
+        components=("Card",),
+        light_theme=ThemePalette(background="#ffffff", surface="#f4f7fa", text="#172033", accent="#356cf6"),
+        dark_theme=ThemePalette(background="#0f1420", surface="#1b2231", text="#e8ecf4", accent="#6d9bff"),
+    )
+
+    brief = _brief(
+        # The model rejects a concept without the matching choice, so both move together.
+        elena_design_choice=ElenaDesignChoice.SHOW_ELENA_CONCEPT,
+        elena_design_concept=concept,
+    )
+
+    prompt = build_ui_shell_prompt(brief, _handoff())
+
+    for value in ("#ffffff", "#f4f7fa", "#172033", "#356cf6", "#0f1420", "#6d9bff"):
+        assert value in prompt
+    assert "prefers-color-scheme: dark" in prompt
+
+
+def test_ui_shell_prompt_asserts_no_palette_when_none_was_approved():
+    # The gate skips itself when there is no approved palette; demanding one here would
+    # invent a standard the design stage never set.
+    prompt = build_ui_shell_prompt(_brief(), _handoff())
+
+    assert "approved background" not in prompt
+    assert "prefers-color-scheme" not in prompt
 
 
 def test_core_feature_prompt_names_exactly_one_feature_and_requires_a_test():

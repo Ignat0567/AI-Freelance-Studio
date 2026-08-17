@@ -10,6 +10,47 @@ from .phase_context import PhaseContext
 _FAIL_CLOSED_REASONING = "The brief names an audience this rule set does not recognise; defaulting to requiring a backend for safety."
 
 
+def _visual_gate_rules(brief: ProjectBrief) -> list[str]:
+    """State the visual gate's own pass criteria, in its own numbers.
+
+    visual_check.py measures palette coverage, WCAG AA contrast, phone layout, tap-target
+    size and overlap on the built page -- and until this existed, the prompt that produced
+    that page mentioned none of it. The gate was left to discover, at Playwright speed, that
+    nobody had been told the rules: a live run spent both repair attempts and twelve minutes
+    on a 4.05:1 muted label and three shelves that did not fit 375px, both of which the
+    first attempt would have avoided if asked.
+
+    Deliberately phrased as the thresholds themselves rather than "make it accessible".
+    "Contrast at least 4.5:1" is checkable by the model as it writes the CSS; "make it
+    accessible" is a sentiment, and the gate does not measure sentiments. This does not
+    replace the gate -- a prompt cannot force obedience, which is the entire reason the
+    measurement runs afterwards -- it just stops the common failures from being discovered
+    the expensive way.
+    """
+    concept = brief.elena_design_concept
+    rules = [
+        "- Text must clear WCAG AA contrast against the background it actually sits on: at least "
+        "4.5:1 for normal text, 3.0:1 for large text (>=24px, or >=18.66px bold). Muted and "
+        "secondary label colours are where this usually fails -- check those specifically.",
+        "- The layout must fit a 375x812 phone viewport with no horizontal scrolling: no fixed "
+        "widths wider than the screen, and side-by-side columns must stack. Every interactive "
+        "element must be at least 24x24px at that width.",
+        "- No two visible elements may overlap each other, at either 1280px or 375px wide.",
+    ]
+    if concept is not None:
+        light, dark = concept.light_theme, concept.dark_theme
+        rules[:0] = [
+            f"- Paint the page ground exactly {light.background} (the approved background), and use the "
+            f"rest of the approved palette rather than framework defaults: surface {light.surface}, "
+            f"text {light.text}, accent {light.accent}. At least half of those four colours must "
+            "actually appear on the page, by painted area.",
+            f"- Under `prefers-color-scheme: dark` the ground must actually repaint to the approved dark "
+            f"theme (background {dark.background}, surface {dark.surface}, text {dark.text}, "
+            f"accent {dark.accent}) -- not stay light.",
+        ]
+    return rules
+
+
 def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additions: str = "") -> str:
     """`additions` is free text the client wrote after reading this prompt in the UI.
 
@@ -55,6 +96,7 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additio
         "opened and smoke-tested automatically after this phase. A plain Vite project already "
         "gets this for free (`vite preview`, default port 4173) -- do not remove or rename it "
         "if it is already there; add it if it is missing.",
+        *_visual_gate_rules(brief),
         "",
         "Do not expose secrets in logs, reports, or generated files.",
         "After creating the requested screens and navigation, stop and exit. Do not keep rewriting files.",
