@@ -47,6 +47,7 @@ from .models import (
     new_public_id,
     utc_now,
 )
+from .preflight import run_preflight
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
@@ -288,6 +289,7 @@ class OrderWorkflowService:
         self._designs = DesignPreviewService(id_factory=id_factory, clock=clock)
         self._handoffs = AgentHandoffService(id_factory=id_factory, clock=clock)
         self._configuration = configuration_provider or ExecutionConfigurationProvider()
+        self._preflight_environ = environ
         self._executions = execution_service or ProjectExecutionService(
             id_factory=id_factory,
             clock=clock,
@@ -296,6 +298,7 @@ class OrderWorkflowService:
             revision_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, revision=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask, environ=environ),
             collaboration_sink=collaboration_sink,
             state_store=execution_state_store,
+            preflight=self._run_preflight,
         )
         self._store = store or InMemoryOrderStore()
         self._lock = RLock()
@@ -307,6 +310,13 @@ class OrderWorkflowService:
         self._approval_bindings: dict[str, BriefApprovalBinding] = restored["approval_bindings"]
         self._handoff_by_order: dict[str, AgentHandoff] = restored["handoff_by_order"]
         self._execution_by_order: dict[str, str] = restored["execution_by_order"]
+
+    def _run_preflight(self) -> ReadinessResult:
+        """Checked once per live start, not on every readiness poll -- see preflight.py."""
+        return run_preflight(
+            workspace_root=self._configuration.workspace_root,
+            environ=self._preflight_environ,
+        ).readiness()
 
     def _persist(self) -> None:
         with self._lock:

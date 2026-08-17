@@ -127,6 +127,7 @@ class ProjectExecutionService:
         thread_factory: Callable[..., Thread] = Thread,
         event_limit: int = 200,
         collaboration_sink: Callable[[ExecutionEvent], None] | None = None,
+        preflight: Callable[[], ReadinessResult] | None = None,
     ) -> None:
         if event_limit <= 0:
             raise ValueError("event_limit must be positive")
@@ -141,6 +142,7 @@ class ProjectExecutionService:
         self._thread_factory = thread_factory
         self._event_limit = event_limit
         self._collaboration_sink = collaboration_sink
+        self._preflight = preflight
         self._lock = RLock()
         self._records: dict[str, _ExecutionRecord] = {}
         self._by_approval: dict[tuple[str, str, str], str] = {}
@@ -164,6 +166,20 @@ class ProjectExecutionService:
                 return ReadinessResult.blocked(LIVE_EXECUTION_OPT_IN_REQUIRED)
             return ReadinessResult.blocked(PRODUCTION_NOT_CONFIGURED)
         return adapter.check_readiness(brief)
+
+    def _preflight_blockers(self, *, mode: ExecutionMode, live: bool) -> tuple[ExecutionBlocker, ...]:
+        """Environment checks, run once per start rather than on every readiness poll.
+
+        Only live runs are gated: a simulated or dry run touches neither the coding CLI's
+        login nor Docker, so blocking one on either would refuse work that cannot fail for
+        that reason. And unlike check_readiness -- which the UI polls -- this spends a real
+        (tiny) provider call, so it belongs at the moment work is actually being committed
+        to. See order_workflow/preflight.py for why `auth status` was not enough.
+        """
+        if not live or mode is ExecutionMode.FAKE or self._preflight is None:
+            return ()
+        result = self._preflight()
+        return () if result.ready else result.blockers
 
     def start(
         self,
@@ -190,6 +206,9 @@ class ProjectExecutionService:
         readiness = self.check_readiness(brief, handoff, mode=active_mode, live=live)
         if not readiness.ready:
             return self._create_blocked_execution(brief, handoff, active_mode, readiness.blockers, key)
+        preflight_blockers = self._preflight_blockers(mode=active_mode, live=live)
+        if preflight_blockers:
+            return self._create_blocked_execution(brief, handoff, active_mode, preflight_blockers, key)
         adapter = self._adapter(active_mode, live=live)
         if adapter is None:
             if live:
@@ -258,6 +277,9 @@ class ProjectExecutionService:
         readiness = self.check_readiness(brief, handoff, mode=active_mode, live=live)
         if not readiness.ready:
             raise ExecutionServiceError(readiness.blockers[0].code if readiness.blockers else "execution_provider_not_configured")
+        preflight_blockers = self._preflight_blockers(mode=active_mode, live=live)
+        if preflight_blockers:
+            raise ExecutionServiceError(preflight_blockers[0].code)
         adapter = self._adapter(active_mode, live=live)
         if adapter is None:
             raise ExecutionServiceError("live_execution_opt_in_required" if live else "execution_provider_not_configured")
@@ -345,6 +367,9 @@ class ProjectExecutionService:
         readiness = self._revision_adapter.check_readiness(brief)
         if not readiness.ready:
             raise ExecutionServiceError(readiness.blockers[0].code if readiness.blockers else "execution_provider_not_configured")
+        preflight_blockers = self._preflight_blockers(mode=active_mode, live=live)
+        if preflight_blockers:
+            raise ExecutionServiceError(preflight_blockers[0].code)
 
         now = utc_now(self._clock)
         new_execution = ProjectExecution(
