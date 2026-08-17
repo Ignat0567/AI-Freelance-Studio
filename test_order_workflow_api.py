@@ -702,3 +702,42 @@ def test_answering_execution_questions_requires_a_started_execution():
     )
 
     assert response.status_code in {404, 409}, response.text
+
+
+def test_the_prepared_build_instruction_can_be_previewed_before_anything_is_spent():
+    # The point of the screen this serves: read the exact instruction the coding CLI will
+    # get while it is still free to change it.
+    client = _client(_app())
+    order_id, _ = _approve(client)
+
+    response = client.get(f"/api/orders/{order_id}/execution/prompt")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["stage"] == "ui_shell"
+    assert "Implement ONLY the UI shell" in body["prompt"]
+    assert body["additions_are_append_only"] is True
+
+
+def test_client_additions_land_above_the_strict_rules_they_must_not_override():
+    client = _client(_app())
+    order_id, _ = _approve(client)
+
+    response = client.get(f"/api/orders/{order_id}/execution/prompt?additions=Put+the+filters+in+a+sidebar")
+
+    prompt = response.json()["prompt"]
+    assert "Put the filters in a sidebar" in prompt
+    # Every strict rule carries a downstream gate (the preview script the browser checks
+    # connect to, the no-backend rule the decision gate assumes), so client text must not
+    # be able to land after them and countermand them.
+    assert prompt.index("Put the filters in a sidebar") < prompt.index("Strict rules for this phase")
+    assert "take precedence over the client's additional notes" in prompt
+
+
+def test_previewing_the_instruction_creates_no_execution():
+    client = _client(_app())
+    order_id, _ = _approve(client)
+
+    client.get(f"/api/orders/{order_id}/execution/prompt")
+
+    assert client.get(f"/api/orders/{order_id}").json()["execution"] is None

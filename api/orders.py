@@ -263,7 +263,7 @@ def get_handoff(order_id: str, request: Request):
 @router.post("/{order_id}/execution")
 async def start_execution(order_id: str, request: Request):
     payload = await _body(request, StartExecutionRequest)
-    return _call(get_order_workflow_service(request).start_execution, order_id, ExecutionMode(payload.mode), live=payload.live)
+    return _call(get_order_workflow_service(request).start_execution, order_id, ExecutionMode(payload.mode), live=payload.live, prompt_additions=payload.prompt_additions)
 
 
 @router.get("/{order_id}/readiness")
@@ -283,6 +283,12 @@ def get_execution(order_id: str, request: Request):
 @router.post("/{order_id}/execution/cancel")
 def cancel_execution(order_id: str, request: Request):
     return _call(get_order_workflow_service(request).cancel_execution, order_id)
+
+
+@router.get("/{order_id}/execution/prompt")
+def get_execution_prompt(order_id: str, request: Request, additions: str = ""):
+    """Read-only: the instruction the coding CLI will get, before anything is spent."""
+    return _call(get_order_workflow_service(request).execution_prompt_preview, order_id, additions[:2000])
 
 
 @router.post("/{order_id}/execution/retry")

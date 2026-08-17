@@ -1,6 +1,9 @@
 import React from 'react';
 
-function QuestionInput({ question, value, onChange }) {
+// Exported so the mid-build checkpoint renders its questions with exactly the same
+// controls as the up-front ones -- they are the same ClarificationQuestion shape, and a
+// second implementation would drift.
+export function QuestionInput({ question, value, onChange }) {
   if (question.type === 'single_select') {
     return <div className="ow-options">{question.options.map(option => <label key={option}><input type="radio" name={question.id} checked={value === option} onChange={() => onChange(option)} />{option}</label>)}</div>;
   }

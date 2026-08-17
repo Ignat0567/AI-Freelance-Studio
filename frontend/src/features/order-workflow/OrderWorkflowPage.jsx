@@ -4,6 +4,7 @@ import ClarificationPanel from './ClarificationPanel.jsx';
 import ProjectBriefPanel from './ProjectBriefPanel.jsx';
 import ExecutionDashboard from './ExecutionDashboard.jsx';
 import ExecutionResultPanel from './ExecutionResultPanel.jsx';
+import MidBuildQuestionsPanel from './MidBuildQuestionsPanel.jsx';
 import UsageSummaryBar from './UsageSummaryBar.jsx';
 import { orderWorkflowApi } from './orderWorkflowApi.js';
 import { cleanError, isTerminalExecution, nextStepFromState } from './orderWorkflowState.js';
@@ -195,6 +196,9 @@ export default function OrderWorkflowPage({ active }) {
     run(() => orderWorkflowApi.startExecution(state.order.id, 'production', true));
   };
   const retryExecution = () => run(() => orderWorkflowApi.retryExecution(state.order.id));
+  // The run is parked until this returns; applyState then swaps the panel out for the
+  // dashboard again, and the existing poll picks the resumed execution up.
+  const answerExecutionQuestions = answers => run(() => orderWorkflowApi.answerExecutionQuestions(state.order.id, answers));
   const reviseExecution = revisionNote => run(() => orderWorkflowApi.reviseExecution(state.order.id, revisionNote));
   const reset = () => {
     localStorage.removeItem(STORAGE_KEY);
@@ -220,6 +224,13 @@ export default function OrderWorkflowPage({ active }) {
       {step === 'new-order' && <OrderCreatePanel form={form} setForm={setForm} pending={pending} onSubmit={submitOrder} onAutoSubmit={submitOrderAutomatically} />}
       {step === 'clarification' && <ClarificationPanel state={state} answers={answers} setAnswers={setAnswers} pending={pending} onSubmit={submitAnswers} onDefaults={() => run(() => orderWorkflowApi.applyDefaults(state.order.id))} onBack={() => setStep('new-order')} />}
       {step === 'brief' && <ProjectBriefPanel state={state} pending={pending} onGenerate={() => run(() => orderWorkflowApi.generateBrief(state.order.id))} onApprove={approveBrief} onRevise={reviseBrief} onGeneratePreview={generateDesignPreview} onApprovePreview={approveDesignPreview} onRevisePreview={reviseDesignPreview} onBack={() => setStep('clarification')} proposal={proposal} proposalPending={proposalPending} proposalError={proposalError} onGenerateProposal={generateProposal} />}
+      {step === 'execution' && state?.execution?.status === 'awaiting_user' && (
+        <MidBuildQuestionsPanel
+          questions={state.execution.pending_questions || []}
+          pending={pending}
+          onSubmit={answerExecutionQuestions}
+        />
+      )}
       {step === 'execution' && <ExecutionDashboard state={state} readiness={readiness} pending={pending} canStart={canStartExecution} canDryRun={Boolean(readiness?.can_prepare_dry_run && canStartExecution)} canLive={Boolean(readiness?.can_run_live && canStartExecution)} liveConfirm={liveConfirm} setLiveConfirm={setLiveConfirm} onStart={() => startExecution('fake')} onDryRun={startDryRun} onLive={startLive} onCancel={() => run(() => orderWorkflowApi.cancelExecution(state.order.id))} onRefresh={() => loadOrder(state.order.id).catch(err => setError(cleanError(err)))} onRefreshReadiness={() => loadReadiness(state.order.id).catch(err => setError(cleanError(err)))} />}
       {step === 'result' && <ExecutionResultPanel state={state} pending={pending} onRetry={retryExecution} onRevise={reviseExecution} onNewOrder={reset} onBackToBrief={() => setStep('brief')} />}
       {!state?.order && step !== 'new-order' && <div className="ow-callout warning">No current order is loaded. Use the new order screen to begin.</div>}

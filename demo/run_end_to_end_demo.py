@@ -8,7 +8,8 @@ with a timestamp, then a summary of the two mechanisms worth watching:
   * the self-healing loop     -- QA failures and the repair attempts that followed
 
 Usage:
-    python demo/run_end_to_end_demo.py [--keep-workspace]
+    python demo/run_end_to_end_demo.py
+    python demo/run_end_to_end_demo.py --title "Recipe Box" --description "..."
 
 Requires Docker running (QA runs in containers) and the `claude` CLI authenticated.
 Writes a full JSON transcript to demo/transcripts/.
@@ -148,7 +149,7 @@ def summarise(events: list[dict], execution: dict, brief: dict) -> dict:
 
     result = execution.get("result") or {}
     return {
-        "order_title": DEMO_ORDER["title"],
+        "order_title": brief.get("goal", "")[:80],
         "brief_goal": brief.get("goal", ""),
         "target_users": brief.get("target_users", []),
         "backend_decision": next(
@@ -177,7 +178,20 @@ def summarise(events: list[dict], execution: dict, brief: dict) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--keep-workspace", action="store_true", help="do not print the cleanup hint")
+    parser.add_argument("--title", help="order title; defaults to the built-in Focus Timer demo")
+    parser.add_argument("--description", help="what the app should do, in the client's own words")
+    parser.add_argument("--product-type", default=DEMO_ORDER["product_type"], choices=["web_app", "bot"])
     args = parser.parse_args()
+
+    # The built-in order stays the default so the demo is still one command with no
+    # arguments, but any order can be run without editing this file -- which is what
+    # "try a different format" needs.
+    order = dict(DEMO_ORDER)
+    if args.title:
+        order["title"] = args.title
+    if args.description:
+        order["description"] = args.description
+    order["product_type"] = args.product_type
 
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -185,7 +199,7 @@ def main() -> int:
 
     try:
         section("1/5  ORDER  -- the client's request enters the system")
-        state = request("POST", "/api/orders", DEMO_ORDER)
+        state = request("POST", "/api/orders", order)
         order_id = state["order"]["id"]
         log(f"order {order_id}")
         log(f"status: {state['order']['status']}")
