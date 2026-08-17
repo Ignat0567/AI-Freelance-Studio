@@ -102,6 +102,12 @@ def run_qa_repair_loop(
                 # error) repeats identically on a retry, so that one still stops here.
                 if not fix_timed_out:
                     break
+                # Re-run the gate before spending another attempt. A killed repair may have
+                # already written its fix: the CLI edits files through tool calls as it
+                # goes, not in one write at the end, so the work up to the kill survives in
+                # the workspace. Asking the oracle again costs seconds; another repair call
+                # costs the whole budget above, and would start from a state nobody checked.
+                qa_outcome = qa_runner(qa_commands, qa_cwd)
                 continue
             qa_outcome = qa_runner(qa_commands, qa_cwd)
         if cancellation.is_cancelled():

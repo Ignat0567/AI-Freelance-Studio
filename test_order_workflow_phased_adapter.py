@@ -400,7 +400,9 @@ def test_a_timed_out_repair_still_spends_the_remaining_attempt(tmp_path):
     brief, handoff = _contract()
     client = TimingOutRepairClient(timeout_on_repairs=1)
     qa_runner = ScriptedQARunner([
+        # fail -> repair 1 times out -> the re-check below still fails -> repair 2 lands
         QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="still broken", duration=0.1),)),
         QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
     ])
     sink = FakeEventSink()
@@ -414,6 +416,26 @@ def test_a_timed_out_repair_still_spends_the_remaining_attempt(tmp_path):
     assert result.success is True
     # The shorter repair budget actually reaches the client, rather than the build's.
     assert client.repair_timeouts == [CLAUDE_CODE_REPAIR_TIMEOUT, CLAUDE_CODE_REPAIR_TIMEOUT]
+
+
+def test_a_timed_out_repair_that_already_landed_its_fix_is_not_repeated(tmp_path):
+    # The CLI writes files through tool calls as it works, so a call killed by its clock can
+    # leave a complete fix behind. Re-asking the gate costs seconds; spending the remaining
+    # repair attempt costs the whole budget and starts from a state nobody has checked.
+    brief, handoff = _contract()
+    client = TimingOutRepairClient()  # every repair call times out
+    qa_runner = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    sink = FakeEventSink()
+    adapter = _adapter(tmp_path, opencode_client=client, qa_runner=qa_runner)
+
+    result = adapter.execute(_request(brief, handoff), sink, CancellationToken())
+
+    assert result.success is True
+    assert client.repair_calls == 1  # the second attempt was never needed
+    assert "QA failed; asking Codex to fix (attempt 2 of 2)" not in [event["message"] for event in sink.events]
 
 
 def test_a_repair_timeout_is_reported_instead_of_blaming_the_gate(tmp_path):

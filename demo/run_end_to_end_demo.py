@@ -160,7 +160,10 @@ def summarise(events: list[dict], execution: dict, brief: dict) -> dict:
             stage = event.get("stage", "?")
             model = message.split("model:")[-1].strip(" )") if "model:" in message else "(default)"
             routing.append({"stage": stage, "model": model})
-        if "QA failed; asking" in message:
+        # "The repair call ..." lines belong in the self-healing section too: a repair that
+        # never finished is the difference between "the gate's finding stands" and "nobody
+        # re-checked it", and reading only the QA lines cannot tell those apart.
+        if "QA failed; asking" in message or message.startswith("The repair call"):
             repairs.append({"stage": event.get("stage", "?"), "agent": event.get("agent", "?"), "message": message})
         if message.startswith("QA passed") or message.startswith("QA failed after"):
             qa_results.append({"stage": event.get("stage", "?"), "agent": event.get("agent", "?"), "message": message})

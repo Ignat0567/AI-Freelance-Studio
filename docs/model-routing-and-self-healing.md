@@ -164,12 +164,50 @@ while not qa_outcome.passed and attempts < max_attempts and not cancellation.is_
         details=(qa_outcome.failure_summary()[:2000],),
     )
     fix_result = opencode_client.execute_project_prompt(
-        fix_prompt_builder(qa_outcome), workspace_path, event_sink, cancellation, model=model
+        fix_prompt_builder(qa_outcome), workspace_path, event_sink, cancellation, **fix_kwargs
     )
     if not fix_result.success:
-        break
+        if not fix_result.timed_out:
+            break          # expired login, rejected model, provider error -- repeats
+        qa_outcome = qa_runner(qa_commands, qa_cwd)
+        continue           # out of clock: re-ask the oracle, then spend the next attempt
     qa_outcome = qa_runner(qa_commands, qa_cwd)
 ```
+
+### What a *failed repair* means, and why that distinction is load-bearing
+
+The three lines around `timed_out` were bought with a wasted quarter of an hour. A live run
+reported *"the built page did not match the approved design after the ui_shell phase. QA
+failed after 1 repair attempt(s)"* — and not one clause of that was true. The repair call had
+been killed at the coding CLI's wall-clock limit, and because the loop treated any
+unsuccessful fix as terminal, it ended there: the second attempt was never spent, and the
+gate's finding was never re-checked. The run named the strongest available conclusion for a
+state in which nothing had been concluded.
+
+Three things follow from it, and they generalise past this loop:
+
+- **Running out of budget is not evidence about the code.** A terminal failure — an expired
+  login, a rejected model — will repeat identically on retry, so stopping is right. A
+  timeout says only that the clock beat the work.
+- **A repair deserves a smaller budget than the build it follows** (`CLAUDE_CODE_REPAIR_TIMEOUT`,
+  450s against 900s). The project already exists and the prompt names the exact gate output
+  to fix. Sharing the build's budget let one timeout eat the phase and still leave it
+  unverified.
+- **Re-ask the oracle before spending the next attempt.** The CLI writes files through tool
+  calls as it works, so a call killed mid-flight can leave a complete fix behind. The gate
+  costs seconds; a repair costs the whole budget — and would otherwise start from a state
+  nobody had checked.
+
+The reporting matters as much as the behaviour: the status message now separates *the
+finding stands* from *the finding was never re-checked*, and the loop emits an event when a
+fix call fails instead of ending in silence. Same principle as the routing justification
+above — a mechanism that cannot say why it stopped will be debugged in the wrong place.
+
+One more thing this run exposed, in the same family: event `details` were capped at 240
+characters by their `ShortText` bound, which cut every gate failure down to the failing
+command's first line — the one part of the text carrying no information. The repair prompt
+had always received the full finding; only the record a human reads lost it. A gate whose
+output is legible to the model and illegible to the operator is half a gate.
 
 ### The property that makes it work
 
