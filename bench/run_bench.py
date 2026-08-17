@@ -47,10 +47,53 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _current_commit() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=10, check=False
+        )
+    except OSError:
+        return ""
+    head = (completed.stdout or "").strip()
+    if completed.returncode != 0 or not head:
+        return ""
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=15, check=False
+    )
+    # A row measured against uncommitted edits is not reproducible, and saying so is the
+    # difference between a comparable record and a misleading one.
+    return f"{head}-dirty" if (dirty.stdout or "").strip() else head
+
+
+def _migrate_header(csv_path: Path) -> None:
+    """Rewrite an existing results file whose header predates a new column.
+
+    Without this, appending rows shaped like the new CSV_COLUMNS to a file carrying the old
+    header writes values under the wrong names -- silently, and only in the rows recorded
+    after the change. This file is meant to stay comparable for weeks and will gain columns
+    more than once.
+    """
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames == list(CSV_COLUMNS):
+            return
+        existing = list(reader)
+    backup = csv_path.with_suffix(".csv.bak")
+    csv_path.replace(backup)
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        for row in existing:
+            writer.writerow({column: row.get(column, "") for column in CSV_COLUMNS})
+    print(f"migrated {csv_path.name} to the current columns (previous file kept as {backup.name})")
+
+
 def _append_row(row: dict, csv_path: Path) -> None:
     """Written after every run, not at the end: an interrupted overnight session must leave
     the rows it did finish behind."""
     csv_path.parent.mkdir(parents=True, exist_ok=True)
+    if csv_path.is_file():
+        _migrate_header(csv_path)
     fresh = not csv_path.is_file()
     with csv_path.open("a", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
@@ -65,6 +108,7 @@ def _failed_row(order: BenchOrder, run_at: str, cause: str, note: str) -> dict:
     return {
         **{column: "" for column in CSV_COLUMNS},
         "run_at": run_at,
+        "commit": _current_commit(),
         "bench_id": order.id,
         "kind": order.kind,
         "product_type": order.product_type,
@@ -133,7 +177,14 @@ def run_one(order: BenchOrder, *, csv_path: Path) -> dict:
     path = TRANSCRIPT_DIR / f"bench-{order.id}-{run_at}.json"
     path.write_text(json.dumps(transcript, indent=2), encoding="utf-8")
 
-    row = row_from_transcript(transcript, run_at=run_at, bench_id=order.id, kind=order.kind, product_type=order.product_type)
+    row = row_from_transcript(
+        transcript,
+        run_at=run_at,
+        bench_id=order.id,
+        kind=order.kind,
+        product_type=order.product_type,
+        commit=_current_commit(),
+    )
     row["notes"] = path.name
     _append_row(row, csv_path)
     harness.log(

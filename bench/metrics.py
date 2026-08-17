@@ -22,6 +22,9 @@ from order_workflow.failure_cause import classify_failure_cause
 
 CSV_COLUMNS: tuple[str, ...] = (
     "run_at",
+    # Which code produced this row. A benchmark whose rows do not say what they measured
+    # cannot answer "did Wednesday's change help", which is the only question it exists for.
+    "commit",
     "bench_id",
     "kind",
     "product_type",
@@ -100,7 +103,9 @@ def models_used(transcript: dict) -> list[str]:
     return used
 
 
-def row_from_transcript(transcript: dict, *, run_at: str, bench_id: str, kind: str, product_type: str) -> dict[str, Any]:
+def row_from_transcript(
+    transcript: dict, *, run_at: str, bench_id: str, kind: str, product_type: str, commit: str = ""
+) -> dict[str, Any]:
     execution = transcript.get("execution") or {}
     result = _result(transcript)
     test_summary = dict(result.get("test_summary") or {})
@@ -122,6 +127,7 @@ def row_from_transcript(transcript: dict, *, run_at: str, bench_id: str, kind: s
 
     return {
         "run_at": run_at,
+        "commit": commit,
         "bench_id": bench_id,
         "kind": kind,
         "product_type": product_type,

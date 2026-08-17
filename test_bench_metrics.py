@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from bench.metrics import (
+    CSV_COLUMNS,
     cli_call_timings,
     format_report,
     models_used,
@@ -230,3 +231,43 @@ def test_the_archived_runs_parse_and_their_repairs_are_not_all_zero():
     assert sum(row["repair_attempts"] for row in rows) > 0
     # Every failure must carry a class -- an unclassified failure is a hole in the yield.
     assert all(row["failure_cause"] for row in rows if not row["completed"])
+
+
+def test_a_row_records_which_commit_produced_it():
+    """Before-and-after is the only comparison the benchmark exists to support, and it is
+    impossible over rows that do not say what code they measured."""
+    row = row_from_transcript(
+        _transcript([_event("QA passed.")]),
+        run_at="20260817T120000Z",
+        bench_id="b01-profile-card",
+        kind="static_page",
+        product_type="static_page",
+        commit="40a8878",
+    )
+
+    assert row["commit"] == "40a8878"
+
+
+def test_results_csv_gains_a_column_without_corrupting_earlier_rows(tmp_path):
+    """Appending new-shaped rows to a file carrying an older header writes values under the
+    wrong names -- silently, and only in the rows recorded after the change."""
+    import csv as csv_module
+
+    from bench.run_bench import _migrate_header
+
+    path = tmp_path / "results.csv"
+    old_columns = [column for column in CSV_COLUMNS if column != "commit"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv_module.DictWriter(handle, fieldnames=old_columns)
+        writer.writeheader()
+        writer.writerow({**{column: "" for column in old_columns}, "bench_id": "b03-focus-timer", "completed": "1", "duration_seconds": "1200"})
+
+    _migrate_header(path)
+
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv_module.DictReader(handle))
+    assert list(rows[0].keys()) == list(CSV_COLUMNS)
+    assert rows[0]["bench_id"] == "b03-focus-timer"
+    assert rows[0]["duration_seconds"] == "1200"
+    assert rows[0]["commit"] == ""
+    assert path.with_suffix(".csv.bak").is_file()
