@@ -1,0 +1,3 @@
+# Per-run transcripts are bulky and reproducible detail; results.csv is the record that
+# has to be comparable across weeks, so it is committed deliberately.
+transcripts/

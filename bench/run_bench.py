@@ -1,0 +1,201 @@
+"""Run the benchmark set end to end and append one CSV row per run.
+
+    python bench/run_bench.py                      # all eight, in order
+    python bench/run_bench.py --only b01-profile-card --only b04-tip-splitter
+    python bench/run_bench.py --kinds static_page  # just the cheap ones
+    python bench/run_bench.py --dry-run            # print the plan and exit
+
+Drives the real HTTP API against a real backend with live execution enabled -- the same path
+the demo runner uses, reusing its transport rather than re-implementing it. One backend
+serves the whole set; the runs are sequential because a live execution holds a coding CLI and
+a Docker container, and Studio now bounds that to one at a time anyway.
+
+Expect roughly 20 minutes per web_app order. The full set is an overnight job, which is what
+it is for: the numbers are only worth anything as a before-and-after pair.
+
+Requires Docker running and the `claude` CLI authenticated. Preflight will refuse the first
+run in seconds if either is untrue, rather than discovering it 20 minutes in.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from bench.metrics import CSV_COLUMNS, format_report, row_from_transcript, summarise_rows  # noqa: E402
+from bench.orders import BENCH_ORDERS, BENCH_ORDERS_BY_ID, BenchOrder, order_payload  # noqa: E402
+from demo import run_end_to_end_demo as harness  # noqa: E402
+
+RESULTS_CSV = REPO_ROOT / "bench" / "results.csv"
+TRANSCRIPT_DIR = REPO_ROOT / "bench" / "transcripts"
+POLL_SECONDS = 5
+# Long enough for a build plus two repairs at the current budgets, short enough that a wedged
+# run cannot consume the whole night and leave the remaining orders unmeasured.
+RUN_TIMEOUT_SECONDS = 3600
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _append_row(row: dict, csv_path: Path) -> None:
+    """Written after every run, not at the end: an interrupted overnight session must leave
+    the rows it did finish behind."""
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fresh = not csv_path.is_file()
+    with csv_path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
+        if fresh:
+            writer.writeheader()
+        writer.writerow({column: row.get(column, "") for column in CSV_COLUMNS})
+
+
+def _failed_row(order: BenchOrder, run_at: str, cause: str, note: str) -> dict:
+    """A run that never started is still a row. Left out, the set silently shrinks and the
+    yield it reports is computed over a denominator nobody chose."""
+    return {
+        **{column: "" for column in CSV_COLUMNS},
+        "run_at": run_at,
+        "bench_id": order.id,
+        "kind": order.kind,
+        "product_type": order.product_type,
+        "outcome": "not_started",
+        "completed": 0,
+        "clean": 0,
+        "failure_cause": cause,
+        "duration_seconds": 0,
+        "repair_attempts": 0,
+        "notes": note,
+    }
+
+
+def run_one(order: BenchOrder, *, csv_path: Path) -> dict:
+    run_at = _now()
+    harness.section(f"{order.id}  ({order.kind})  --  {order.title}")
+    harness.log(f"covers: {order.covers}")
+
+    state = harness.request("POST", "/api/orders", order_payload(order))
+    order_id = state["order"]["id"]
+    harness.log(f"order {order_id}")
+
+    state = harness.request("POST", f"/api/orders/{order_id}/autopilot")
+    brief = state["brief"]
+    harness.log(f"brief {brief['id']} rev{brief['revision']} -- {len(brief['core_features'])} features")
+
+    readiness = harness.request("GET", f"/api/orders/{order_id}/readiness?mode=production")
+    if not readiness.get("can_run_live"):
+        blockers = readiness.get("blockers", [])
+        harness.log(f"cannot run live: {blockers}")
+        row = _failed_row(order, run_at, "environment", f"readiness blocked: {blockers}")
+        _append_row(row, csv_path)
+        return row
+
+    harness.request("POST", f"/api/orders/{order_id}/execution", {"mode": "production", "live": True})
+
+    seen: set[str] = set()
+    events: list[dict] = []
+    execution: dict = {}
+    deadline = time.time() + RUN_TIMEOUT_SECONDS
+    while True:
+        time.sleep(POLL_SECONDS)
+        state = harness.request("GET", f"/api/orders/{order_id}/execution")
+        execution = state.get("execution") or {}
+        events = execution.get("events", [])
+        for event in events:
+            if event["id"] in seen:
+                continue
+            seen.add(event["id"])
+            harness.log(f"[{event.get('stage','?'):<17}] {event.get('message','')}")
+        if execution.get("status") in {"succeeded", "failed", "cancelled"}:
+            break
+        if time.time() > deadline:
+            harness.log(f"giving up after {RUN_TIMEOUT_SECONDS}s -- recording as wedged and moving on")
+            row = _failed_row(order, run_at, "product_bug", f"no terminal status within {RUN_TIMEOUT_SECONDS}s")
+            _append_row(row, csv_path)
+            return row
+
+    transcript = {
+        "summary": harness.summarise(events, execution, brief),
+        "events": events,
+        "execution": execution,
+        "bench": {"id": order.id, "kind": order.kind, "covers": order.covers},
+    }
+    TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
+    path = TRANSCRIPT_DIR / f"bench-{order.id}-{run_at}.json"
+    path.write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+
+    row = row_from_transcript(transcript, run_at=run_at, bench_id=order.id, kind=order.kind, product_type=order.product_type)
+    row["notes"] = path.name
+    _append_row(row, csv_path)
+    harness.log(
+        f"-> {row['outcome']} in {row['duration_seconds']}s, {row['repair_attempts']} repair(s)"
+        + (f", cause={row['failure_cause']}" if row["failure_cause"] else "")
+    )
+    return row
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--only", action="append", default=[], help="benchmark id; repeatable")
+    parser.add_argument("--kinds", action="append", default=[], help="static_page | small_app | realistic_app")
+    parser.add_argument("--csv", type=Path, default=RESULTS_CSV)
+    parser.add_argument("--dry-run", action="store_true", help="print the plan and exit without touching a backend")
+    args = parser.parse_args()
+
+    selected = list(BENCH_ORDERS)
+    if args.only:
+        unknown = [item for item in args.only if item not in BENCH_ORDERS_BY_ID]
+        if unknown:
+            raise SystemExit(f"unknown benchmark id(s): {unknown}")
+        selected = [BENCH_ORDERS_BY_ID[item] for item in args.only]
+    if args.kinds:
+        selected = [order for order in selected if order.kind in args.kinds]
+    if not selected:
+        raise SystemExit("nothing selected")
+
+    print(f"plan: {len(selected)} run(s) -> {args.csv}")
+    for order in selected:
+        print(f"  {order.id:<22} {order.kind:<15} {order.title}")
+    if args.dry_run:
+        return 0
+
+    started = time.time()
+    rows: list[dict] = []
+    backend = harness.start_backend()
+    try:
+        for order in selected:
+            try:
+                rows.append(run_one(order, csv_path=args.csv))
+            except SystemExit as exc:
+                # One order failing to even reach execution must not end the night: the
+                # remaining rows are the point of running a set rather than a single order.
+                harness.log(f"{order.id} aborted: {exc}")
+                row = _failed_row(order, _now(), "product_bug", f"aborted: {exc}")
+                _append_row(row, args.csv)
+                rows.append(row)
+    finally:
+        backend.terminate()
+        try:
+            backend.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            backend.kill()
+        harness.log("backend stopped")
+
+    harness.section("BENCH SUMMARY")
+    print(format_report(summarise_rows(rows)))
+    print(f"\nwall clock: {int(time.time() - started)}s")
+    print(f"rows appended to {args.csv}")
+    return 0 if all(int(row.get("completed") or 0) for row in rows) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

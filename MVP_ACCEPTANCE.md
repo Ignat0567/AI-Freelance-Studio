@@ -37,21 +37,35 @@ first paid delivery.
 
 ## Baseline measured before the work started
 
-Five live runs are archived in `demo/transcripts/` (2026-08-16 and 2026-08-17):
+Eight live runs archived in `demo/transcripts/` (2026-08-16 and 2026-08-17), computed with
+`python bench/report.py --transcripts demo/transcripts --per-run`:
 
 | Metric | Value |
 |---|---|
-| Runs reaching `completed` | 3 / 5 |
-| Runs completing with **zero** repair attempts | 0 / 5 |
-| Duration of the successful runs | 1382 s, 1335 s, 1166 s (19–23 min) |
-| Failure causes | 1 provider (expired `claude` OAuth token, died after 18.7 s), 1 generated-code (visual gate never closed after 22 min) |
-| Repair attempts per successful run | 1, 2, 2 |
+| Completion yield | **50%** (4/8) |
+| Clean yield — completed with **zero** repairs | **0%** (0/8) |
+| Duration, median / p90 (successful runs) | 1359 s / 1477 s (22.6 / 24.6 min) |
+| Repair attempts, total | 8 |
+| Repairs by gate | `ui_shell/visual` 4, `core_feature/qa` 4 |
+| Failures by cause | provider 2, generated_code 1, budget 1 |
 
-Two things to note about this table. First, the failure causes are different in kind --
-a dead token says nothing about code quality -- which is why every failure must now carry a
-cause class. Second, `TestSummary.repair_attempts` was `0` in all five transcripts while the
-event streams recorded 1 and 2, so none of the above could be read out of the structured
-record; it had to be counted by hand out of prose. That is what Tuesday fixes.
+Three things this table says that the prose did not.
+
+**Nothing has ever run clean.** Every single completed run needed one or two repairs. Clean
+yield, not completion yield, is the number that says the generated code is improving rather
+than the repair loop getting more patient.
+
+**The two blame the visual gate deserves are exactly half.** `core_feature/qa` demanded as
+many repairs as `ui_shell/visual` did. Wednesday's design-token work addresses the visual
+half only, and this row is how that claim gets checked rather than assumed.
+
+**The four failures are four different kinds of thing.** Two provider (a dead token), one
+generated code (a gate that never closed), one budget (a timeout). Averaging them into "half
+the runs failed" measures nothing, which is why every failure now carries a cause class.
+
+The whole table is now derived by a program from the runs' own records. It could not be
+before: `TestSummary.repair_attempts` read `0` in every transcript while the event streams
+showed one and two, so these numbers had to be counted by hand out of prose.
 
 ## How acceptance is verified (Saturday)
 
@@ -72,3 +86,5 @@ line here saying what changed and why -- so that moving the goalposts, if it hap
 least visible.
 
 - 2026-08-17 — created.
+- 2026-08-17 — baseline table replaced with the machine-computed figures over eight archived
+  runs (was three of five, counted by hand). The criterion itself is unchanged.
