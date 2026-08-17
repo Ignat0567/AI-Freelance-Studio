@@ -7,7 +7,7 @@ export default function OrderCreatePanel({ form, setForm, pending, onSubmit, onA
   return (
     <section className="fs-panel ow-card" aria-labelledby="ow-new-order-title">
       <div className="fs-panel-title"><div><span>Create Project</span><strong id="ow-new-order-title">Describe what you want the application to do</strong></div></div>
-      <p className="ow-note">MVP profile: <strong>small browser-based web applications and Telegram bots</strong>. Production execution is not enabled in this workflow yet.</p>
+      <p className="ow-note">MVP profile: <strong>small browser-based web applications, interactive single-file pages, and Telegram bots</strong>. Production execution is not enabled in this workflow yet.</p>
       <form className="ow-form" onSubmit={onSubmit}>
         <label>Project title<input value={form.title} onChange={event => update('title', event.target.value)} required /></label>
         <label>Describe {form.product_type === 'bot' ? 'the bot' : form.product_type === 'static_page' ? 'the page' : 'the application'}<textarea value={form.description} onChange={event => update('description', event.target.value)} required rows={7} /></label>

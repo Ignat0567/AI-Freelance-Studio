@@ -27,10 +27,15 @@ def test_pdf_voice_assistant_demo_fill_is_form_only():
 
 def test_new_order_screen_states_supported_profile_and_no_unsupported_options():
     source = _read("OrderCreatePanel.jsx")
-    assert "Small browser-based web applications" in source
+    profile = source.lower()
+    # Every product type the selector offers has to appear in the stated profile: a screen
+    # that offers a third option while promising two teaches the client not to read it.
+    assert "small browser-based web applications" in profile
+    assert "interactive single-file page" in profile
+    assert "telegram bot" in profile
     assert "Small web application" in source
-    assert "desktop" not in source.lower()
-    assert "mobile application" not in source.lower()
+    assert "desktop" not in profile
+    assert "mobile application" not in profile
 
 
 def test_clarification_supports_required_input_types_and_defaults():
