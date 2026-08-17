@@ -340,11 +340,15 @@ class ProjectBriefService:
             features = _generic_features(order)
             goal = sanitize_public_text(order.description[:20_000]) or f"A single-page interactive experience supporting {features[0].rstrip('.').casefold()}."
             non_goals = ("A build step, a framework, or any server-side component",)
-            technical = (
-                "One self-contained index.html: inline HTML, CSS and JavaScript, no build step",
-                "Libraries only from an allowed CDN; no external image files",
-                "Must render a live WebGL/canvas scene and keep animating",
-            )
+            # Deliberately empty. The single-file/CDN/live-canvas rules belong to the pipeline,
+            # not to this project, and they are already stated -- and enforced -- by
+            # build_static_page_prompt and static_page_check. Listing them here as
+            # "technical constraints" made the complexity classifier read three
+            # pipeline-scaffolding lines as evidence that the work is hard, which is exactly
+            # the bug substantive_technical_constraints() was written to remove for web apps
+            # (see docs/model-routing-and-self-healing.md). The shape of the deliverable is
+            # carried by recommended_stack below, where it describes the project honestly.
+            technical = ()
             ui = ()
             acceptance = _generic_acceptance(features)
             stack = RecommendedStack(frontend="Single-file HTML + inline JS (no framework, no build)", backend="None", storage="None")

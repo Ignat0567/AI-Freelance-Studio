@@ -22,7 +22,14 @@ from .models import EventLevel, TokenUsage
 from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
 
-CLAUDE_CODE_TASK_TIMEOUT = 900
+# Measured, not guessed. 900s was sized when a phase prompt asked for screens and navigation
+# and little else; once the ui_shell prompt started stating the visual gate's criteria (approved
+# palette, AA contrast, 375px layout, tap targets) the first attempt legitimately does more
+# work, and measured build times went from ~6.5min to 11.5min, 12.5min, and one run that
+# crossed 15min and was killed with nothing to show -- a whole build's cost for no artifact,
+# because a timed-out phase leaves no checkpoint. The ceiling has to fit the job it is now
+# asking for; prevention is only cheaper than repair if the prevention is allowed to finish.
+CLAUDE_CODE_TASK_TIMEOUT = 1500
 # A repair call is a narrower job than the build it follows: the project already exists and
 # the prompt names the exact gate output to fix. Sharing the full build budget means one
 # timed-out repair can eat a quarter of an hour and still leave the phase unverified, so

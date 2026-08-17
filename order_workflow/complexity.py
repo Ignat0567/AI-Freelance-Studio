@@ -19,6 +19,12 @@ _COMPLEXITY_KEYWORDS = (
     "third-party", "integration", "concurrent", "multi-user", "queue", "streaming",
     "recommendation", "machine learning", "encryption", "oauth", "synchronization",
     "offline", "notification", "geolocation",
+    # Real-time graphics, added when ProductType.STATIC_PAGE arrived: a hand-written WebGL
+    # scene with its own animation loop, custom shaders and per-frame budget is harder work
+    # than a page of components, and none of the words above appear in an order that asks
+    # for one. Without these, a Three.js scene routed to the cheap model while a to-do list
+    # mentioning "notification" routed to the expensive one.
+    "webgl", "three.js", "shader", "3d scene", "volumetric",
 )
 
 

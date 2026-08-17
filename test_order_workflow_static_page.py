@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from order_workflow import AgentHandoff, ElenaDesignChoice, ProjectBrief, RecommendedStack
+from order_workflow.complexity import describe_phase_complexity
 from order_workflow.models import ProductType, SUPPORTED_PRODUCT_TYPES
 from order_workflow.phase_prompts import (
     STATIC_PAGE_ALLOWED_HOSTS,
@@ -74,6 +75,28 @@ def _page(tmp_path: Path, body: str = "<canvas></canvas>") -> Path:
 
 def test_static_page_is_an_accepted_product_type():
     assert ProductType.STATIC_PAGE in SUPPORTED_PRODUCT_TYPES
+
+
+def test_a_webgl_scene_routes_to_the_stronger_model_for_a_real_reason():
+    # Regression on the routing *justification*, not just the choice: the first live run of
+    # this product type reported "3 project-specific technical constraints" -- three lines
+    # the pipeline had injected into the brief about its own single-file/CDN rules. Right
+    # model, invented reason. The graphics keywords carry the actual signal.
+    complexity, reason = describe_phase_complexity(
+        _brief(), focus_text="A Three.js scene with volumetric fog and a custom shader"
+    )
+
+    assert complexity == "complex"
+    assert "three.js" in reason
+    assert "constraints" not in reason
+
+
+def test_the_static_page_brief_does_not_inject_pipeline_rules_as_project_constraints():
+    from order_workflow.complexity import substantive_technical_constraints
+
+    brief = _brief(technical_constraints=())
+
+    assert substantive_technical_constraints(brief) == ()
 
 
 def test_prompt_forbids_the_npm_project_shape_the_web_app_pipeline_assumes():
