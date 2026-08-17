@@ -23,6 +23,7 @@ from order_workflow.docker_qa_runner import DockerUnavailableError, run_qa_comma
 from order_workflow.models import ExecutionStage, EventKind
 from order_workflow.phased_adapter import (
     CORE_FEATURE_QA_COMMANDS,
+    MAX_PHASE_REPAIR_ATTEMPTS,
     PhasedLiveOpenCodeExecutionAdapter,
     ReviseProjectExecutionAdapter,
     UI_SHELL_QA_COMMANDS,
@@ -451,6 +452,39 @@ def test_a_repair_timeout_is_reported_instead_of_blaming_the_gate(tmp_path):
     assert result.success is False
     assert "stopped by its time limit" in result.summary
     assert client.repair_calls == 2  # both attempts spent, not one
+
+
+def test_a_successful_run_records_the_gates_and_repairs_it_actually_needed(tmp_path):
+    # Regression on measurability, not behaviour: test_summary used to be a placeholder
+    # (skipped=1 on success, failed=1 on failure), so five archived transcripts all reported
+    # repair_attempts: 0 while their event streams showed one and two repairs. The number the
+    # MVP criterion is measured in had to be counted by hand out of prose.
+    brief, handoff = _contract()
+    qa_runner = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), qa_runner=qa_runner)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    assert result.test_summary.repair_attempts == 1
+    assert result.test_summary.passed >= 1
+    assert result.test_summary.failed == 0
+
+
+def test_a_failed_run_still_reports_the_gates_it_got_through(tmp_path):
+    # "Failed at the last gate after two repairs, having passed the earlier ones" and
+    # "failed" are different facts, and yield is made of the difference.
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), qa_runner=_failing_qa)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert result.test_summary.failed >= 1
+    assert result.test_summary.repair_attempts == MAX_PHASE_REPAIR_ATTEMPTS
 
 
 def test_opencode_exception_during_a_phase_fails_at_that_phase(tmp_path):

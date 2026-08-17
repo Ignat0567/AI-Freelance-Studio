@@ -29,7 +29,7 @@ from .phase_prompts import (
     build_ui_shell_prompt,
     decide_backend_need,
 )
-from .phase_repair import run_qa_repair_loop
+from .phase_repair import RepairLoopResult, run_qa_repair_loop
 from .static_page_check import run_static_page_check_in_docker
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
@@ -132,6 +132,39 @@ def _save_backend_decision_checkpoint(workspace, decision: BackendDecision) -> N
         _logger.warning("Could not write backend-decision checkpoint at %s; a retry would re-ask.", path, exc_info=True)
 
 
+@dataclass
+class _GateTally:
+    """What the gates actually did during one execution, counted as it happens.
+
+    Before this, ExecutionResult.test_summary was a placeholder -- `TestSummary(skipped=1)`
+    on success, `TestSummary(failed=1)` on failure -- so the structured record of a run said
+    nothing about it. Five archived transcripts reported `repair_attempts: 0` while their own
+    event streams showed one and two repairs; the only way to learn how many gates a run
+    needed was to read the prose by hand. A pipeline whose selling point is measurement has
+    to be measurable from its own record.
+    """
+
+    passed: int = 0
+    failed: int = 0
+    repairs: int = 0
+
+    def record(self, repair: RepairLoopResult) -> None:
+        self.repairs += repair.attempts
+        if repair.qa_outcome is None:
+            return
+        if repair.qa_outcome.passed:
+            self.passed += 1
+        else:
+            self.failed += 1
+
+    def summary(self, *, at_least_one_failure: bool = False) -> TestSummary:
+        return TestSummary(
+            passed=self.passed,
+            failed=max(self.failed, 1) if at_least_one_failure else self.failed,
+            repair_attempts=self.repairs,
+        )
+
+
 class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
     """Restructures live generation into UI-SHELL -> CORE-FEATURE -> BACKEND-DECISION-GATE,
     each its own OpenCode call with its own scoped prompt and its own QA-gated checkpoint,
@@ -188,6 +221,8 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         self._midbuild_clarification = midbuild_clarification
         self._container_deploy = container_deploy
         self._deploy_runner = deploy_runner or build_and_verify_container
+        # Reset at the top of every execute(); an adapter instance serves one execution.
+        self._gate_tally = _GateTally()
         self._legacy_fallback = LiveOpenCodeExecutionAdapter(
             provider_name=provider_name,
             model_name=model_name,
@@ -212,6 +247,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         return ReadinessResult.ready_result()
 
     def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        self._gate_tally = _GateTally()
         if cancellation.is_cancelled():
             return _cancelled_result(request)
         if detect_cinematic_website_intent(request.brief):
@@ -392,6 +428,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 details=(str(exc)[:2000],),
             )
             return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, "docker_engine_unreachable", "Docker engine unavailable; phase QA could not run.", outcome="docker_unavailable"))
+        self._gate_tally.record(repair)
         if repair.cancelled:
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
         if not result.success:
@@ -487,6 +524,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 level=EventLevel.WARNING,
             )
             return None
+        self._gate_tally.record(smoke_repair)
         if smoke_repair.cancelled:
             return _cancelled_result(request)
         if smoke_repair.qa_outcome is None or not smoke_repair.qa_outcome.passed:
@@ -542,6 +580,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 level=EventLevel.WARNING,
             )
             return None
+        self._gate_tally.record(state_repair)
         if state_repair.cancelled:
             return _cancelled_result(request)
         if state_repair.qa_outcome is None or not state_repair.qa_outcome.passed:
@@ -618,6 +657,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 level=EventLevel.WARNING,
             )
             return None
+        self._gate_tally.record(visual_repair)
         if visual_repair.cancelled:
             return _cancelled_result(request)
         if visual_repair.qa_outcome is None or not visual_repair.qa_outcome.passed:
@@ -630,8 +670,12 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             )
         return None
 
-    @staticmethod
+    # An instance method rather than a static one so a failed run reports the gates it did
+    # get through: "failed at the visual gate having passed build and smoke, after 2 repairs"
+    # is a different fact from "failed", and the difference is what a yield measurement is
+    # made of.
     def _phase_failure(
+        self,
         request: ExecutionRequest,
         stage: ExecutionStage,
         error_code: str,
@@ -645,7 +689,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             success=False,
             outcome=outcome,
             summary=summary,
-            test_summary=TestSummary(failed=1),
+            test_summary=self._gate_tally.summary(at_least_one_failure=True),
             errors=(error_code,),
             final_stage=stage,
             usage=usage,
@@ -768,7 +812,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             outcome="succeeded",
             summary=f"Project generated by the phased live execution pipeline. {note}{deployment_note}",
             artifact_ids=tuple(item.id for item in artifacts),
-            test_summary=TestSummary(skipped=1),
+            test_summary=self._gate_tally.summary(),
             # A failed deploy is a warning, not a failed delivery: the project itself
             # built, tested and rendered before this stage ever ran.
             warnings=() if deployment is None or deployment.succeeded else (deployment.status_message[:240],),
@@ -793,6 +837,7 @@ class ReviseProjectExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
     """
 
     def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        self._gate_tally = _GateTally()
         if cancellation.is_cancelled():
             return _cancelled_result(request)
         if not request.revision_note or not request.revised_from_execution_id:
@@ -840,6 +885,7 @@ class TelegramBotExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
     """
 
     def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        self._gate_tally = _GateTally()
         if cancellation.is_cancelled():
             return _cancelled_result(request)
         event_sink.emit(stage=ExecutionStage.BOT_BUILD, agent="Studio", progress=5, message="Preparing bot build")
@@ -893,6 +939,7 @@ class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
         self._static_page_check_runner = static_page_check_runner or run_static_page_check_in_docker
 
     def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        self._gate_tally = _GateTally()
         if cancellation.is_cancelled():
             return _cancelled_result(request)
         event_sink.emit(stage=ExecutionStage.STATIC_PAGE_BUILD, agent="Studio", progress=5, message="Preparing single-file page build")
