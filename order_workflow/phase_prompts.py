@@ -51,7 +51,7 @@ def _visual_gate_rules(brief: ProjectBrief) -> list[str]:
     return rules
 
 
-def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additions: str = "") -> str:
+def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additions: str = "", design_tokens_file: str | None = None) -> str:
     """`additions` is free text the client wrote after reading this prompt in the UI.
 
     It is placed after the requirements but *before* the strict rules, and the rules then
@@ -97,6 +97,13 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additio
         "gets this for free (`vite preview`, default port 4173) -- do not remove or rename it "
         "if it is already there; add it if it is missing.",
         *_visual_gate_rules(brief),
+        *([
+            f"- The approved palette is already in ./{design_tokens_file} at the project root. Move or "
+            "copy it into your stylesheet directory, import it from the entry stylesheet so it applies "
+            "to every screen, and use its variables (--color-background, --color-surface, --color-text, "
+            "--color-accent) instead of writing colour literals. It already carries the dark-theme "
+            "media query and paints the page ground, so do not re-declare either.",
+        ] if design_tokens_file else []),
         "",
         "Do not expose secrets in logs, reports, or generated files.",
         "After creating the requested screens and navigation, stop and exit. Do not keep rewriting files.",

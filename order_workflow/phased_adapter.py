@@ -12,6 +12,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_ove
 
 from .complexity import classify_phase_complexity, describe_phase_complexity, model_for_complexity
 from .deployment import DeploymentOutcome, build_and_verify_container
+from .design_tokens import write_design_tokens
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .claude_code_client import CLAUDE_CODE_REPAIR_TIMEOUT, CLAUDE_CODE_TASK_TIMEOUT
@@ -288,10 +289,13 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink.emit(stage=ExecutionStage.UI_SHELL, agent="Studio", progress=30, message="Resuming: ui_shell already completed in an earlier attempt, skipping regeneration.")
             ui_shell = _PhaseOutcome(context=ui_shell_checkpoint, failure=None)
         else:
+            # Written before the prompt is built so the prompt can name it: a file in the
+            # workspace is a stronger instrument than a better sentence about the palette.
+            tokens_file = write_design_tokens(workspace.project_path, request.brief.elena_design_concept)
             ui_shell_complexity, ui_shell_reason = describe_phase_complexity(request.brief, focus_text=f"{request.brief.goal} {' '.join(request.brief.ui_requirements)}")
             ui_shell = self._run_phase(
                 stage=ExecutionStage.UI_SHELL,
-                prompt=build_ui_shell_prompt(request.brief, request.handoff, additions=request.prompt_additions),
+                prompt=build_ui_shell_prompt(request.brief, request.handoff, additions=request.prompt_additions, design_tokens_file=tokens_file),
                 qa_commands=UI_SHELL_QA_COMMANDS,
                 workspace=workspace,
                 event_sink=event_sink,
