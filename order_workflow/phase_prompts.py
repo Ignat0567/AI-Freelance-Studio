@@ -166,6 +166,15 @@ def build_core_feature_prompt(
         "Required: write exactly one automated test that exercises this feature and asserts it returns "
         "the expected result on a test input. The test must be runnable by the project's normal test command.",
         "",
+        # Prevention for the state-continuity gate, which failed on the third gate of this
+        # phase in every measured CRUD run and was then fixed by repair every time -- the
+        # same avoidable round trip the visual criteria used to cost the ui_shell phase.
+        "Required: every value the user can enter or change must survive navigation. The gate that "
+        "follows this phase types into a control, navigates to another screen, comes back, and asserts "
+        "the value is still there. A `useState` inside a screen that unmounts fails this. Hold such "
+        "values in state that outlives the screen -- context, a store, or a parent component that stays "
+        "mounted -- or persist them to localStorage, so the rest of the app reads the same value.",
+        "",
         "Do not expose secrets in logs, reports, or generated files.",
         "After wiring the feature and its test, stop and exit. Do not keep rewriting files.",
     ]

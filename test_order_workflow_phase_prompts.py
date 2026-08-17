@@ -126,6 +126,18 @@ def test_core_feature_prompt_names_exactly_one_feature_and_requires_a_test():
     assert ui_context.summary in prompt
 
 
+def test_core_feature_prompt_states_what_the_state_continuity_gate_measures():
+    # Measured: this gate failed on both CRUD runs of the repeatability batch and was
+    # repaired both times, at ~3.5 minutes a run. The gate catches component-local state
+    # that dies on unmount, and the prompt never mentioned it.
+    prompt = build_core_feature_prompt(_brief(), _handoff(), _phase_context("ui_shell"))
+
+    lowered = prompt.lower()
+    assert "survive navigation" in lowered
+    assert "usestate" in lowered
+    assert "localstorage" in lowered
+
+
 def test_core_feature_prompt_does_not_repeat_the_full_ui_shell_instructions():
     prompt = build_core_feature_prompt(_brief(), _handoff(), _phase_context("ui_shell"))
 
