@@ -397,7 +397,12 @@ class ExecutionEvent(StrictDomainModel):
     stage: ExecutionStage | None = None
     agent: ShortText | None = None
     progress: Annotated[int, Field(ge=0, le=100)] | None = None
-    details: tuple[ShortText, ...] = ()
+    # LongText, unlike message: details carry a gate's verbatim output (a compiler error, a
+    # visual-check finding), and the 240-char ShortText cap silently cut every one of them
+    # down to its first line -- typically just the command that failed, which is the one
+    # part of the text that carries no information. The repair prompt always had the full
+    # text; only the record a human reads was truncated.
+    details: tuple[LongText, ...] = ()
     created_at: datetime
 
     @field_validator("created_at")

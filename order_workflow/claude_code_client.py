@@ -23,6 +23,12 @@ from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
 
 CLAUDE_CODE_TASK_TIMEOUT = 900
+# A repair call is a narrower job than the build it follows: the project already exists and
+# the prompt names the exact gate output to fix. Sharing the full build budget means one
+# timed-out repair can eat a quarter of an hour and still leave the phase unverified, so
+# repairs get their own, smaller clock -- two of them together stay inside one build's worth
+# of wall time. See run_qa_repair_loop, which passes this per call.
+CLAUDE_CODE_REPAIR_TIMEOUT = 450
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +112,7 @@ class ConfiguredClaudeCodeExecutionClient:
         event_sink: ExecutionEventSink,
         cancellation: CancellationToken,
         model: str | None = None,
+        timeout: int | None = None,
     ) -> OpenCodeExecutionResult:
         if cancellation.is_cancelled():
             return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled before invocation.")
@@ -138,15 +145,19 @@ class ConfiguredClaudeCodeExecutionClient:
             # the CLI's --model flag wants the bare alias ("opus", "sonnet", "fable", ...).
             cmd.extend(["--model", model.split("/", 1)[-1]])
 
+        limit = timeout or CLAUDE_CODE_TASK_TIMEOUT
         for attempt in range(2):
             try:
-                outcome = self._invoke(cmd, prompt, workspace_path, cancellation, attempt=attempt)
+                outcome = self._invoke(cmd, prompt, workspace_path, cancellation, attempt=attempt, timeout=limit)
             except OSError as exc:
                 return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}")
             if outcome.cancelled:
                 return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled.")
             if outcome.timed_out:
-                return OpenCodeExecutionResult(success=False, summary="Claude Code execution timed out.", errors=("claude_code_execution_timeout",), timed_out=True)
+                # The limit is named in the summary because it is no longer a single global
+                # value: a caller reading "timed out" cannot otherwise tell whether it had
+                # the full build budget or a repair's shorter one.
+                return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution timed out after {limit}s.", errors=("claude_code_execution_timeout",), timed_out=True)
             if outcome.returncode != 0 and not outcome.stdout_text.strip() and not outcome.stderr_text.strip() and attempt == 0:
                 # A nonzero exit with *zero* output on both streams doesn't look like a real
                 # coding failure -- a genuine model-level failure almost always produces
@@ -201,7 +212,7 @@ class ConfiguredClaudeCodeExecutionClient:
         return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated", usage=usage)
 
     @staticmethod
-    def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken, *, attempt: int = 0) -> _InvokeOutcome:
+    def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken, *, attempt: int = 0, timeout: int = CLAUDE_CODE_TASK_TIMEOUT) -> _InvokeOutcome:
         proc = subprocess.Popen(
             cmd,
             cwd=str(Path(workspace_path)),
@@ -249,7 +260,7 @@ class ConfiguredClaudeCodeExecutionClient:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                 break
-            if time.time() - started > CLAUDE_CODE_TASK_TIMEOUT:
+            if time.time() - started > timeout:
                 timed_out = True
                 proc.terminate()
                 try:

@@ -52,6 +52,10 @@ TERMINAL_EXECUTION_STATUSES = frozenset(
     {ExecutionStatus.SUCCEEDED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED}
 )
 
+# Matches the slice every emitter already applies to its own details, and stays well inside
+# the LongText bound on ExecutionEvent.details.
+MAX_EVENT_DETAIL_CHARS = 2000
+
 
 class ExecutionServiceError(ValueError):
     def __init__(self, code: str) -> None:
@@ -553,7 +557,11 @@ class ProjectExecutionService:
                 stage=stage,
                 agent=sanitize_public_text(agent)[:240] or "Studio",
                 progress=progress,
-                details=tuple(sanitize_public_text(item)[:240] for item in details),
+                # Callers already slice their own details to 2000 chars; matching that here
+                # keeps a gate's finding readable in the event stream instead of clipping it
+                # to the failing command's first line. The message above stays short on
+                # purpose -- it is a one-line label, not the evidence.
+                details=tuple(sanitize_public_text(item)[:MAX_EVENT_DETAIL_CHARS] for item in details),
                 created_at=utc_now(self._clock),
             )
             updated = record.snapshot.model_copy(

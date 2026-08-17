@@ -350,6 +350,31 @@ def test_events_snapshots_retention_and_late_events_are_safe():
     assert "chat_history" not in after.to_json()
 
 
+def test_event_details_keep_a_gate_s_verbatim_output():
+    # Regression: details were capped at 240 chars (the ShortText bound), which cut every QA
+    # failure down to the failing command's first line -- the one part carrying no
+    # information -- so a visual-check finding could not be read from the event stream at
+    # all. The repair prompt always got the full text; only the human-readable record lost it.
+    brief, handoff = _approved_contract()
+    service = _service()
+    running = service.start(brief, handoff)
+    finding = "Contrast 3.13:1 (needs 4.5:1) -- #7c8794 on #e9eef2, affecting 8 text elements. " * 12
+
+    service._emit(
+        running.id,
+        kind=EventKind.ACTIVITY,
+        stage=ExecutionStage.UI_SHELL,
+        agent="Elena",
+        progress=65,
+        message="QA failed; asking Codex to fix (attempt 1 of 2)",
+        details=(finding,),
+    )
+    emitted = next(event for event in service.snapshot(running.id).events if event.details)
+
+    assert len(emitted.details[0]) > 240
+    assert "needs 4.5:1" in emitted.details[0]
+
+
 def test_custom_readiness_blocker_is_structured():
     blocker = readiness_blocker("workspace_unavailable", "Workspace is not writable.", "Choose Folder")
     result = ReadinessResult.blocked(blocker)

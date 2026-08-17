@@ -1,0 +1,107 @@
+%% Фактическая архитектура AI Freelance Studio на 2026-08-17.
+%% Сверено с кодом, а не с представлением о нём. Ссылки на файлы — в подписях узлов.
+flowchart TB
+    subgraph UI["React Frontend (Vite)"]
+        Studio["Studio UI<br/>Overview / Projects / order-workflow"]
+        Poll["HTTP-поллинг через setInterval/setTimeout<br/>(App.jsx, useChannelMessages.js)<br/>WebSocket-эндпоинтов НЕТ"]
+    end
+
+    subgraph Backend["FastAPI Backend"]
+        REST["REST: /api/orders, /autopilot,<br/>/readiness, /execution"]
+        Service["order_workflow/service.py<br/>оркестратор — строго последовательный"]
+        Store["JSON-файловые хранилища<br/>orders_state.json / order_executions_state.json"]
+    end
+
+    subgraph Planner["Планировщик — до генерации"]
+        Clarify["clarification.py<br/>ограниченный диалог, ответы из<br/>рекомендованных значений"]
+        Brief["brief_service.py → ProjectBrief<br/>валидация pydantic"]
+        ElenaDesign["Elena: style_library.py (9 паков)<br/>+ design_preview.py<br/>→ спек стиля в промпт ui_shell"]
+        Proposal["proposal.py — единственный<br/>«убеждающий» вызов модели,<br/>только по запросу человека"]
+    end
+
+    subgraph Router["Роутинг модели — БЕЗ вызова модели"]
+        Complexity["complexity.py: эвристика по ключевым словам<br/>+ substantive_technical_constraints<br/>→ sonnet | opus, причина пишется в событие"]
+    end
+
+    subgraph Exec["Исполнение — phased_adapter.py, последовательно"]
+        direction TB
+        UIShell["UI_SHELL"]
+        CoreFeat["CORE_FEATURE"]
+        Decision["BACKEND_DECISION<br/>decide_backend_need — детерминированное<br/>правило по брифу, fail-closed, БЕЗ модели"]
+        Packaging["PACKAGING — opt-in<br/>FREELANCERSTUDIO_ENABLE_CONTAINER_DEPLOY=1"]
+        UIShell --> CoreFeat --> Decision --> Packaging
+    end
+
+    subgraph Worker["Один воркер на фазу — claude_code_client.py"]
+        CLI["отдельный процесс `claude` CLI<br/>чистый контекст, файлы читает сам инструментами,<br/>--model из роутера, промпт через stdin"]
+        Timeout["CLAUDE_CODE_TASK_TIMEOUT = 900 с<br/>тот же лимит и на ремонтный вызов"]
+        Ckpt["чекпоинт фазы на успехе<br/>повтор возобновляет, а не пересобирает"]
+    end
+
+    subgraph Gates["Гейты — программы, не мнения (QA в Docker)"]
+        Build["npm run build<br/>компилятор"]
+        Smoke["functional_smoke_check.py<br/>Playwright: рендер, интерактив, console errors"]
+        Visual["visual_check.py (агент Elena)<br/>палитра по площади + WCAG AA + 375px + dark mode"]
+        Tests["npm test<br/>тест-раннер"]
+        StateChk["state_continuity_check.py<br/>переживает ли состояние перезагрузку"]
+        Probe["deployment.py<br/>docker build + HTTP-проба"]
+    end
+
+    subgraph Repair["Само­исправление — phase_repair.py"]
+        direction LR
+        RunQA["запустить QA"] --> Fail{"провал?"}
+        Fail -->|"да, попыток < 2"| Fix["переслать точный вывод гейта<br/>в тот же CLI"]
+        Fix --> RunQA
+    end
+
+    subgraph Pause["Мид-билд пауза — opt-in"]
+        Await["FREELANCERSTUDIO_ENABLE_MIDBUILD_CLARIFICATION=1<br/>останов после UI_SHELL: AWAITING_USER,<br/>вопросы — поиск по допущениям брифа, не вызов модели"]
+    end
+
+    subgraph Gone["Чего в коде НЕТ (есть только в целевой диаграмме)"]
+        direction TB
+        NoWS["WebSocket-слой push-обновлений"]
+        NoFan["параллельный fan-out / fan-in<br/>(ни gather, ни threads во всём order_workflow)"]
+        NoDA["Design-Analyst из URL/скриншота<br/>(нужен vision-passthrough, его нет)"]
+        NoAD["Art-Director / генерация визуалов"]
+        NoRev["LLM-ревьюер, в т.ч. adversarial<br/>«Reviewer» = ярлык на rule-based QA"]
+        NoLint["линтеры ruff / eslint в гейтах"]
+        NoBudget["лимит бюджета<br/>(учёт total_cost_usd есть, прерывания нет)"]
+    end
+
+    Studio <--> Poll
+    Poll -->|"запрос статуса каждые N мс"| REST
+    REST --> Service
+    Service <--> Store
+    Service --> Clarify --> Brief --> ElenaDesign
+    Brief -.-> Proposal
+    ElenaDesign --> Complexity
+    Complexity --> Exec
+    UIShell --> CLI
+    CoreFeat --> CLI
+    CLI --- Timeout
+    CLI --> Repair
+    RunQA --> Gates
+    Build -.->|"UI_SHELL"| Repair
+    Smoke -.-> Repair
+    Visual -.->|"UI_SHELL"| Repair
+    Tests -.->|"CORE_FEATURE"| Repair
+    StateChk -.->|"CORE_FEATURE"| Repair
+    Packaging --> Probe
+    Repair -->|"все гейты пройдены"| Ckpt
+    UIShell -.->|"если флаг включён"| Await
+    Ckpt --> Service
+
+    %% Два дефекта, найденных живым прогоном 2026-08-17
+    Bug1["ДЕФЕКТ: таймаут ремонтного вызова<br/>рвёт цикл через break, 2-я попытка не тратится,<br/>наружу уходит «страница не соответствует дизайну»"]
+    Bug2["ДЕФЕКТ: детали события режутся до 240 символов<br/>(execution.py:556) — находки визуального гейта<br/>не видны снаружи, вопреки документации"]
+    Repair -.- Bug1
+    Visual -.- Bug2
+
+    style Gates fill:#fdd,stroke:#c33
+    style Repair fill:#fff6e0,stroke:#c90
+    style Router fill:#eef2fb,stroke:#57a
+    style Worker fill:#e8f4ea,stroke:#2a7
+    style Gone fill:#eee,stroke:#999,stroke-dasharray: 5 5
+    style Bug1 fill:#ffd9d9,stroke:#b00
+    style Bug2 fill:#ffd9d9,stroke:#b00

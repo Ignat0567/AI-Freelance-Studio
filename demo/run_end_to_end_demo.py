@@ -31,7 +31,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-PORT = 8099
+# Overridable so a leftover server on the default port does not block a run: the port has
+# to be passed to demo_backend.py *and* used for this script's own BASE_URL and Origin
+# header, so it is read once here rather than hardcoded.
+PORT = int(os.environ.get("FREELANCERSTUDIO_DEMO_PORT", "8099"))
 BASE_URL = f"http://127.0.0.1:{PORT}"
 TOKEN = "test-only-local-token-32-bytes-long"
 TRANSCRIPT_DIR = Path(__file__).resolve().parent / "transcripts"
@@ -94,6 +97,21 @@ def start_backend() -> subprocess.Popen:
     python = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
     if not python.is_file():
         python = Path(sys.executable)
+    # A server already on this port is never the one this demo just launched -- most often
+    # it is a leftover from an earlier run. Without this check the loop below sees its
+    # /health answer, reports "backend is up", and the whole demo drives a stranger's
+    # process (running whatever code it started with) while our own uvicorn dies unnoticed
+    # on a bind error, several lines up in the output.
+    try:
+        request("GET", "/health", timeout=2)
+    except Exception:
+        pass
+    else:
+        raise SystemExit(
+            f"something is already serving {BASE_URL} -- stop it, or set "
+            f"FREELANCERSTUDIO_DEMO_PORT to a free port, and run again"
+        )
+
     log(f"starting backend on {BASE_URL}")
     # Kept on stderr rather than DEVNULL: a backend that dies during startup has to be
     # diagnosable from the demo's own output, not silently swallowed.
