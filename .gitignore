@@ -111,3 +111,17 @@ generated_projects/*.zip
 
 # Unreferenced duplicate of the canonical branding source
 /AI_FreelanceStudio_Logo.png
+
+# Claude Code local session state. Not Studio source: worktrees are full checkouts of
+# this repository, launch.json carries absolute machine paths, and the rest is per-machine
+# scheduling and session bookkeeping.
+/.claude/
+
+# Scratch files an interrupted run left in the repository root
+/_tmp.json
+/_logs.json
+/.projects_state.json.*.tmp
+
+# Legacy secret material. studio_config.json is already ignored; its migration backups
+# carry the same credentials and must never be tracked either.
+/studio_config.*.json.bak
