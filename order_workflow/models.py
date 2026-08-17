@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
+from .failure_cause import FailureCause, classify_failure_cause
+
 
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]
 LongText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
@@ -479,7 +481,21 @@ class ExecutionResult(StrictDomainModel):
     final_stage: ExecutionStage | None = None
     usage: TokenUsage | None = None
     rate_limit_message: ShortText | None = None
+    # Which *kind* of thing went wrong, derived from errors/outcome below. A dead provider
+    # token and a gate the generated code could not pass are both "a failed run" and carry
+    # opposite information about quality; a yield figure that mixes them measures nothing.
+    failure_cause: FailureCause | None = None
     completed_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_failure_cause(cls, data: Any) -> Any:
+        """Filled in here rather than at each producer, so a new failure path cannot forget
+        it. Not a computed field: these models round-trip through model_dump/model_validate
+        for persistence, and extra="forbid" would reject a computed field on the way back."""
+        if not isinstance(data, dict) or data.get("failure_cause") or data.get("success", True):
+            return data
+        return {**data, "failure_cause": classify_failure_cause(data.get("errors") or (), outcome=data.get("outcome"))}
 
     @field_validator("completed_at")
     @classmethod
