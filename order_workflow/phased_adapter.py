@@ -12,6 +12,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_ove
 
 from .complexity import classify_phase_complexity, describe_phase_complexity, model_for_complexity
 from .deployment import DeploymentOutcome, build_and_verify_container
+from .delivery_report import build_delivery_report
 from .design_tokens import write_design_tokens
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
@@ -154,8 +155,12 @@ class _GateTally:
     # it belongs to a run that died. Under a real token budget that is the first number you
     # need and the one nobody had.
     usages: list[TokenUsage] = field(default_factory=list)
+    # One entry per gate that actually ran QA: (stage label, attempts spent, final verdict).
+    # This is what turns "3 repair attempts" into a delivery report a client can read --
+    # which gate needed the work, and whether it was ultimately satisfied.
+    gate_log: list[tuple[str, int, bool | None]] = field(default_factory=list)
 
-    def record(self, repair: RepairLoopResult) -> None:
+    def record(self, repair: RepairLoopResult, *, gate: str = "") -> None:
         self.repairs += repair.attempts
         self.usages.extend(usage for usage in getattr(repair, "usages", ()) if usage is not None)
         if repair.qa_outcome is None:
@@ -164,6 +169,8 @@ class _GateTally:
             self.passed += 1
         else:
             self.failed += 1
+        if gate:
+            self.gate_log.append((gate, repair.attempts, repair.qa_outcome.passed))
 
     def record_usage(self, usage: TokenUsage | None) -> None:
         if usage is not None:
@@ -460,7 +467,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 details=(str(exc)[:2000],),
             )
             return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, "docker_engine_unreachable", "Docker engine unavailable; phase QA could not run.", outcome="docker_unavailable"))
-        self._gate_tally.record(repair)
+        self._gate_tally.record(repair, gate=stage.value)
         if repair.cancelled:
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
         if not result.success:
@@ -797,19 +804,17 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
         deployment = self._deploy(request, event_sink, workspace)
-        deployment_lines = ""
-        if deployment is not None:
-            deployment_lines = (
-                f"\nContainer deployment: {deployment.status_message}\n"
-                f"Image: {deployment.image_tag}\n"
-                + (f"Run locally: {deployment.run_command}\n" if deployment.run_command else "")
-            )
-        delivery_report = (
-            "Phased live execution completed.\n"
-            f"{note}\n"
-            f"Meaningful artifacts detected: {len(meaningful_artifacts)}.\n"
-            f"Workspace files inspected: {summary['files_created']}.\n"
-            f"{deployment_lines}"
+        delivery_report = build_delivery_report(
+            goal=request.brief.goal,
+            requirements=request.handoff.requirements,
+            note=note,
+            gate_log=self._gate_tally.gate_log,
+            files_created=summary["files_created"],
+            meaningful_artifact_count=len(meaningful_artifacts),
+            usage=self._gate_tally.total_usage(),
+            deployment_status=deployment.status_message if deployment is not None else None,
+            deployment_image=deployment.image_tag if deployment is not None else None,
+            run_command=deployment.run_command if deployment is not None and deployment.run_command else None,
         )
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 

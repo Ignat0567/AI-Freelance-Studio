@@ -1,0 +1,135 @@
+"""delivery_report.md answers MVP_ACCEPTANCE.md's four questions, or it fails these tests.
+
+The report this replaces read "Phased live execution completed. Meaningful artifacts
+detected: 6. Workspace files inspected: 41." -- facts about the pipeline's own bookkeeping,
+answering none of what was built, what was found and fixed, whether it runs, or how to
+start it. These tests pin the four sections and, separately, that a clean run says so
+plainly rather than reading as an omission.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from order_workflow.delivery_report import build_delivery_report
+from order_workflow.models import TokenUsage
+
+
+pytestmark = pytest.mark.unit
+
+
+def _report(**overrides) -> str:
+    payload = dict(
+        goal="A pomodoro focus timer that runs entirely offline in the browser.",
+        requirements=("Timer screen with start/pause/reset", "Daily streak of dots"),
+        note="No backend was required; the UI shell and core feature are the complete deliverable.",
+        gate_log=[],
+        files_created=41,
+        meaningful_artifact_count=6,
+    )
+    payload.update(overrides)
+    return build_delivery_report(**payload)
+
+
+def test_what_was_built_states_the_goal_and_the_requirements():
+    report = _report()
+
+    assert "## What was built" in report
+    assert "pomodoro focus timer" in report
+    assert "Timer screen with start/pause/reset" in report
+    assert "Daily streak of dots" in report
+
+
+def test_a_clean_run_says_so_plainly_rather_than_reading_as_an_omission():
+    """A report that only ever lists problems reads as improvised. Silence about repairs is
+    not the same claim as stating that none were needed."""
+    report = _report(gate_log=[("ui_shell", 0, True), ("core_feature", 0, True)])
+
+    assert "## What we found and fixed" in report
+    assert "first attempt" in report.casefold()
+    assert "repair" not in report.split("## What we found and fixed")[1].split("## Proof")[0].casefold()
+
+
+def test_a_repaired_gate_is_named_by_what_it_is_not_by_its_internal_stage_id():
+    report = _report(gate_log=[("ui_shell", 2, True)])
+
+    section = report.split("## What we found and fixed")[1].split("## Proof")[0]
+    assert "ui_shell" not in section
+    assert "screens and navigation" in section.casefold()
+    assert "2 repair attempts" in section
+    assert "fixed it" in section
+
+
+def test_singular_repair_is_not_pluralised():
+    report = _report(gate_log=[("core_feature", 1, True)])
+
+    section = report.split("## What we found and fixed")[1]
+    assert "1 repair attempt " in section
+    assert "1 repair attempts" not in section
+
+
+def test_a_gate_that_never_recovered_is_flagged_for_a_human_rather_than_hidden():
+    """A run can reach _finalize_success only when it succeeded overall, but an individual
+    phase's repair loop can still exhaust its attempts and pass on because a *later*
+    gate accepted the state it left behind -- that gate's own failure must stay visible."""
+    report = _report(gate_log=[("ui_shell", 2, False)])
+
+    section = report.split("## What we found and fixed")[1].split("## Proof")[0]
+    assert "still does not pass" in section
+    assert "human look" in section
+
+
+def test_multiple_gates_each_get_their_own_line():
+    report = _report(gate_log=[("ui_shell", 2, True), ("core_feature", 1, True)])
+
+    section = report.split("## What we found and fixed")[1].split("## Proof")[0]
+    assert section.count("- ") == 2
+
+
+def test_proof_prefers_the_deployment_outcome_when_one_ran():
+    report = _report(deployment_status="Container served HTTP 200 from the production image.", deployment_image="freelancerstudio/exec-1:latest")
+
+    section = report.split("## Proof it runs")[1].split("## How")[0]
+    assert "HTTP 200" in section
+    assert "freelancerstudio/exec-1:latest" in section
+
+
+def test_proof_falls_back_to_the_qa_gates_when_no_container_was_built():
+    report = _report(deployment_status=None)
+
+    section = report.split("## Proof it runs")[1].split("## How")[0]
+    assert "container packaging was not part of this run" in section.casefold()
+
+
+def test_cost_appears_only_when_something_was_actually_reported():
+    """A missing usage figure and a genuine zero are different facts (see failure_cause.py's
+    sibling reasoning) -- the report must not print "$0.00" for a run nothing was billed
+    for, which would read as free rather than as unmeasured."""
+    with_cost = _report(usage=TokenUsage(total_cost_usd=5.14, output_tokens=100208))
+    without = _report(usage=None)
+
+    assert "$5.14" in with_cost
+    assert "$" not in without
+
+
+def test_how_to_run_it_prefers_the_containers_own_command():
+    report = _report(run_command="docker run -p 8080:80 freelancerstudio/exec-1:latest")
+
+    section = report.split("## How to run it")[1]
+    assert "docker run" in section
+
+
+def test_how_to_run_it_falls_back_to_the_preview_script_every_ui_shell_must_have():
+    report = _report(run_command=None)
+
+    section = report.split("## How to run it")[1]
+    assert "npm install" in section
+    assert "npm run preview" in section
+
+
+def test_all_four_sections_are_present_and_in_order():
+    report = _report()
+    headings = ("## What was built", "## What we found and fixed", "## Proof it runs", "## How to run it")
+
+    positions = [report.index(heading) for heading in headings]
+    assert positions == sorted(positions)

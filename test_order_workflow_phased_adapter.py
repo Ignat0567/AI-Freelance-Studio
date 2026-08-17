@@ -841,3 +841,25 @@ def test_revision_success_finalizes_with_readme_and_architecture_artifacts(tmp_p
     assert (workspace.project_path / "README.md").is_file()
     assert (workspace.project_path / "ARCHITECTURE.md").is_file()
     assert (workspace.project_path / "delivery_report.md").is_file()
+
+
+def test_delivery_report_reflects_what_this_run_actually_needed(tmp_path):
+    """Integration point for delivery_report.py: the report a real run writes must be built
+    from that run's own gate log, not a generic template."""
+    brief, handoff = _contract()
+    qa_runner = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), qa_runner=qa_runner)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    workspace_root = next(tmp_path.rglob("delivery_report.md"))
+    report = workspace_root.read_text(encoding="utf-8")
+    assert "## What was built" in report
+    assert "## What we found and fixed" in report
+    assert "1 repair attempt " in report
+    assert "## Proof it runs" in report
+    assert "## How to run it" in report
