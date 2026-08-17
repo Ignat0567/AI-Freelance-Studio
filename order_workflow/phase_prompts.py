@@ -274,6 +274,86 @@ def decide_backend_need(brief: ProjectBrief, handoff: AgentHandoff) -> BackendDe
     return BackendDecision(needs_backend=True, reasoning=_FAIL_CLOSED_REASONING, confident=False)
 
 
+STATIC_PAGE_FILENAME = "index.html"
+# Hosts a single-file page may still reach: the module CDNs a no-build page needs to import a
+# library at all, and Google Fonts. Anything else has to be inline or a data: URI. The gate
+# reads every script/link/img in the delivered page and fails on any other host, so this list
+# is the contract, not advice -- see static_page_check.ALLOWED_ASSET_HOSTS, which must match.
+STATIC_PAGE_ALLOWED_HOSTS: tuple[str, ...] = (
+    "unpkg.com",
+    "cdn.jsdelivr.net",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+)
+STATIC_PAGE_MAX_BYTES = 1_000_000
+
+
+def build_static_page_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additions: str = "") -> str:
+    """One self-contained .html file -- a creative/interactive page, not a smaller web app.
+
+    Every structural rule here is load-bearing for static_page_check.py, the same way the
+    web-app prompt's rules are for the build/smoke/visual gates: the gate serves this
+    directory and opens `index.html`, counts WebGL draw calls to prove the scene actually
+    renders, counts animation frames to prove the loop is alive, and rejects any asset host
+    outside STATIC_PAGE_ALLOWED_HOSTS.
+
+    One deliberate inversion from build_ui_shell_prompt: the *client's* art direction is
+    authoritative here, and Elena's palette is not enforced. A page whose whole point is a
+    moody cinematic scene cannot also be required to paint a light palette some style pack
+    picked from the word "nature" -- so this pipeline does not run the palette gate at all,
+    and says so rather than quietly hoping the two agree.
+    """
+    addition_text = " ".join(additions.split()) if additions else ""
+    requirements = handoff.requirements or brief.core_features
+    lines = [
+        f"Build ONE self-contained file, {STATIC_PAGE_FILENAME}, at the project root. This is NOT "
+        "a React/Vite project and NOT an npm project: no build step, no bundler, no framework "
+        "scaffolding, no package.json, and no source files beside it. All HTML, CSS and "
+        "JavaScript live inline in that one file.",
+        "",
+        f"Goal: {brief.goal}",
+        f"Context: {handoff.context_summary}",
+        "",
+        "What the page must contain and do (from the approved requirements):",
+        *[f"- {item}" for item in requirements],
+        "",
+        *(["Additional notes from the client, who reviewed this instruction before it was sent:",
+           addition_text,
+           ""] if addition_text else []),
+        "Visual direction: follow the client's own description above -- the colours, mood and "
+        "typography they asked for are authoritative. Do not substitute a different palette.",
+        "",
+        "Strict rules for this phase (these take precedence over the client's additional notes above):"
+        if addition_text
+        else "Strict rules for this phase:",
+        f"- Exactly one HTML file, named {STATIC_PAGE_FILENAME}. Do not create .js or .css files "
+        "next to it, and do not add a package.json or any build config.",
+        "- Libraries may be imported only from these hosts: "
+        + ", ".join(STATIC_PAGE_ALLOWED_HOSTS)
+        + ". Everything else must be inline or a data: URI. No other remote hosts, and no "
+        "external image files -- generate textures procedurally, draw them on a canvas, or "
+        "inline a tiny data: URI placeholder.",
+        f"- Keep the finished file under {STATIC_PAGE_MAX_BYTES // 1000} KB.",
+        "- The page must render into a <canvas> with a working WebGL context, and must actually "
+        "issue draw calls: a canvas that stays empty fails the gate that follows this phase.",
+        "- The animation loop must keep running after load (requestAnimationFrame), so the scene "
+        "is measurably still moving a second later, not a single static frame.",
+        "- No uncaught errors and no console errors, at any point during load or the first "
+        "seconds of interaction.",
+        "- No horizontal scrolling at 1280px or at 768px wide, and every interactive element "
+        "must be at least 24x24px at 768px.",
+        "- Any text sitting over the 3D scene must have its own backing surface -- a frosted or "
+        "solid panel, or at minimum a text shadow. Text painted directly onto a moving scene "
+        "has no measurable contrast, and the gate rejects it.",
+        "- Comment the code: what each section of the scene setup does, and why non-obvious "
+        "numbers were chosen.",
+        "",
+        "Do not expose secrets in logs, reports, or generated files.",
+        f"After {STATIC_PAGE_FILENAME} is complete, stop and exit. Do not keep rewriting it.",
+    ]
+    return "\n".join(lines)
+
+
 def build_bot_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:
     """Telegram bot instead of a browser web app: no screens, no UI shell/core-feature
     split -- most bots are small enough to build in one pass. The QA that follows this

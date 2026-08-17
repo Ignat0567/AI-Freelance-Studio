@@ -47,6 +47,13 @@ flowchart TB
         Probe["deployment.py<br/>docker build + HTTP-проба"]
     end
 
+    subgraph Static["ProductType.STATIC_PAGE — один самодостаточный .html"]
+        direction TB
+        StaticBuild["STATIC_PAGE_BUILD, одна фаза<br/>build_static_page_prompt: без npm, без фреймворка,<br/>палитру диктует КЛИЕНТ, а не Elena"]
+        StaticGate["static_page_check.py<br/>форма файлов (без Docker) + хосты ассетов<br/>+ живой WebGL-контекст + растущие draw calls<br/>+ fps + 768px + текст поверх сцены на подложке"]
+        StaticBuild --> StaticGate
+    end
+
     subgraph Repair["Само­исправление — phase_repair.py"]
         direction LR
         RunQA["запустить QA"] --> Fail{"провал?"}
@@ -79,7 +86,9 @@ flowchart TB
     Service --> Clarify --> Brief --> ElenaDesign
     Brief -.-> Proposal
     ElenaDesign --> Complexity
-    Complexity --> Exec
+    Complexity -->|"product_type = web_app"| Exec
+    Complexity -->|"product_type = static_page"| Static
+    StaticGate -.->|"тот же цикл, тот же бюджет"| Repair
     UIShell --> CLI
     CoreFeat --> CLI
     CLI --- Timeout
@@ -99,4 +108,5 @@ flowchart TB
     style Repair fill:#fff6e0,stroke:#c90
     style Router fill:#eef2fb,stroke:#57a
     style Worker fill:#e8f4ea,stroke:#2a7
+    style Static fill:#eaf3ff,stroke:#3a7
     style Gone fill:#eee,stroke:#999,stroke-dasharray: 5 5

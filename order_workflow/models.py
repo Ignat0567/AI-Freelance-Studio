@@ -40,13 +40,21 @@ class UserOrderStatus(str, Enum):
 class ProductType(str, Enum):
     WEB_APP = "web_app"
     BOT = "bot"
+    # A single self-contained .html file: a creative/interactive page (WebGL scene, canvas
+    # art, landing page) that ships as one file loaded straight in a browser. Not a smaller
+    # web_app -- it has no build step, no npm project and no framework, so every gate the
+    # web_app pipeline depends on (`npm run build`, `npm test`, a preview server, a palette
+    # measured off DOM computed styles) is either inapplicable or actively wrong for it.
+    STATIC_PAGE = "static_page"
 
 
 # Every ProductType member the pipeline actually has a full clarification/brief/execution
 # path for. A ProductType could exist here as a value the *type system* allows before an
 # execution adapter is wired up for it -- this is the single, explicit gate that decides
 # whether an order of that type is actually accepted end to end.
-SUPPORTED_PRODUCT_TYPES: frozenset[ProductType] = frozenset({ProductType.WEB_APP, ProductType.BOT})
+SUPPORTED_PRODUCT_TYPES: frozenset[ProductType] = frozenset(
+    {ProductType.WEB_APP, ProductType.BOT, ProductType.STATIC_PAGE}
+)
 
 
 class QuestionType(str, Enum):
@@ -95,6 +103,7 @@ class ExecutionStage(str, Enum):
     PACKAGING = "packaging"
     REVISION = "revision"
     BOT_BUILD = "bot_build"
+    STATIC_PAGE_BUILD = "static_page_build"
     COMPLETED = "completed"
 
 

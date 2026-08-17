@@ -201,7 +201,7 @@ def main() -> int:
     parser.add_argument("--keep-workspace", action="store_true", help="do not print the cleanup hint")
     parser.add_argument("--title", help="order title; defaults to the built-in Focus Timer demo")
     parser.add_argument("--description", help="what the app should do, in the client's own words")
-    parser.add_argument("--product-type", default=DEMO_ORDER["product_type"], choices=["web_app", "bot"])
+    parser.add_argument("--product-type", default=DEMO_ORDER["product_type"], choices=["web_app", "bot", "static_page"])
     args = parser.parse_args()
 
     # The built-in order stays the default so the demo is still one command with no

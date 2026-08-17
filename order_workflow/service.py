@@ -53,7 +53,7 @@ from .claude_code_client import select_coding_execution_client
 from .deployment import container_deploy_enabled
 from .midbuild_clarification import midbuild_clarification_enabled
 from .phase_prompts import build_ui_shell_prompt
-from .phased_adapter import BOT_QA_COMMANDS, PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
+from .phased_adapter import BOT_QA_COMMANDS, PhasedLiveOpenCodeExecutionAdapter, ReviseProjectExecutionAdapter, StaticPageExecutionAdapter, TelegramBotExecutionAdapter, _select_qa_runner, resolve_execution_pipeline_mode
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
     OpenCodeExecutionClient,
@@ -208,6 +208,18 @@ class ConfigurationBackedExecutionAdapter:
                 # pick web (npm) vs bot (pip/python) QA commands -- same adapter class
                 # either way, see phased_adapter.py.
                 return ReviseProjectExecutionAdapter(
+                    provider_name=provider,
+                    model_name=model,
+                    workspace_root=workspace_root,
+                    opencode_client=opencode_client,
+                    environ=environ,
+                    ai_ask=self._website_section_ai_ask,
+                    qa_runner=_select_qa_runner(self._environ),
+                )
+            if brief is not None and brief.product_type is ProductType.STATIC_PAGE:
+                # No qa_commands: this pipeline's phase QA is static_page_check itself, which
+                # the adapter supplies as the phase's runner (see StaticPageExecutionAdapter).
+                return StaticPageExecutionAdapter(
                     provider_name=provider,
                     model_name=model,
                     workspace_root=workspace_root,

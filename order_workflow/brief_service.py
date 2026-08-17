@@ -277,11 +277,17 @@ def verify_brief_approval(brief: ProjectBrief) -> bool:
 
 
 def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType = ProductType.WEB_APP) -> ElenaDesignConcept | None:
-    if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT or product_type is ProductType.BOT:
+    if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT or product_type in {ProductType.BOT, ProductType.STATIC_PAGE}:
         # A bot has no screens/light-dark theme -- there is nothing for Elena's visual
         # design concept to describe. In practice, product_type BOT orders never reach
         # SHOW_ELENA_CONCEPT in the first place (see clarification.py's ui_required
         # signal), but this stays correct even if that ever changes.
+        #
+        # A static page is excluded for the opposite reason: it is nothing but visual
+        # design, and the design is the client's. Its pipeline enforces no palette (see
+        # build_static_page_prompt), so a concept attached here would be a decoration no
+        # prompt and no gate ever reads -- visible in the UI, inert in the build, and
+        # contradicting the art direction the order actually asked for.
         return None
     return ElenaDesignConcept(
         visual_direction="Liquid Glass",
@@ -325,7 +331,24 @@ class ProjectBriefService:
 
         signals = infer_requirement_signals(order)
         stack = RecommendedStack(frontend="React + Vite", backend="FastAPI", storage="SQLite")
-        if order.product_type is ProductType.BOT:
+        if order.product_type is ProductType.STATIC_PAGE:
+            # Its own top-level branch for the same reason the bot branch has one: the
+            # web-app branches below all assume an npm project with a framework, and every
+            # constraint they inject (React + Vite, FastAPI, SQLite) is false here. A
+            # creative single-file page also brings its own art direction, which is why no
+            # visual palette is imposed -- see build_static_page_prompt.
+            features = _generic_features(order)
+            goal = sanitize_public_text(order.description[:20_000]) or f"A single-page interactive experience supporting {features[0].rstrip('.').casefold()}."
+            non_goals = ("A build step, a framework, or any server-side component",)
+            technical = (
+                "One self-contained index.html: inline HTML, CSS and JavaScript, no build step",
+                "Libraries only from an allowed CDN; no external image files",
+                "Must render a live WebGL/canvas scene and keep animating",
+            )
+            ui = ()
+            acceptance = _generic_acceptance(features)
+            stack = RecommendedStack(frontend="Single-file HTML + inline JS (no framework, no build)", backend="None", storage="None")
+        elif order.product_type is ProductType.BOT:
             # A single, top-level branch ahead of the web-app branches below, rather than
             # threading product_type checks into each of them -- a bot order never falls
             # through to the authoritative-spec/PDF/generic web-app logic, which all

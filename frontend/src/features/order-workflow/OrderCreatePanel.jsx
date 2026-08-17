@@ -10,9 +10,9 @@ export default function OrderCreatePanel({ form, setForm, pending, onSubmit, onA
       <p className="ow-note">MVP profile: <strong>small browser-based web applications and Telegram bots</strong>. Production execution is not enabled in this workflow yet.</p>
       <form className="ow-form" onSubmit={onSubmit}>
         <label>Project title<input value={form.title} onChange={event => update('title', event.target.value)} required /></label>
-        <label>Describe {form.product_type === 'bot' ? 'the bot' : 'the application'}<textarea value={form.description} onChange={event => update('description', event.target.value)} required rows={7} /></label>
+        <label>Describe {form.product_type === 'bot' ? 'the bot' : form.product_type === 'static_page' ? 'the page' : 'the application'}<textarea value={form.description} onChange={event => update('description', event.target.value)} required rows={7} /></label>
         <div className="ow-grid two">
-          <label>Supported product type<select value={form.product_type} onChange={event => update('product_type', event.target.value)}><option value="web_app">Small web application</option><option value="bot">Telegram bot</option></select></label>
+          <label>Supported product type<select value={form.product_type} onChange={event => update('product_type', event.target.value)}><option value="web_app">Small web application</option><option value="bot">Telegram bot</option><option value="static_page">Interactive single-file page</option></select></label>
           <label>Preferred language<select value={form.preferred_language} onChange={event => update('preferred_language', event.target.value)}><option value="en">English</option><option value="ru">Russian</option><option value="de">German</option></select></label>
         </div>
         <label>Optional constraints<textarea value={form.constraints} onChange={event => update('constraints', event.target.value)} rows={3} placeholder="One constraint per line" /></label>

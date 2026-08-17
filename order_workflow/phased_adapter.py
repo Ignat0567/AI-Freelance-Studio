@@ -25,10 +25,12 @@ from .phase_prompts import (
     build_bot_prompt,
     build_core_feature_prompt,
     build_revision_prompt,
+    build_static_page_prompt,
     build_ui_shell_prompt,
     decide_backend_need,
 )
 from .phase_repair import run_qa_repair_loop
+from .static_page_check import run_static_page_check_in_docker
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
     OpenCodeExecutionClient,
@@ -343,6 +345,10 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         run_functional_smoke_check: bool = False,
         run_visual_check: bool = False,
         run_state_check: bool = False,
+        # Lets a pipeline whose phase has nothing to compile supply the gate that IS
+        # meaningful for it as the phase's own QA, instead of passing empty qa_commands (a
+        # vacuous pass) and bolting the real check on as a second loop with its own budget.
+        qa_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None,
     ) -> _PhaseOutcome:
         if cancellation.is_cancelled():
             return _PhaseOutcome(context=None, failure=_cancelled_result(request))
@@ -366,7 +372,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 workspace_path=workspace_path,
                 qa_commands=qa_commands,
                 qa_cwd=workspace_path,
-                qa_runner=self._qa_runner,
+                qa_runner=qa_runner or self._qa_runner,
                 event_sink=event_sink,
                 cancellation=cancellation,
                 stage=stage,
@@ -862,10 +868,70 @@ class TelegramBotExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
         return self._finalize_success(request, event_sink, workspace, note="Telegram bot generated. No backend or browser frontend required.")
 
 
+class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
+    """ProductType.STATIC_PAGE: one self-contained .html file, built in a single pass.
+
+    A third product shape rather than a trimmed web app. There is no UI-shell/core-feature
+    split (the page IS the feature), no backend decision (a file served from disk has no
+    server side to decide about), and none of the web-app gates apply: nothing compiles, so
+    `npm run build` has nothing to prove; there is no `npm run preview` for the smoke check
+    to open; and the visual gate measures painted colour off DOM computed styles, which on a
+    WebGL page reports an empty palette for a fully rendered scene -- while also enforcing
+    Elena's palette over the art direction the client asked for.
+
+    So the phase's QA *is* static_page_check: file shape, asset hosts, a live WebGL context,
+    WebGL draw calls that keep increasing, frame rate, overflow at 1280/768, tap targets,
+    and text over the scene having something to sit on. It rides the same repair loop with
+    the same bounded budget as every other gate in this pipeline.
+
+    Container packaging needs no special case: _maybe_deploy_container already skips a
+    workspace with no package.json, which is exactly what this pipeline produces.
+    """
+
+    def __init__(self, *, static_page_check_runner: Callable[[tuple[str, ...], Path], QAOutcome] | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._static_page_check_runner = static_page_check_runner or run_static_page_check_in_docker
+
+    def execute(self, request: ExecutionRequest, event_sink: ExecutionEventSink, cancellation: CancellationToken) -> ExecutionResult:
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        event_sink.emit(stage=ExecutionStage.STATIC_PAGE_BUILD, agent="Studio", progress=5, message="Preparing single-file page build")
+        workspace = reserve_owned_project_workspace(self.workspace_root, order_id=request.brief.order_id, execution_id=request.execution_id, brief_fingerprint=request.brief.approval_fingerprint, title=request.title)
+        if cancellation.is_cancelled():
+            return _cancelled_result(request)
+        validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)
+
+        complexity, reason = describe_phase_complexity(
+            request.brief,
+            focus_text=f"{request.brief.goal} {' '.join(request.handoff.requirements)}",
+        )
+        build = self._run_phase(
+            stage=ExecutionStage.STATIC_PAGE_BUILD,
+            prompt=build_static_page_prompt(request.brief, request.handoff),
+            qa_commands=(
+                "Static page check: one self-contained file, allowed asset hosts only, a live "
+                "WebGL canvas that keeps drawing, no console errors, and a layout that fits 768px.",
+            ),
+            workspace=workspace,
+            event_sink=event_sink,
+            cancellation=cancellation,
+            request=request,
+            model=model_for_complexity(complexity),
+            model_reason=reason,
+            qa_runner=self._static_page_check_runner,
+        )
+        if not build.success:
+            return build.failure
+
+        self._emit_milestone(event_sink, ExecutionStage.STATIC_PAGE_BUILD, "Single-file page complete: the scene renders, keeps animating, and fits a tablet.")
+        return self._finalize_success(request, event_sink, workspace, note="Delivered as one self-contained HTML file. No build step, no backend, no framework.")
+
+
 _MILESTONE_PROGRESS: dict[ExecutionStage, int] = {
     ExecutionStage.UI_SHELL: 30,
     ExecutionStage.CORE_FEATURE: 55,
     ExecutionStage.BACKEND_DECISION: 65,
     ExecutionStage.REVISION: 70,
     ExecutionStage.BOT_BUILD: 50,
+    ExecutionStage.STATIC_PAGE_BUILD: 60,
 }
