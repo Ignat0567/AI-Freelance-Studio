@@ -40,6 +40,10 @@ CSV_COLUMNS: tuple[str, ...] = (
     "gates_failed",
     "cli_calls",
     "cli_seconds",
+    # What the run actually spent. The pipeline reported this only for failures until
+    # 2026-08-17, so every successful run in the archive looks free.
+    "cost_usd",
+    "output_tokens",
     "cli_max_budget_ratio",
     "models",
     "artifacts",
@@ -145,6 +149,8 @@ def row_from_transcript(
         "gates_failed": int(test_summary.get("failed") or 0),
         "cli_calls": len(timings),
         "cli_seconds": round(sum(elapsed for elapsed, _ in timings), 1),
+        "cost_usd": round(float((result.get("usage") or {}).get("total_cost_usd") or 0.0), 3),
+        "output_tokens": int((result.get("usage") or {}).get("output_tokens") or 0),
         # The ratio that says whether the ceiling is manufacturing failures. Near 1.0 means
         # the budget, not the work, decided the outcome.
         "cli_max_budget_ratio": round(max((elapsed / budget for elapsed, budget in timings), default=0.0), 3),
@@ -188,7 +194,10 @@ def summarise_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
             gates[key] = gates.get(key, 0) + int(value or 0)
 
     ratios = [float(row.get("cli_max_budget_ratio") or 0.0) for row in rows]
+    costs = [float(row.get("cost_usd") or 0.0) for row in rows]
     return {
+        "cost_usd_total": round(sum(costs), 2),
+        "cost_usd_median": round(median([c for c in costs if c]), 2) if any(costs) else 0.0,
         "runs": len(rows),
         "completed": len(completed),
         # The two headline numbers. Completion yield is what a client experiences; clean
@@ -216,6 +225,8 @@ def format_report(summary: dict[str, Any]) -> str:
         f"duration p90        {summary['p90_duration_seconds']:.0f}s",
         f"repair attempts     {summary['repairs_total']}",
     ]
+    if summary.get("cost_usd_total"):
+        lines.append(f"cost                ${summary['cost_usd_total']:.2f} total, ${summary['cost_usd_median']:.2f} median per run")
     if summary.get("repairs_by_gate"):
         lines.append("repairs by gate     " + ", ".join(f"{key} {value}" for key, value in summary["repairs_by_gate"].items()))
     if summary.get("failures_by_cause"):

@@ -122,3 +122,56 @@ def test_a_record_written_before_this_field_existed_still_loads():
     restored = ExecutionResult.model_validate(payload)
 
     assert restored.failure_cause == "generated_code"
+
+
+# --- what a run cost -----------------------------------------------------------------
+
+
+def test_a_successful_run_reports_what_it_spent():
+    """Across eleven archived transcripts exactly one carries a cost figure, and it belongs
+    to a run that died: usage reached ExecutionResult only on the failure path. Under a token
+    budget that is the first number you need."""
+    from order_workflow.models import TokenUsage
+    from order_workflow.phased_adapter import _GateTally
+
+    tally = _GateTally()
+    tally.record_usage(TokenUsage(total_cost_usd=1.5, input_tokens=10, output_tokens=1000))
+    tally.record_usage(TokenUsage(total_cost_usd=0.75, input_tokens=4, output_tokens=400, cache_read_input_tokens=90))
+
+    total = tally.total_usage()
+
+    assert total is not None
+    assert total.total_cost_usd == pytest.approx(2.25)
+    assert total.output_tokens == 1400
+    assert total.cache_read_input_tokens == 90
+
+
+def test_repair_calls_count_towards_the_run_cost():
+    """A repair is a full coding-CLI invocation. A two-repair run that reports only its build
+    call understates its own cost by most of it."""
+    from order_workflow.models import TokenUsage
+    from order_workflow.phase_repair import RepairLoopResult
+    from order_workflow.phased_adapter import _GateTally
+
+    tally = _GateTally()
+    tally.record_usage(TokenUsage(total_cost_usd=2.0))
+    tally.record(
+        RepairLoopResult(
+            qa_outcome=None,
+            attempts=2,
+            qa_status_message="",
+            cancelled=False,
+            usages=(TokenUsage(total_cost_usd=1.0), TokenUsage(total_cost_usd=0.5)),
+        )
+    )
+
+    assert tally.total_usage().total_cost_usd == pytest.approx(3.5)
+    assert tally.repairs == 2
+
+
+def test_no_reported_usage_stays_absent_rather_than_becoming_zero():
+    """A missing figure and a genuine zero are different facts, and averaging the first as
+    the second makes every run look free."""
+    from order_workflow.phased_adapter import _GateTally
+
+    assert _GateTally().total_usage() is None

@@ -1,3 +1,4 @@
 run_at,commit,bench_id,kind,product_type,outcome,completed,clean,failure_cause,final_stage,duration_seconds,repair_attempts,repairs_by_gate,gates_passed,gates_failed,cli_calls,cli_seconds,cli_max_budget_ratio,models,artifacts,delivery_report,container_http_200,notes
 20260817T174320Z,40a8878,b01-profile-card,static_page,static_page,succeeded,1,1,,completed,119.0,0,,1,0,1,105.0,0.07,static_page_build=sonnet,4,1,0,bench-b01-profile-card-20260817T174320Z.json
 20260817T174534Z,40a8878,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,257.3,0,,1,0,1,244.0,0.163,static_page_build=sonnet,4,1,0,bench-b02-pricing-page-20260817T174534Z.json
+20260817T175110Z,ba196f0,b01-profile-card,static_page,static_page,succeeded,1,1,,completed,121.8,0,,1,0,1,108.0,0.072,static_page_build=sonnet,4,1,0,bench-b01-profile-card-20260817T175110Z.json

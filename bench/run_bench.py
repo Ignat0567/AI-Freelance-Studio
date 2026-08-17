@@ -47,6 +47,22 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+_COMMIT_AT_STARTUP: str | None = None
+
+
+def _run_commit() -> str:
+    """HEAD as it was when this process started.
+
+    Evaluated per row before, which meant an edit made while a three-hour set was running
+    marked its later rows -dirty even though the backend was still executing the code it
+    launched with. The commit a row reports has to be the commit that produced it.
+    """
+    global _COMMIT_AT_STARTUP
+    if _COMMIT_AT_STARTUP is None:
+        _COMMIT_AT_STARTUP = _current_commit()
+    return _COMMIT_AT_STARTUP
+
+
 def _current_commit() -> str:
     try:
         completed = subprocess.run(
@@ -108,7 +124,7 @@ def _failed_row(order: BenchOrder, run_at: str, cause: str, note: str) -> dict:
     return {
         **{column: "" for column in CSV_COLUMNS},
         "run_at": run_at,
-        "commit": _current_commit(),
+        "commit": _run_commit(),
         "bench_id": order.id,
         "kind": order.kind,
         "product_type": order.product_type,
@@ -183,7 +199,7 @@ def run_one(order: BenchOrder, *, csv_path: Path) -> dict:
         bench_id=order.id,
         kind=order.kind,
         product_type=order.product_type,
-        commit=_current_commit(),
+        commit=_run_commit(),
     )
     row["notes"] = path.name
     _append_row(row, csv_path)

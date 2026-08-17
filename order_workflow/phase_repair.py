@@ -15,6 +15,10 @@ class RepairLoopResult:
     attempts: int
     qa_status_message: str
     cancelled: bool
+    # Every repair call's reported usage, in order. A repair is a full coding-CLI
+    # invocation and costs like one; a run that reports only its build calls' spend
+    # understates a two-repair run by most of its actual cost.
+    usages: tuple = ()
     # True when the last repair call was stopped by its own clock rather than finishing.
     # Callers turn a gate failure into a summary, and "the page does not match the design"
     # is a different statement from "we never got to re-check it".
@@ -49,6 +53,7 @@ def run_qa_repair_loop(
     qa_outcome: QAOutcome | None = None
     attempts = 0
     fix_timed_out = False
+    usages: list = []
     # Only forwarded when a caller actually set one, so the many clients and test doubles
     # implementing execute_project_prompt without the parameter keep working unchanged.
     fix_kwargs: dict = {"model": model}
@@ -83,6 +88,8 @@ def run_qa_repair_loop(
                     details=(str(exc)[:2000],),
                 )
                 break
+            if getattr(fix_result, "usage", None) is not None:
+                usages.append(fix_result.usage)
             if not fix_result.success:
                 fix_timed_out = bool(getattr(fix_result, "timed_out", False))
                 event_sink.emit(
@@ -111,7 +118,7 @@ def run_qa_repair_loop(
                 continue
             qa_outcome = qa_runner(qa_commands, qa_cwd)
         if cancellation.is_cancelled():
-            return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message="", cancelled=True, fix_timed_out=fix_timed_out)
+            return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message="", cancelled=True, usages=tuple(usages), fix_timed_out=fix_timed_out)
 
     qa_passed = qa_outcome.passed if qa_outcome is not None else False
     if qa_outcome is None:
@@ -131,4 +138,4 @@ def run_qa_repair_loop(
         message=qa_status_message,
         level=EventLevel.INFO if qa_passed else EventLevel.ERROR if qa_outcome is not None else EventLevel.WARNING,
     )
-    return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message=qa_status_message, cancelled=False, fix_timed_out=fix_timed_out)
+    return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message=qa_status_message, cancelled=False, usages=tuple(usages), fix_timed_out=fix_timed_out)
