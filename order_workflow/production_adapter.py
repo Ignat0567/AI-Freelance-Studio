@@ -45,6 +45,11 @@ class OpenCodeExecutionResult:
     meaningful_artifacts: tuple[str, ...] = ()
     usage: TokenUsage | None = None
     rate_limit_message: str | None = None
+    # Wall clock the call actually took, and the budget it was given. Kept as a pair because
+    # neither number means anything alone: 400s is comfortable against 1500 and a near-miss
+    # against 450, and a timeout is only distinguishable from a crash by comparing them.
+    elapsed_seconds: float | None = None
+    timeout_seconds: int | None = None
 
 
 class OpenCodeExecutionClient(Protocol):

@@ -304,3 +304,47 @@ def test_an_expired_cli_login_is_named_rather_than_reported_as_a_coding_failure(
     assert "re-authenticate" in result.summary.casefold()
     # Output was present, so the silent-crash retry must not have fired.
     assert fake_popen.call_count == 1
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def emit(self, **kwargs):
+        self.messages.append(kwargs.get("message", ""))
+
+
+def test_every_call_reports_its_wall_clock_against_its_budget(monkeypatch, tmp_path):
+    """A timeout and a silent crash write the same log signature, so the only way to tell
+    them apart afterwards was to compare timestamps by hand. And a duration distribution
+    whose p90 sits just under the ceiling means the ceiling is producing failures -- which
+    stays invisible while only the calls that die of the limit are timed."""
+    fake_popen = _FakePopen({"is_error": False, "result": "done"})
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+    sink = _RecordingSink()
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("build it", tmp_path, sink, CancellationToken(), timeout=900)
+
+    assert result.timeout_seconds == 900
+    assert result.elapsed_seconds is not None and result.elapsed_seconds >= 0
+    budget_lines = [message for message in sink.messages if "budget" in message]
+    assert len(budget_lines) == 1
+    # Both numbers and the ratio: 400s is comfortable against 1500 and a near-miss at 450.
+    assert "900s budget" in budget_lines[0]
+    assert "%" in budget_lines[0]
+
+
+def test_a_failed_call_is_timed_too(monkeypatch, tmp_path):
+    payload = json.dumps({"api_error_status": 401, "result": "OAuth access token has expired", "type": "result"})
+    fake_popen = _SequencedFakePopen([_FakeProcess(stdout=payload, returncode=1)])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("build it", tmp_path, _RecordingSink(), CancellationToken(), timeout=450)
+
+    assert result.errors == ("claude_code_auth_expired",)
+    assert result.timeout_seconds == 450
+    assert result.elapsed_seconds is not None

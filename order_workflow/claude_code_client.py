@@ -153,18 +153,21 @@ class ConfiguredClaudeCodeExecutionClient:
             cmd.extend(["--model", model.split("/", 1)[-1]])
 
         limit = timeout or CLAUDE_CODE_TASK_TIMEOUT
+        elapsed = 0.0
         for attempt in range(2):
+            started = time.monotonic()
             try:
                 outcome = self._invoke(cmd, prompt, workspace_path, cancellation, attempt=attempt, timeout=limit)
             except OSError as exc:
-                return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}")
+                return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}", elapsed_seconds=time.monotonic() - started, timeout_seconds=limit)
+            elapsed = time.monotonic() - started
             if outcome.cancelled:
-                return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled.")
+                return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled.", elapsed_seconds=elapsed, timeout_seconds=limit)
             if outcome.timed_out:
                 # The limit is named in the summary because it is no longer a single global
                 # value: a caller reading "timed out" cannot otherwise tell whether it had
                 # the full build budget or a repair's shorter one.
-                return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution timed out after {limit}s.", errors=("claude_code_execution_timeout",), timed_out=True)
+                return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution timed out after {limit}s.", errors=("claude_code_execution_timeout",), timed_out=True, elapsed_seconds=elapsed, timeout_seconds=limit)
             if outcome.returncode != 0 and not outcome.stdout_text.strip() and not outcome.stderr_text.strip() and attempt == 0:
                 # A nonzero exit with *zero* output on both streams doesn't look like a real
                 # coding failure -- a genuine model-level failure almost always produces
@@ -178,6 +181,18 @@ class ConfiguredClaudeCodeExecutionClient:
                 continue
             stdout_text, stderr_text, returncode = outcome.stdout_text, outcome.stderr_text, outcome.returncode
             break
+
+        # Elapsed against the budget, on every call rather than only on the ones that die of
+        # it. A timeout and a silent crash write the same log signature, so the only way to
+        # tell them apart afterwards was to compare timestamps by hand; and a distribution
+        # whose p90 sits just under the ceiling means the ceiling is producing failures,
+        # which is invisible while only the failures are timed.
+        event_sink.emit(
+            stage="implementation",
+            agent="Claude Code",
+            progress=50,
+            message=f"Claude Code CLI returned after {elapsed:.0f}s of its {limit}s budget ({elapsed / limit:.0%})",
+        )
 
         # Parse JSON before branching on returncode: a nonzero exit (e.g. a provider
         # rate limit, api_error_status 429) still comes with a full JSON payload on
@@ -205,18 +220,19 @@ class ConfiguredClaudeCodeExecutionClient:
                     errors=("claude_code_auth_expired",),
                     usage=usage,
                     rate_limit_message=rate_limit_message,
+                    elapsed_seconds=elapsed, timeout_seconds=limit,
                 )
-            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {failure_text}", errors=("claude_code_process_failed",), usage=usage, rate_limit_message=rate_limit_message)
+            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {failure_text}", errors=("claude_code_process_failed",), usage=usage, rate_limit_message=rate_limit_message, elapsed_seconds=elapsed, timeout_seconds=limit)
 
         if payload is None:
             # Not JSON -- the CLI still wrote files directly to the workspace on the way
             # here, so treat a clean (zero-exit) completion as generated regardless.
-            return OpenCodeExecutionResult(success=True, summary=stdout_text[-2000:] or "Claude Code completed.", outcome="generated")
+            return OpenCodeExecutionResult(success=True, summary=stdout_text[-2000:] or "Claude Code completed.", outcome="generated", elapsed_seconds=elapsed, timeout_seconds=limit)
 
         if payload.get("is_error"):
-            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {payload.get('result') or stdout_text[-2000:]}", errors=("claude_code_process_failed",), usage=usage, rate_limit_message=rate_limit_message)
+            return OpenCodeExecutionResult(success=False, summary=f"Claude Code execution failed: {payload.get('result') or stdout_text[-2000:]}", errors=("claude_code_process_failed",), usage=usage, rate_limit_message=rate_limit_message, elapsed_seconds=elapsed, timeout_seconds=limit)
 
-        return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated", usage=usage)
+        return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated", usage=usage, elapsed_seconds=elapsed, timeout_seconds=limit)
 
     @staticmethod
     def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken, *, attempt: int = 0, timeout: int = CLAUDE_CODE_TASK_TIMEOUT) -> _InvokeOutcome:
