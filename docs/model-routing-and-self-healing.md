@@ -367,6 +367,37 @@ The two decisions this document is about are both visible in that trace: the mod
 carries its own justification, and every gate between the coding calls is a program rather
 than a second opinion.
 
+### The other case: a run where the loop actually did something
+
+A different order — *"a personal reading journal … three shelves, drag a book from shelf to
+shelf, its own page for notes, a search box"* — exercises the branches the run above does
+not. Nothing in it trips a complexity keyword, so both phases route `sonnet` rather than
+`opus`; and it is a multi-screen CRUD app rather than one widget, which is where layout
+actually breaks:
+
+```
+[UI_SHELL]  coding CLI (sonnet — routine: no complexity keywords)              6m 21s
+            npm run build .............................................. passed  15s
+            Playwright render check .................................... passed  10s
+            visual check ............................................... FAILED  10s
+              contrast 3.56:1 and 4.05:1 (needs 4.5:1), 8 text elements
+              horizontal scroll at 375px, overflowing by 236px
+              tap targets 143x20 and 56x20
+            repair 1 → visual check .................................... FAILED  7m 21s
+            repair 2 → visual check .................................... passed  4m 50s
+[CORE_FEAT] coding CLI (sonnet)                                                 2m 10s
+            npm test / render check / state continuity ................. passed  40s
+[DECISION]  backend not needed — single local user                         instant
+[PACKAGING] docker build + HTTP probe → 200                                     16s
+                                                                        ─────────
+                                                              total       ~22m 24s
+```
+
+Three shelves side by side do not fit a phone, and no screenshot review would have produced
+"overflowing by 236px" or "3.56:1 against a 4.5:1 floor". The repair loop closed both, and
+the same measurement that rejected the page is what accepted it — which is the whole claim
+of this document, on the one kind of run that can actually test it.
+
 ## 5. Honest limitations
 
 - **Visual fidelity is checked mechanically, not aesthetically.** Palette, contrast and

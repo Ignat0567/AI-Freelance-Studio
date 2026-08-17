@@ -30,6 +30,10 @@ env/
 # Project files
 studio_config.json
 projects_state.json
+# order_workflow's opt-in persistence: real client orders and their execution event
+# streams, written at runtime. Local state, and not ours to commit.
+orders_state.json
+order_executions_state.json
 full_stack_spec.json
 test_project.json
 

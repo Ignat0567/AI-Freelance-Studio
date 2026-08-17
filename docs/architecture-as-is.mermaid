@@ -50,8 +50,11 @@ flowchart TB
     subgraph Repair["Само­исправление — phase_repair.py"]
         direction LR
         RunQA["запустить QA"] --> Fail{"провал?"}
-        Fail -->|"да, попыток < 2"| Fix["переслать точный вывод гейта<br/>в тот же CLI"]
-        Fix --> RunQA
+        Fail -->|"да, попыток < 2"| Fix["переслать полный вывод гейта<br/>в тот же CLI, бюджет 450 с<br/>(сборка — 900 с)"]
+        Fix --> Verdict{"фикс дошёл?"}
+        Verdict -->|"да"| RunQA
+        Verdict -->|"кончилось время:<br/>перепроверить гейт,<br/>попытка не сгорает"| RunQA
+        Verdict -->|"отказ логина/модели:<br/>повтор даст то же"| Stop["остановиться,<br/>сказать причину"]
     end
 
     subgraph Pause["Мид-билд пауза — opt-in"]
@@ -92,16 +95,8 @@ flowchart TB
     UIShell -.->|"если флаг включён"| Await
     Ckpt --> Service
 
-    %% Два дефекта, найденных живым прогоном 2026-08-17
-    Bug1["ДЕФЕКТ: таймаут ремонтного вызова<br/>рвёт цикл через break, 2-я попытка не тратится,<br/>наружу уходит «страница не соответствует дизайну»"]
-    Bug2["ДЕФЕКТ: детали события режутся до 240 символов<br/>(execution.py:556) — находки визуального гейта<br/>не видны снаружи, вопреки документации"]
-    Repair -.- Bug1
-    Visual -.- Bug2
-
     style Gates fill:#fdd,stroke:#c33
     style Repair fill:#fff6e0,stroke:#c90
     style Router fill:#eef2fb,stroke:#57a
     style Worker fill:#e8f4ea,stroke:#2a7
     style Gone fill:#eee,stroke:#999,stroke-dasharray: 5 5
-    style Bug1 fill:#ffd9d9,stroke:#b00
-    style Bug2 fill:#ffd9d9,stroke:#b00
