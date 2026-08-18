@@ -66,6 +66,10 @@ class ExecutionRequest:
     # paused at a phase boundary and is now resuming; the phase that asked skips straight
     # past its checkpoint, and the next phase's prompt carries these as corrections.
     midbuild_answers: tuple = ()
+    # True when a person is watching this run and can answer a question -- set by the UI,
+    # never inferred. Nothing downstream can work this out for itself: a bench run and a
+    # client's run arrive through the same endpoint and look identical.
+    attended: bool = False
     # Client text appended to the ui_shell prompt after they reviewed it in the UI.
     prompt_additions: str = ""
 

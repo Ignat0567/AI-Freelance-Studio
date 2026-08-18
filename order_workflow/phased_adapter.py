@@ -338,7 +338,12 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # The one point where the client can still correct the shape cheaply: the screens
         # exist and build, and nothing has been wired on top of them yet. Only pauses on a
         # first pass -- a resumed run already carries the answers.
-        if self._midbuild_clarification and not request.midbuild_answers:
+        # Attended runs check in by default. The pause was built as a quality mechanism and
+        # switched off because an unattended run must never block on a human -- but that
+        # reason does not apply when a human is watching, and the checkpoint's other effect
+        # is that a client who has seen and corrected the real shell accepts the result they
+        # helped choose. The env flag still forces it on for unattended runs that want it.
+        if (self._midbuild_clarification or request.attended) and not request.midbuild_answers:
             questions = build_midbuild_questions(request.brief, shell_summary=ui_shell.context.summary)
             if questions:
                 event_sink.emit(

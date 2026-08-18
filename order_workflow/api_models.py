@@ -78,6 +78,10 @@ class StartExecutionRequest(StrictApiModel):
     # Free text the client added after reading the prepared prompt. Bounded because it
     # is concatenated into a prompt that already has a budget.
     prompt_additions: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] = ""
+    # Set by the UI when a person is starting this run and can answer a question part-way
+    # through. Defaults false so anything automated -- the bench runner, the demo scripts,
+    # a future API client -- never blocks waiting for someone who is not there.
+    attended: bool = False
 
 
 class ReviseExecutionRequest(StrictApiModel):

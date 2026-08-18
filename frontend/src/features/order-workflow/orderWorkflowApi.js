@@ -42,7 +42,11 @@ export const orderWorkflowApi = {
   approveDesignPreview: (orderId, preview_id, brief_version) => post(`/api/orders/${encodeURIComponent(orderId)}/design-preview/approve`, { preview_id, brief_version }),
   getHandoff: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/handoff`),
   getReadiness: (orderId, mode = 'production') => requestJson(`/api/orders/${encodeURIComponent(orderId)}/readiness?mode=${encodeURIComponent(mode)}`),
-  startExecution: (orderId, mode = 'fake', live = false) => post(`/api/orders/${encodeURIComponent(orderId)}/execution`, { mode, live }),
+  // attended: always true from here. This module is the browser client -- it only runs
+  // because a person opened the page and pressed the button, so the mid-build checkpoint
+  // has someone to ask. Automated callers of the same endpoint leave it false and are
+  // never paused.
+  startExecution: (orderId, mode = 'fake', live = false) => post(`/api/orders/${encodeURIComponent(orderId)}/execution`, { mode, live, attended: true }),
   getExecution: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/execution`),
   cancelExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/cancel`, {}),
   retryExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/retry`, {}),

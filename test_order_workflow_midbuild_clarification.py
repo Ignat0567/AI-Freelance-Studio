@@ -293,3 +293,103 @@ def test_resuming_reuses_the_ui_shell_checkpoint_instead_of_rebuilding_it(tmp_pa
 
     assert calls_after_pause == 1
     assert any("Resuming: ui_shell already completed" in e["message"] for e in sink.events)
+
+
+# --- who gets asked, and who must never be ------------------------------------------
+
+
+def test_an_attended_run_checks_in_without_needing_the_env_flag():
+    """The pause was built as a quality mechanism and switched off because an unattended run
+    must never block on a human. That reason does not apply when a person is watching -- and
+    the checkpoint's other effect is that a client who corrected the real shell accepts the
+    result they helped choose."""
+    from order_workflow.executors import ExecutionRequest
+
+    assert ExecutionRequest.__dataclass_fields__["attended"].default is False
+
+
+def test_the_browser_client_declares_itself_attended():
+    """The chain is only worth anything if the UI actually sets it: nothing downstream can
+    infer attendance, because a bench run and a client's run hit the same endpoint."""
+    from pathlib import Path
+
+    source = Path("frontend/src/features/order-workflow/orderWorkflowApi.js").read_text(encoding="utf-8")
+
+    assert "attended: true" in source
+
+
+def test_automated_callers_stay_unattended_by_default():
+    """The bench runner and the demo scripts post to the same endpoint. If the default
+    flipped, an overnight set would stop at the first checkpoint and wait until morning."""
+    from order_workflow.api_models import StartExecutionRequest
+
+    assert StartExecutionRequest(mode="production", live=True).attended is False
+
+
+def test_the_bench_runner_does_not_ask_to_be_attended():
+    from pathlib import Path
+
+    source = Path("bench/run_bench.py").read_text(encoding="utf-8")
+
+    assert "attended" not in source
+
+
+def test_an_attended_request_pauses_even_with_the_env_gate_off(tmp_path):
+    """The behaviour the whole chain exists for: a person pressed the button, so the run
+    checks in with them, without anyone having set an environment variable first."""
+    brief, handoff = _contract()
+    client = FakeClient()
+    adapter = _adapter(tmp_path, client, midbuild=False)
+
+    result = adapter.execute(
+        ExecutionRequest(brief=brief, handoff=handoff, execution_id="execution_mid00010", attended=True),
+        FakeSink(),
+        CancellationToken(),
+    )
+
+    assert result.outcome == "awaiting_user"
+    assert result.questions
+    assert client.call_count == 1, "the core feature must not have been built before asking"
+
+
+def test_an_unattended_request_still_runs_straight_through(tmp_path):
+    """An overnight bench set must not stop at the first checkpoint and wait until morning."""
+    brief, handoff = _contract()
+    client = FakeClient()
+    adapter = _adapter(tmp_path, client, midbuild=False)
+
+    result = adapter.execute(
+        ExecutionRequest(brief=brief, handoff=handoff, execution_id="execution_mid00011", attended=False),
+        FakeSink(),
+        CancellationToken(),
+    )
+
+    assert result.outcome != "awaiting_user"
+    assert client.call_count >= 2
+
+
+def test_a_resumed_attended_run_does_not_ask_twice(tmp_path):
+    """Resuming carries the answers; asking again would make the checkpoint a loop."""
+    brief, handoff = _contract()
+    client = FakeClient()
+    adapter = _adapter(tmp_path, client, midbuild=False)
+    first = adapter.execute(
+        ExecutionRequest(brief=brief, handoff=handoff, execution_id="execution_mid00012", attended=True),
+        FakeSink(),
+        CancellationToken(),
+    )
+    assert first.outcome == "awaiting_user"
+
+    resumed = adapter.execute(
+        ExecutionRequest(
+            brief=brief,
+            handoff=handoff,
+            execution_id="execution_mid00012",
+            attended=True,
+            midbuild_answers=(ClarificationAnswer(question_id=first.questions[0].id, value="yes"),),
+        ),
+        FakeSink(),
+        CancellationToken(),
+    )
+
+    assert resumed.outcome != "awaiting_user"

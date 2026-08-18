@@ -601,7 +601,7 @@ class OrderWorkflowService:
                 raise OrderWorkflowError("handoff_blocked", "Approve the current brief before requesting a handoff.")
         return self.snapshot(order_id)
 
-    def start_execution(self, order_id: str, mode: ExecutionMode, *, live: bool = False, prompt_additions: str = "") -> dict[str, Any]:
+    def start_execution(self, order_id: str, mode: ExecutionMode, *, live: bool = False, prompt_additions: str = "", attended: bool = False) -> dict[str, Any]:
         if live and mode is not ExecutionMode.PRODUCTION:
             raise OrderWorkflowError("invalid_execution_mode", "Live execution requires production mode.")
         with self._lock:
@@ -611,7 +611,7 @@ class OrderWorkflowService:
         if handoff is None:
             raise OrderWorkflowError("design_preview_not_approved" if self._design_preview_required(brief) else "brief_not_approved", "Approve the current brief and Elena preview before execution.")
         try:
-            execution = self._executions.start(brief, handoff, mode=mode, live=live, title=order.title, prompt_additions=prompt_additions)
+            execution = self._executions.start(brief, handoff, mode=mode, live=live, title=order.title, prompt_additions=prompt_additions, attended=attended)
         except ExecutionServiceError as exc:
             raise OrderWorkflowError(self._execution_error_code(exc.code)) from None
         with self._lock:

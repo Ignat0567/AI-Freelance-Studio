@@ -205,6 +205,7 @@ class ProjectExecutionService:
         live: bool = False,
         title: str = "",
         prompt_additions: str = "",
+        attended: bool = False,
     ) -> ProjectExecution:
         active_mode = mode or self._mode
         self._validate_handoff(brief, handoff)
@@ -256,7 +257,7 @@ class ProjectExecutionService:
             worker = self._thread_factory(
                 target=self._run,
                 args=(execution.id, brief, handoff, adapter, title),
-                kwargs={"prompt_additions": prompt_additions},
+                kwargs={"prompt_additions": prompt_additions, "attended": attended},
                 name=f"order-execution-{execution.id}",
                 daemon=True,
             )
@@ -520,6 +521,7 @@ class ProjectExecutionService:
         revised_from_execution_id: str | None = None,
         midbuild_answers: tuple = (),
         prompt_additions: str = "",
+        attended: bool = False,
     ) -> None:
         simulated = adapter is not self._live_adapter and adapter is not self._revision_adapter
         # Taken before the record is marked RUNNING, so a queued run reads as queued rather
@@ -542,6 +544,7 @@ class ProjectExecutionService:
                 revised_from_execution_id=revised_from_execution_id,
                 midbuild_answers=midbuild_answers,
                 prompt_additions=prompt_additions,
+                attended=attended,
             )
         finally:
             if slot is not None:
@@ -560,6 +563,7 @@ class ProjectExecutionService:
         revised_from_execution_id: str | None = None,
         midbuild_answers: tuple = (),
         prompt_additions: str = "",
+        attended: bool = False,
     ) -> None:
         with self._lock:
             record = self._records[execution_id]
@@ -579,6 +583,7 @@ class ProjectExecutionService:
                 revised_from_execution_id=revised_from_execution_id,
                 midbuild_answers=midbuild_answers,
                 prompt_additions=prompt_additions,
+                attended=attended,
             )
         try:
             result = adapter.execute(request, _Sink(self, execution_id, simulated=simulated), record.token)
