@@ -51,6 +51,30 @@ it lowers yield and lengthens the cycle -- and yield is the number this week is 
 Improving an *existing* gate's precision or its repair prompt is allowed. Adding a tenth
 oracle is not.
 
+## Measured and rejected
+
+Not frozen because they are out of scope -- frozen because they were measured and the
+numbers said no. Recorded here so they do not get re-proposed as obvious wins.
+
+**Caching npm/node_modules between QA container runs, pre-pulling the QA image, merging the
+browser gates into one container start** (2026-08-18). The premise was that container
+cold-start dominates a run. Measured against the b06-reading-journal live run and a real
+generated manifest:
+
+| Where the wall clock goes | |
+|---|---|
+| coding CLI thinking | 1153 s — **91%** |
+| all QA gates, containers included | 68 s — 5% |
+| everything else | 51 s — 4% |
+
+And a shared npm cache volume, timed on that project's real `package.json` in the actual
+Playwright image: 7.8 s cold versus 7.1 s warm. **0.7 s saved per gate invocation**, roughly
+4 s across a whole run — 0.3% of it, in exchange for a shared mutable volume and a refactor
+across four gate modules.
+
+The gates were never the bottleneck. Anything that matters for run time has to come out of
+the 91%: fewer coding-CLI calls (i.e. fewer repairs), or shorter ones.
+
 ## Unfreezing
 
 After MVP acceptance, one front at a time, and only against demand somebody has paid for.

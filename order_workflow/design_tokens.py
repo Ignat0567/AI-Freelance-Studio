@@ -37,12 +37,49 @@ from .models import ElenaDesignConcept, ThemePalette
 DESIGN_TOKENS_FILENAME = "design-tokens.css"
 
 
+def _channel(value: int) -> float:
+    fraction = value / 255
+    return fraction / 12.92 if fraction <= 0.04045 else ((fraction + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(hex_colour: str) -> float:
+    """WCAG 2.x relative luminance. The same formula the visual gate runs in the browser --
+    reimplemented here rather than shared because that copy is JavaScript embedded in a
+    page script, and this one has to run while the page does not exist yet."""
+    raw = hex_colour.strip().lstrip("#")
+    if len(raw) == 3:
+        raw = "".join(char * 2 for char in raw)
+    red, green, blue = (int(raw[index : index + 2], 16) for index in (0, 2, 4))
+    return 0.2126 * _channel(red) + 0.7152 * _channel(green) + 0.0722 * _channel(blue)
+
+
+def contrast_ratio(foreground: str, background: str) -> float:
+    lighter, darker = sorted((_relative_luminance(foreground), _relative_luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def readable_on(background: str, *, candidates: tuple[str, ...] = ("#ffffff", "#111111")) -> str:
+    """The candidate text colour with the most contrast against this background.
+
+    Exists because of a measured failure, not a hypothetical one: on the 2026-08-17
+    b06-reading-journal run both ui_shell repair attempts -- 254 seconds, 20% of the whole
+    run -- were spent on one defect, white text at 2.53:1 on the approved dark-theme accent.
+    The accent was correct and the gate was right; nobody had worked out what text colour
+    that accent can actually carry. That is arithmetic, and it belongs upstream of the build
+    rather than in a repair loop.
+    """
+    return max(candidates, key=lambda candidate: contrast_ratio(candidate, background))
+
+
 def _tokens(palette: ThemePalette) -> list[str]:
     return [
         f"  --color-background: {palette.background};",
         f"  --color-surface: {palette.surface};",
         f"  --color-text: {palette.text};",
         f"  --color-accent: {palette.accent};",
+        # Not part of the approved palette -- derived from it. An accent is chosen to stand
+        # out, which frequently makes it exactly the colour white text cannot sit on.
+        f"  --color-on-accent: {readable_on(palette.accent)};",
     ]
 
 

@@ -117,3 +117,64 @@ def test_the_prompt_points_at_the_file_only_when_one_was_written():
     # nothing, and the gate would then fail for exactly the old reason.
     assert "import it" in with_tokens
     assert DESIGN_TOKENS_FILENAME not in without
+
+
+# --- the derived on-accent colour ----------------------------------------------------
+
+
+def test_contrast_ratio_matches_the_wcag_reference_values():
+    from order_workflow.design_tokens import contrast_ratio
+
+    # The two fixed points of the formula: identical colours are 1:1, black on white 21:1.
+    assert contrast_ratio("#ffffff", "#ffffff") == pytest.approx(1.0, abs=0.01)
+    assert contrast_ratio("#000000", "#ffffff") == pytest.approx(21.0, abs=0.01)
+
+
+def test_shorthand_hex_is_understood():
+    from order_workflow.design_tokens import contrast_ratio
+
+    assert contrast_ratio("#fff", "#000") == pytest.approx(21.0, abs=0.01)
+
+
+def test_the_accent_that_actually_broke_a_live_run_no_longer_gets_white_text():
+    """2026-08-17, b06-reading-journal: both ui_shell repairs -- 254s, 20% of the run --
+    were spent on white text at 2.53:1 over this exact dark-theme accent."""
+    from order_workflow.design_tokens import contrast_ratio, readable_on
+
+    accent = "#75a1ff"
+    assert contrast_ratio("#ffffff", accent) < 4.5  # the failure the gate reported
+    chosen = readable_on(accent)
+    assert chosen != "#ffffff"
+    assert contrast_ratio(chosen, accent) >= 4.5
+
+
+def test_a_dark_accent_still_gets_white_text():
+    from order_workflow.design_tokens import contrast_ratio, readable_on
+
+    chosen = readable_on("#1f3a93")
+    assert chosen == "#ffffff"
+    assert contrast_ratio(chosen, "#1f3a93") >= 4.5
+
+
+def test_both_themes_carry_their_own_on_accent_value():
+    """A single on-accent colour cannot serve both themes: the light and dark accents are
+    different colours and frequently need opposite text."""
+    css = build_design_tokens_css(_concept(light=ThemePalette(background="#ffffff", surface="#f4f6fb", text="#172033", accent="#1f3a93"),
+                                           dark=ThemePalette(background="#0e1420", surface="#161d2b", text="#e8edf7", accent="#75a1ff")))
+
+    assert css.count("--color-on-accent") == 2
+    light_block, dark_block = css.split("@media (prefers-color-scheme: dark)")
+    assert "#ffffff" in light_block.split("--color-on-accent")[1].split(";")[0]
+    assert "#ffffff" not in dark_block.split("--color-on-accent")[1].split(";")[0]
+
+
+def test_the_prompt_names_the_on_accent_variable():
+    from test_order_workflow_preflight import _approved_contract
+
+    from order_workflow.phase_prompts import build_ui_shell_prompt
+
+    brief, handoff = _approved_contract()
+    prompt = build_ui_shell_prompt(brief, handoff, design_tokens_file=DESIGN_TOKENS_FILENAME)
+
+    assert "--color-on-accent" in prompt
+    assert "never white" in prompt

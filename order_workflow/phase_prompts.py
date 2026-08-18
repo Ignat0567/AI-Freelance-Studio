@@ -103,6 +103,10 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additio
             "to every screen, and use its variables (--color-background, --color-surface, --color-text, "
             "--color-accent) instead of writing colour literals. It already carries the dark-theme "
             "media query and paints the page ground, so do not re-declare either.",
+            "- Any text or icon sitting on an accent-coloured background (buttons, badges, active tabs) "
+            "must use var(--color-on-accent), never white or the body text colour. That variable is "
+            "already computed per theme to clear AA contrast against the accent; white on an accent "
+            "is the single most common way this build fails its contrast check.",
         ] if design_tokens_file else []),
         "",
         "Do not expose secrets in logs, reports, or generated files.",
