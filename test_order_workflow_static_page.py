@@ -285,3 +285,16 @@ def test_the_gate_waits_for_its_own_server_instead_of_trusting_a_sleep(tmp_path)
     assert "for (let attempt = 0; attempt < 15" in script
     assert "lastError" in script
     assert "the local server never accepted a connection" in script
+
+
+def test_the_static_page_delivery_tells_the_client_to_open_the_file(tmp_path):
+    """Caught by the first real Aurora delivery: the report handed a client
+    `npm install && npm run preview` for a single self-contained HTML file."""
+    from pathlib import Path
+
+    source = Path("order_workflow/phased_adapter.py").read_text(encoding="utf-8")
+    static_block = source.split("class StaticPageExecutionAdapter")[1]
+
+    assert "run_instruction=" in static_block
+    assert "Open `index.html`" in static_block
+    assert "nothing to install" in static_block

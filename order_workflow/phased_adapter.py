@@ -134,6 +134,33 @@ def _save_backend_decision_checkpoint(workspace, decision: BackendDecision) -> N
         _logger.warning("Could not write backend-decision checkpoint at %s; a retry would re-ask.", path, exc_info=True)
 
 
+# Everything the toolchain, git or this pipeline itself left in the workspace. None of it is
+# what the client ordered, and listing it as "generated" is how a one-file page came to
+# report 477 files on its first live delivery.
+_NOT_DELIVERABLE = ("node_modules", ".git", "__pycache__", ".freelancerstudio")
+
+
+def _delivered_files(workspace) -> tuple[str, ...]:
+    """The files a client actually receives, top level only, in a readable order."""
+    try:
+        entries = sorted(workspace.project_path.iterdir(), key=lambda item: item.name.casefold())
+    except OSError:
+        return ()
+    names = []
+    for child in entries:
+        name = child.name
+        if name.startswith(_NOT_DELIVERABLE) or name.startswith("."):
+            continue
+        if name.startswith("execution_prompt_") or name.endswith("_raw_output.log"):
+            continue
+        try:
+            if child.is_file():
+                names.append(name)
+        except OSError:
+            continue
+    return tuple(names)
+
+
 def _gate_output(outcome) -> str:
     """The gate's own stdout, which is where the browser-backed checks report their numbers.
 
@@ -822,7 +849,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         )
         return outcome
 
-    def _finalize_success(self, request: ExecutionRequest, event_sink: ExecutionEventSink, workspace, *, note: str) -> ExecutionResult:
+    def _finalize_success(self, request: ExecutionRequest, event_sink: ExecutionEventSink, workspace, *, note: str, run_instruction: str | None = None) -> ExecutionResult:
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
         deployment = self._deploy(request, event_sink, workspace)
@@ -845,9 +872,10 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             usage=self._gate_tally.total_usage(),
             deployment_status=deployment.status_message if deployment is not None else None,
             deployment_image=deployment.image_tag if deployment is not None else None,
-            run_command=deployment.run_command if deployment is not None and deployment.run_command else None,
+            run_command=(deployment.run_command if deployment is not None and deployment.run_command else None) or run_instruction,
             evidence_file=evidence_file,
             screenshot_file=screenshot,
+            delivered_files=_delivered_files(workspace),
         )
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 
@@ -1046,7 +1074,16 @@ class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
             return build.failure
 
         self._emit_milestone(event_sink, ExecutionStage.STATIC_PAGE_BUILD, "Single-file page complete: the scene renders, keeps animating, and fits a tablet.")
-        return self._finalize_success(request, event_sink, workspace, note="Delivered as one self-contained HTML file. No build step, no backend, no framework.")
+        return self._finalize_success(
+            request,
+            event_sink,
+            workspace,
+            note="Delivered as one self-contained HTML file. No build step, no backend, no framework.",
+            # The generic instruction is a Vite project's, and this product type has no
+            # package.json to install from: the first live delivery told a client to run
+            # `npm install` on a single HTML file.
+            run_instruction="Open `index.html` in any browser. There is nothing to install and nothing to start.",
+        )
 
 
 _MILESTONE_PROGRESS: dict[ExecutionStage, int] = {

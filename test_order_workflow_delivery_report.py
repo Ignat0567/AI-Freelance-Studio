@@ -205,3 +205,40 @@ def test_the_report_points_at_the_screenshot_when_the_gate_captured_one():
     assert "delivery_screenshot.png" in with_shot
     assert "as the check saw it" in with_shot
     assert "screenshot" not in without.casefold()
+
+
+# --- what the first live delivery got wrong -------------------------------------------
+
+
+def test_the_report_lists_what_was_delivered_instead_of_counting_the_toolchain():
+    """The first live static-page delivery reported "477 files generated" for a single HTML
+    page: node_modules from the QA step, the isolated .git and the pipeline's own markers all
+    counted. A number a client can see is wrong undermines the measurements printed next to
+    it."""
+    report = _report(delivered_files=("index.html", "README.md", "qa_evidence.md"))
+
+    assert "`index.html`" in report
+    assert "477" not in report
+    assert "files generated" not in report
+
+
+def test_a_long_delivery_list_is_trimmed_rather_than_dumped():
+    report = _report(delivered_files=tuple(f"file{i}.md" for i in range(10)))
+
+    assert "and 4 more" in report
+
+
+def test_nothing_is_claimed_when_there_is_nothing_to_list():
+    report = _report(delivered_files=())
+
+    assert "Delivered:" not in report
+
+
+def test_a_single_file_page_is_not_told_to_run_npm_install():
+    """A static page has no package.json. `npm install` is the first thing a client would
+    try and the first thing that would fail."""
+    report = _report(run_command="Open `index.html` in any browser. There is nothing to install and nothing to start.")
+
+    section = report.split("## How to run it")[1]
+    assert "npm install" not in section
+    assert "index.html" in section

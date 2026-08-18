@@ -97,6 +97,7 @@ def build_delivery_report(
     run_command: str | None = None,
     evidence_file: str | None = None,
     screenshot_file: str | None = None,
+    delivered_files: tuple[str, ...] = (),
 ) -> str:
     """Assembled from data the run already produced -- brief, gate tally, deployment
     outcome -- not from a model call. The four sections below are MVP_ACCEPTANCE.md's
@@ -129,7 +130,14 @@ def build_delivery_report(
         lines.append(f"`{screenshot_file}` is the page as the check saw it, captured during the run.")
     if evidence_file:
         lines.append(f"The checks' own output is in `{evidence_file}` -- the measurements, not a summary of them.")
-    lines.append(f"{files_created} files generated, {meaningful_artifact_count} of them substantive project code (not scaffolding or config).")
+    # Deliberately not a raw file count. The first live static-page delivery reported "477
+    # files generated" for a single HTML page: the QA step's node_modules, the isolated .git
+    # and the pipeline's own markers all counted. A number a client can see is wrong is worse
+    # than no number, and it undermines the measurements next to it.
+    if delivered_files:
+        listed = ", ".join(f"`{name}`" for name in delivered_files[:6])
+        more = f" and {len(delivered_files) - 6} more" if len(delivered_files) > 6 else ""
+        lines.append(f"Delivered: {listed}{more}.")
     cost_line = _cost_line(usage)
     if cost_line:
         lines.append(cost_line)
