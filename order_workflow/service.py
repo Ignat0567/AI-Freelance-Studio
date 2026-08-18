@@ -281,6 +281,7 @@ class OrderWorkflowService:
         environ: dict[str, str] | None = None,
         store: OrderStateStore | None = None,
         execution_state_store: ExecutionStateStore | None = None,
+        preflight_enabled: bool = False,
     ) -> None:
         self._id_factory = id_factory
         self._clock = clock
@@ -298,7 +299,12 @@ class OrderWorkflowService:
             revision_adapter=ConfigurationBackedExecutionAdapter(self._configuration, live=True, revision=True, opencode_client=opencode_client, website_section_ai_ask=website_section_ai_ask, environ=environ),
             collaboration_sink=collaboration_sink,
             state_store=execution_state_store,
-            preflight=self._run_preflight,
+            # Off unless the caller owns a real environment to check. Wiring it on by
+            # default made every unit test that starts a live execution spawn the coding CLI
+            # for a credentials probe -- slow, and failing or passing according to whether a
+            # login happened to be valid that afternoon. A test has no environment; the API
+            # process does, and turns it on at its own construction site.
+            preflight=self._run_preflight if preflight_enabled else None,
         )
         self._store = store or InMemoryOrderStore()
         self._lock = RLock()

@@ -395,3 +395,28 @@ def test_retry_re_checks_the_environment_instead_of_trusting_the_first_start():
         service.retry(started.id, brief, handoff)
 
     assert raised.value.code == "preflight_coding_cli_auth_expired"
+
+
+def test_the_workflow_service_does_not_probe_a_provider_unless_asked_to():
+    """Wiring preflight on by default made every unit test that starts a live execution
+    spawn the coding CLI for a credentials probe: the suite went provider-dependent and 5x
+    slower, and passed or failed according to whether a login happened to be valid that
+    afternoon. A test has no environment to check; the API process does, and enables it at
+    its own construction site."""
+    from order_workflow.service import OrderWorkflowService
+
+    default = OrderWorkflowService()
+    enabled = OrderWorkflowService(preflight_enabled=True)
+
+    assert default._executions._preflight is None
+    assert enabled._executions._preflight is not None
+
+
+def test_the_api_turns_preflight_on_where_it_owns_a_real_machine():
+    """The guard above is only safe if production actually opts in -- otherwise the expired
+    token this whole module exists for goes back to being discovered 20 minutes in."""
+    from pathlib import Path
+
+    source = Path("api/orders.py").read_text(encoding="utf-8")
+
+    assert "preflight_enabled=True" in source

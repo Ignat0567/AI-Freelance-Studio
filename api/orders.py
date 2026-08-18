@@ -77,6 +77,9 @@ def get_order_workflow_service(request: Request) -> OrderWorkflowService:
             collaboration_sink=_collaboration_sink,
             store=JsonOrderStore(Path(config_storage.DATA_DIR) / "orders_state.json"),
             execution_state_store=JsonExecutionStore(Path(config_storage.DATA_DIR) / "order_executions_state.json"),
+            # The one construction site that owns a real machine: check the coding CLI's
+            # login, Docker and Node before a live run starts, rather than 20 minutes in.
+            preflight_enabled=True,
         )
         request.app.state.order_workflow_service = service
     return service
