@@ -118,3 +118,28 @@ def test_smoke_check_script_is_written_before_the_container_runs(tmp_path):
     run_functional_smoke_check_in_docker(("functional smoke check",), tmp_path, docker_client_factory=_factory(client))
 
     assert seen_script_exists["value"] is True
+
+
+def test_smoke_check_retries_a_preview_server_that_is_not_listening_yet(tmp_path):
+    """A live run on 2026-08-17 reported ERR_CONNECTION_REFUSED from this gate on working
+    code, and the repair loop spent a full coding-CLI call fixing nothing. The visual and
+    state-continuity gates already carried this retry; this one had been missed."""
+    captured = {}
+
+    class ObservingContainersAPI(FakeContainersAPI):
+        def run(self, image, command, **kwargs):
+            captured["script"] = (tmp_path / _SMOKE_CHECK_FILENAME).read_text(encoding="utf-8")
+            return super().run(image, command, **kwargs)
+
+    client = FakeDockerClient()
+    client.containers = ObservingContainersAPI([FakeContainer(exit_code=0)])
+
+    run_functional_smoke_check_in_docker(("functional smoke check",), tmp_path, docker_client_factory=_factory(client))
+
+    script = captured["script"]
+    # A bare goto with no retry is what made a slow preview start look like broken code.
+    assert "for (let attempt = 0; attempt < 15" in script
+    assert "lastError" in script
+    # And when it genuinely never comes up, the gate must say so in its own words rather
+    # than surfacing a raw navigation error the repair prompt would try to "fix".
+    assert "the preview server never accepted a connection" in script

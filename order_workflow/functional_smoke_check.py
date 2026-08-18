@@ -42,7 +42,28 @@ async function main() {{
     pageErrors.push(String(err));
   }});
 
-  await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: NAV_TIMEOUT_MS }});
+  // The preview server is started in the background by the shell command that launches this
+  // script, so it may not be listening yet. The same retry already guards the visual and
+  // state-continuity gates; this one was missed, and on 2026-08-17 it cost exactly what that
+  // comment predicted -- a live run's core_feature phase reported ERR_CONNECTION_REFUSED on
+  // working code, and the repair loop spent a full coding-CLI call fixing nothing.
+  let lastError = null;
+  for (let attempt = 0; attempt < 15; attempt += 1) {{
+    try {{
+      await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: NAV_TIMEOUT_MS }});
+      lastError = null;
+      break;
+    }} catch (err) {{
+      lastError = err;
+      await page.waitForTimeout(2000);
+    }}
+  }}
+  if (lastError) {{
+    await browser.close();
+    console.error('FUNCTIONAL SMOKE CHECK FAILED: the preview server never accepted a connection.');
+    console.error(String(lastError && lastError.message ? lastError.message : lastError));
+    process.exit(1);
+  }}
   await page.waitForTimeout(1000);
 
   const bodyText = await page.evaluate(() => (document.body ? document.body.innerText.trim() : ''));

@@ -246,7 +246,27 @@ async function main() {{
   page.on('console', (msg) => {{ if (msg.type() === 'error') consoleErrors.push(msg.text()); }});
   page.on('pageerror', (err) => {{ pageErrors.push(String(err)); }});
 
-  await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: NAV_TIMEOUT_MS }});
+  // Same race the other three browser gates guard against: the static server is backgrounded
+  // by the shell command that launches this script, so a slow start would otherwise read as
+  // a broken page and send the repair loop after code that is fine. Cheaper to wait here
+  // than to spend a coding-CLI call discovering the server simply was not up yet.
+  let lastError = null;
+  for (let attempt = 0; attempt < 15; attempt += 1) {{
+    try {{
+      await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: NAV_TIMEOUT_MS }});
+      lastError = null;
+      break;
+    }} catch (err) {{
+      lastError = err;
+      await page.waitForTimeout(2000);
+    }}
+  }}
+  if (lastError) {{
+    await browser.close();
+    console.error('STATIC PAGE CHECK FAILED: the local server never accepted a connection.');
+    console.error(String(lastError && lastError.message ? lastError.message : lastError));
+    process.exit(1);
+  }}
   await page.waitForTimeout(1500);
 
   const first = await page.evaluate(() => ({{ ...window.__fsStats }}));

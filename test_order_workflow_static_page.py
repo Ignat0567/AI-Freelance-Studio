@@ -264,3 +264,24 @@ def test_the_gate_does_not_read_pixels(tmp_path):
 
     assert "toDataURL" not in captured["script"]
     assert "readPixels" not in captured["script"]
+
+
+def test_the_gate_waits_for_its_own_server_instead_of_trusting_a_sleep(tmp_path):
+    """The static server is backgrounded by the shell command that launches the check, so a
+    slow start would read as a broken page. The visual and state-continuity gates already
+    retried; the smoke gate did not and it cost a wasted coding-CLI call on a live run
+    (2026-08-17). Fixed in all four rather than in the one that happened to be caught."""
+    _page(tmp_path)
+    captured = {}
+
+    def _fake_docker(*_args, **_kwargs):
+        captured["script"] = (tmp_path / "___freelancerstudio_static_check.mjs").read_text(encoding="utf-8")
+        raise RuntimeError("stop here: the script has been captured")
+
+    with pytest.raises(RuntimeError):
+        run_static_page_check_in_docker((), tmp_path, docker_client_factory=_fake_docker)
+
+    script = captured["script"]
+    assert "for (let attempt = 0; attempt < 15" in script
+    assert "lastError" in script
+    assert "the local server never accepted a connection" in script
