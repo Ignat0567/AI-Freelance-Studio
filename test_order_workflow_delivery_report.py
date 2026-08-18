@@ -194,3 +194,14 @@ def test_the_report_points_at_the_evidence_only_when_it_exists():
     assert "qa_evidence.md" in with_file
     assert "not a summary of them" in with_file
     assert "qa_evidence" not in without
+
+
+def test_the_report_points_at_the_screenshot_when_the_gate_captured_one():
+    """MVP_ACCEPTANCE's second criterion asks for proof the thing runs, and names a
+    screenshot: a stranger reads a picture faster than an HTTP status line."""
+    with_shot = _report(screenshot_file="delivery_screenshot.png")
+    without = _report()
+
+    assert "delivery_screenshot.png" in with_shot
+    assert "as the check saw it" in with_shot
+    assert "screenshot" not in without.casefold()

@@ -253,3 +253,32 @@ def test_layout_is_judged_at_both_widths():
     script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
 
     assert "'desktop (1280px)'" in script and "'phone (375px)'" in script
+
+
+def test_the_screenshot_is_taken_while_the_page_still_looks_like_the_delivered_one():
+    """Order matters more than presence here. The gate shrinks the page to 375px and repaints
+    it dark to take its measurements; a shot from after either would be a misleading thing to
+    hand a client as proof of what they bought."""
+    from order_workflow.visual_check import SCREENSHOT_FILENAME, _build_script
+
+    script = _build_script(ExpectedPalette(background="#ffffff", colors=("#ffffff", "#356cf6")))
+
+    assert SCREENSHOT_FILENAME in script
+    shot = script.index("page.screenshot")
+    assert shot < script.index("setViewportSize({ width: 375"), "shot must precede the mobile resize"
+    assert shot < script.index("emulateMedia({ colorScheme: 'dark' }"), "shot must precede the dark repaint"
+
+
+def test_a_failed_screenshot_cannot_fail_the_gate():
+    """This is documentation, not a measurement. A run that painted the approved colours and
+    rendered correctly has passed whether or not a PNG could be written."""
+    from order_workflow.visual_check import _build_script
+
+    script = _build_script(ExpectedPalette(background="#ffffff", colors=("#ffffff",)))
+
+    shot = script.index("page.screenshot")
+    guard = script.rindex("try {", 0, shot)
+    following = script[shot:shot + 400]
+    assert guard < shot
+    assert "catch" in following
+    assert "process.exit" not in following.split("catch")[1][:200]

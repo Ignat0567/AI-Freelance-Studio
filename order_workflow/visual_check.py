@@ -33,6 +33,10 @@ from .models import ElenaDesignConcept
 from .qa_runner import QAOutcome
 
 _VISUAL_CHECK_FILENAME = "___freelancerstudio_visual_check.mjs"
+# Ships with the project rather than being cleaned up like the script above: MVP_ACCEPTANCE's
+# second criterion asks the delivered folder to prove the thing runs, and a stranger reads a
+# picture faster than an HTTP status line.
+SCREENSHOT_FILENAME = "delivery_screenshot.png"
 _PREVIEW_URL = "http://localhost:4173"
 DEFAULT_VISUAL_CHECK_TIMEOUT_SECONDS = 240
 
@@ -92,11 +96,12 @@ def palette_from_concept(concept: ElenaDesignConcept | None, *, style_spec: str 
     return ExpectedPalette(background=scraped[0], colors=scraped[:8])
 
 
-def _build_script(palette: ExpectedPalette) -> str:
+def _build_script(palette: ExpectedPalette, screenshot_name: str = SCREENSHOT_FILENAME) -> str:
     return f"""import {{ chromium }} from 'playwright';
 
 const TARGET_URL = {_PREVIEW_URL!r};
 const EXPECTED = {palette.as_json()};
+const SCREENSHOT_PATH = {screenshot_name!r};
 const TOLERANCE = {COLOR_MATCH_TOLERANCE};
 const MIN_COVERAGE = {MIN_PALETTE_COVERAGE};
 const MIN_CONTRAST_NORMAL = {MIN_CONTRAST_NORMAL};
@@ -306,6 +311,18 @@ async function main() {{
   await page.waitForTimeout(1200);
 
   const desktop = await page.evaluate(PAGE_PROBE);
+
+  // Taken here and nowhere else: the page has settled, and this is the only moment it is in
+  // the state a client would recognise -- the next three lines shrink it to a phone and
+  // repaint it dark to take measurements, which would make a misleading delivery shot.
+  // Wrapped because a failed screenshot must never fail the gate: this is documentation, and
+  // a run that painted the right colours and rendered correctly has passed whether or not a
+  // PNG could be written.
+  try {{
+    await page.screenshot({{ path: SCREENSHOT_PATH, fullPage: false }});
+  }} catch (err) {{
+    console.error('screenshot skipped: ' + String(err && err.message ? err.message : err));
+  }}
 
   await page.setViewportSize({{ width: 375, height: 812 }});
   await page.waitForTimeout(600);

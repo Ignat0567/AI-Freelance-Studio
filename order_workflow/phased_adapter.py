@@ -45,7 +45,7 @@ from .production_adapter import (
 from .qa_runner import QAOutcome, run_qa_commands
 from .state_continuity_check import run_state_continuity_check_in_docker
 from .readiness import LIVE_EXECUTION_OPT_IN_REQUIRED, ReadinessResult
-from .visual_check import build_visual_check_runner, palette_from_concept
+from .visual_check import SCREENSHOT_FILENAME, build_visual_check_runner, palette_from_concept
 from .website_generation import detect_cinematic_website_intent
 from .workspace import reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
@@ -826,6 +826,10 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
         deployment = self._deploy(request, event_sink, workspace)
+        # Written by the visual gate during the ui_shell phase, if that gate ran at all.
+        # Recorded rather than generated here: this module has no browser, and the one moment
+        # the page was in a client-recognisable state has long passed by now.
+        screenshot = SCREENSHOT_FILENAME if (workspace.project_path / SCREENSHOT_FILENAME).is_file() else None
         evidence = build_qa_evidence(self._gate_tally.evidence)
         evidence_file = None
         if evidence:
@@ -843,6 +847,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             deployment_image=deployment.image_tag if deployment is not None else None,
             run_command=deployment.run_command if deployment is not None and deployment.run_command else None,
             evidence_file=evidence_file,
+            screenshot_file=screenshot,
         )
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 
@@ -870,6 +875,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="generated_project_summary.json", summary=f"Workspace contains {summary['files_created']} non-marker files.", reference="generated-project-summary-json"),
             event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="delivery_report.md", summary=note, reference="delivery-report-md"),
             *([event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="qa_evidence.md", summary="The unedited output of every check that had to pass before delivery.", reference="qa-evidence-md")] if evidence_file else []),
+            *([event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name=SCREENSHOT_FILENAME, summary="The delivered page as the visual check saw it.", reference="delivery-screenshot-png")] if screenshot else []),
             event_sink.artifact(kind=ArtifactKind.PROJECT_DOCUMENTATION, name="README.md", summary="Generated project README with a real feature/tech-stack overview.", reference="readme-md"),
             event_sink.artifact(kind=ArtifactKind.PROJECT_DOCUMENTATION, name="ARCHITECTURE.md", summary="Real Mermaid architecture diagram built from the generated file tree.", reference="architecture-md"),
         )

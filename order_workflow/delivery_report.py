@@ -96,6 +96,7 @@ def build_delivery_report(
     deployment_image: str | None = None,
     run_command: str | None = None,
     evidence_file: str | None = None,
+    screenshot_file: str | None = None,
 ) -> str:
     """Assembled from data the run already produced -- brief, gate tally, deployment
     outcome -- not from a model call. The four sections below are MVP_ACCEPTANCE.md's
@@ -124,6 +125,8 @@ def build_delivery_report(
             lines.append(f"Image: {deployment_image}")
     else:
         lines.append("The build and its automated checks passed; container packaging was not part of this run.")
+    if screenshot_file:
+        lines.append(f"`{screenshot_file}` is the page as the check saw it, captured during the run.")
     if evidence_file:
         lines.append(f"The checks' own output is in `{evidence_file}` -- the measurements, not a summary of them.")
     lines.append(f"{files_created} files generated, {meaningful_artifact_count} of them substantive project code (not scaffolding or config).")
