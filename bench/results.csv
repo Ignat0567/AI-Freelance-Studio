@@ -3,3 +3,4 @@ run_at,commit,bench_id,kind,product_type,outcome,completed,clean,failure_cause,f
 20260817T174534Z,40a8878,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,257.3,0,,1,0,1,244.0,,,0.163,static_page_build=sonnet,4,1,0,bench-b02-pricing-page-20260817T174534Z.json
 20260817T175110Z,ba196f0,b01-profile-card,static_page,static_page,succeeded,1,1,,completed,121.8,0,,1,0,1,108.0,,,0.072,static_page_build=sonnet,4,1,0,bench-b01-profile-card-20260817T175110Z.json
 20260817T184513Z,da2b043,b06-reading-journal,realistic_app,web_app,succeeded,1,0,,completed,1272.0,3,core_feature/qa=1;ui_shell/visual=2,6,0,5,1153.0,5.144,100208,0.433,ui_shell=sonnet;core_feature=sonnet,4,1,1,bench-b06-reading-journal-20260817T184513Z.json
+20260818T070435Z,cc5bc6c,b06-reading-journal,realistic_app,web_app,succeeded,1,1,,completed,1256.1,0,,6,0,2,1167.0,5.457,95126,0.547,ui_shell=sonnet;core_feature=sonnet,4,1,1,bench-b06-reading-journal-20260818T070435Z.json
