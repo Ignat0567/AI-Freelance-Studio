@@ -12,7 +12,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_ove
 
 from .complexity import classify_phase_complexity, describe_phase_complexity, model_for_complexity
 from .deployment import DeploymentOutcome, build_and_verify_container
-from .delivery_report import build_delivery_report
+from .delivery_report import build_delivery_report, build_qa_evidence
 from .design_tokens import write_design_tokens
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
@@ -134,6 +134,17 @@ def _save_backend_decision_checkpoint(workspace, decision: BackendDecision) -> N
         _logger.warning("Could not write backend-decision checkpoint at %s; a retry would re-ask.", path, exc_info=True)
 
 
+def _gate_output(outcome) -> str:
+    """The gate's own stdout, which is where the browser-backed checks report their numbers.
+
+    Joined across commands and stripped: a gate that ran `npm run build` then a Playwright
+    script has the interesting half in the second one, and which index that is varies by
+    gate.
+    """
+    parts = [(result.stdout_tail or "").strip() for result in getattr(outcome, "results", ())]
+    return "\n".join(part for part in parts if part)
+
+
 @dataclass
 class _GateTally:
     """What the gates actually did during one execution, counted as it happens.
@@ -159,6 +170,11 @@ class _GateTally:
     # This is what turns "3 repair attempts" into a delivery report a client can read --
     # which gate needed the work, and whether it was ultimately satisfied.
     gate_log: list[tuple[str, int, bool | None]] = field(default_factory=list)
+    # What each gate actually printed when it accepted the work -- "Palette: 4/4 approved
+    # colours painted (100%)" and the like. Kept because the delivery report otherwise only
+    # *claims* the checks passed; these are the measurements themselves, which is the whole
+    # difference between a report and evidence.
+    evidence: list[tuple[str, str]] = field(default_factory=list)
 
     def record(self, repair: RepairLoopResult, *, gate: str = "") -> None:
         self.repairs += repair.attempts
@@ -171,6 +187,7 @@ class _GateTally:
             self.failed += 1
         if gate:
             self.gate_log.append((gate, repair.attempts, repair.qa_outcome.passed))
+            self.evidence.append((gate, _gate_output(repair.qa_outcome)))
 
     def record_usage(self, usage: TokenUsage | None) -> None:
         if usage is not None:
@@ -804,6 +821,11 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
         deployment = self._deploy(request, event_sink, workspace)
+        evidence = build_qa_evidence(self._gate_tally.evidence)
+        evidence_file = None
+        if evidence:
+            evidence_file = "qa_evidence.md"
+            (workspace.project_path / evidence_file).write_text(evidence, encoding="utf-8")
         delivery_report = build_delivery_report(
             goal=request.brief.goal,
             requirements=request.handoff.requirements,
@@ -815,6 +837,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             deployment_status=deployment.status_message if deployment is not None else None,
             deployment_image=deployment.image_tag if deployment is not None else None,
             run_command=deployment.run_command if deployment is not None and deployment.run_command else None,
+            evidence_file=evidence_file,
         )
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 
@@ -841,6 +864,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         artifacts = (
             event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="generated_project_summary.json", summary=f"Workspace contains {summary['files_created']} non-marker files.", reference="generated-project-summary-json"),
             event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="delivery_report.md", summary=note, reference="delivery-report-md"),
+            *([event_sink.artifact(kind=ArtifactKind.DELIVERY_REPORT, name="qa_evidence.md", summary="The unedited output of every check that had to pass before delivery.", reference="qa-evidence-md")] if evidence_file else []),
             event_sink.artifact(kind=ArtifactKind.PROJECT_DOCUMENTATION, name="README.md", summary="Generated project README with a real feature/tech-stack overview.", reference="readme-md"),
             event_sink.artifact(kind=ArtifactKind.PROJECT_DOCUMENTATION, name="ARCHITECTURE.md", summary="Real Mermaid architecture diagram built from the generated file tree.", reference="architecture-md"),
         )

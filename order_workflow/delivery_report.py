@@ -49,6 +49,34 @@ def _found_and_fixed_lines(gate_log: list[tuple[str, int, bool | None]]) -> list
     return lines
 
 
+def build_qa_evidence(evidence: list[tuple[str, str]]) -> str | None:
+    """The gates' own output, verbatim, as a file that ships with the project.
+
+    delivery_report.md says the checks passed. This is what they printed while passing --
+    "Palette: 4/4 approved colours painted (100%)", "Dark mode: page repaints under
+    prefers-color-scheme: dark". The difference between those two documents is the
+    difference between a claim and evidence, and evidence is the thing this pipeline has
+    that a freelancer's word does not.
+
+    Verbatim on purpose: summarising it back into prose would reintroduce exactly the gap
+    it exists to close.
+    """
+    sections = [(gate, text.strip()) for gate, text in evidence if text and text.strip()]
+    if not sections:
+        return None
+    lines = [
+        "# What the checks measured",
+        "",
+        "Each section is the unedited output of a check that had to pass before this project",
+        "was delivered. These are programs -- a compiler, a test runner, a real headless",
+        "browser, contrast arithmetic -- not opinions about the code.",
+        "",
+    ]
+    for gate, text in sections:
+        lines += [f"## {_gate_label(gate)}", "", "```", *text.splitlines(), "```", ""]
+    return "\n".join(lines)
+
+
 def _cost_line(usage: TokenUsage | None) -> str | None:
     if usage is None or usage.total_cost_usd <= 0:
         return None
@@ -67,6 +95,7 @@ def build_delivery_report(
     deployment_status: str | None = None,
     deployment_image: str | None = None,
     run_command: str | None = None,
+    evidence_file: str | None = None,
 ) -> str:
     """Assembled from data the run already produced -- brief, gate tally, deployment
     outcome -- not from a model call. The four sections below are MVP_ACCEPTANCE.md's
@@ -95,6 +124,8 @@ def build_delivery_report(
             lines.append(f"Image: {deployment_image}")
     else:
         lines.append("The build and its automated checks passed; container packaging was not part of this run.")
+    if evidence_file:
+        lines.append(f"The checks' own output is in `{evidence_file}` -- the measurements, not a summary of them.")
     lines.append(f"{files_created} files generated, {meaningful_artifact_count} of them substantive project code (not scaffolding or config).")
     cost_line = _cost_line(usage)
     if cost_line:

@@ -863,3 +863,26 @@ def test_delivery_report_reflects_what_this_run_actually_needed(tmp_path):
     assert "1 repair attempt " in report
     assert "## Proof it runs" in report
     assert "## How to run it" in report
+
+
+def test_the_delivered_folder_carries_the_checks_own_output(tmp_path):
+    """delivery_report.md claims the checks passed; qa_evidence.md is what they printed while
+    passing. The gap between those two is the difference between a freelancer's word and
+    this pipeline's actual selling point."""
+    brief, handoff = _contract()
+
+    def _measuring_qa(_qa_commands, _cwd):
+        return QAOutcome(passed=True, results=(
+            QACommandResult(command="visual check", exit_code=0,
+                            stdout_tail="Palette: 4/4 approved colours painted (100%).", stderr_tail="", duration=0.1),
+        ))
+
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), qa_runner=_measuring_qa)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
+    assert "Palette: 4/4 approved colours painted (100%)." in evidence
+    report = next(tmp_path.rglob("delivery_report.md")).read_text(encoding="utf-8")
+    assert "qa_evidence.md" in report

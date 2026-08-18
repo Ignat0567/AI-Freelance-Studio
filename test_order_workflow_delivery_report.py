@@ -133,3 +133,64 @@ def test_all_four_sections_are_present_and_in_order():
 
     positions = [report.index(heading) for heading in headings]
     assert positions == sorted(positions)
+
+
+# --- the evidence file ---------------------------------------------------------------
+
+
+REAL_VISUAL_OUTPUT = """Palette: 4/4 approved colours painted (100%).
+Dark mode: page repaints under prefers-color-scheme: dark (#eef4fb -> #101725).
+VISUAL CHECK PASSED"""
+
+
+def test_evidence_carries_the_gate_output_verbatim():
+    """Summarising it into prose would reintroduce the exact gap the file exists to close:
+    delivery_report.md already claims the checks passed."""
+    from order_workflow.delivery_report import build_qa_evidence
+
+    evidence = build_qa_evidence([("ui_shell", REAL_VISUAL_OUTPUT)])
+
+    assert "Palette: 4/4 approved colours painted (100%)." in evidence
+    assert "#eef4fb -> #101725" in evidence
+
+
+def test_evidence_names_gates_the_way_a_client_would():
+    from order_workflow.delivery_report import build_qa_evidence
+
+    evidence = build_qa_evidence([("ui_shell", REAL_VISUAL_OUTPUT)])
+
+    assert "ui_shell" not in evidence
+    assert "screens and navigation" in evidence.casefold()
+
+
+def test_evidence_says_the_checks_are_programs_not_opinions():
+    from order_workflow.delivery_report import build_qa_evidence
+
+    evidence = build_qa_evidence([("core_feature", "npm test: 12 passed")]).casefold()
+
+    assert "browser" in evidence and "not opinions" in evidence
+
+
+def test_each_gate_gets_its_own_fenced_block():
+    from order_workflow.delivery_report import build_qa_evidence
+
+    evidence = build_qa_evidence([("ui_shell", "a"), ("core_feature", "b")])
+
+    assert evidence.count("```") == 4
+
+
+def test_no_measurable_output_produces_no_file_rather_than_an_empty_promise():
+    """A file headed "what the checks measured" containing nothing is worse than no file."""
+    from order_workflow.delivery_report import build_qa_evidence
+
+    assert build_qa_evidence([]) is None
+    assert build_qa_evidence([("ui_shell", "   "), ("core_feature", "")]) is None
+
+
+def test_the_report_points_at_the_evidence_only_when_it_exists():
+    with_file = _report(evidence_file="qa_evidence.md")
+    without = _report()
+
+    assert "qa_evidence.md" in with_file
+    assert "not a summary of them" in with_file
+    assert "qa_evidence" not in without
