@@ -88,3 +88,9 @@ least visible.
 - 2026-08-17 — created.
 - 2026-08-17 — baseline table replaced with the machine-computed figures over eight archived
   runs (was three of five, counted by hand). The criterion itself is unchanged.
+- 2026-08-18 — criterion unchanged; the parts of it that were unmet are now built. The
+  delivery folder answers all four questions (delivery_report.md), ships the checks' own
+  measurements (qa_evidence.md) and the screenshot the criterion names
+  (delivery_screenshot.png, captured by the visual gate and verified in a container against
+  a fixture page). What still needs live runs: the three unattended orders, and someone
+  paying for one.
