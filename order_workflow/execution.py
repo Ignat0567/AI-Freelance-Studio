@@ -216,9 +216,21 @@ class ProjectExecutionService:
             existing_id = self._by_approval.get(key)
             if existing_id is not None:
                 existing = self._records[existing_id].snapshot
-                if existing.status in TERMINAL_EXECUTION_STATUSES or existing.status is ExecutionStatus.AWAITING_USER:
+                # AWAITING_USER covers two opposite situations, and treating them alike sent
+                # a client into a dead end. A run paused at the mid-build checkpoint has
+                # started, owns a workspace and half-built code: it must resume through its
+                # answers and must never restart. A *blocked* execution never ran at all --
+                # it exists only to carry the reason setup was incomplete. Its own blocker
+                # told the client to fix that and start the order again, so refusing the
+                # second start meant the instruction could not be followed: the order was
+                # unusable and had to be recreated. Observed live on 2026-08-20 with an
+                # expired coding-CLI login.
+                if existing.blockers and existing.started_at is None:
+                    self._by_approval.pop(key, None)
+                elif existing.status in TERMINAL_EXECUTION_STATUSES or existing.status is ExecutionStatus.AWAITING_USER:
                     raise ExecutionServiceError("execution_already_completed")
-                return self._snapshot(existing)
+                else:
+                    return self._snapshot(existing)
         readiness = self.check_readiness(brief, handoff, mode=active_mode, live=live)
         if not readiness.ready:
             return self._create_blocked_execution(brief, handoff, active_mode, readiness.blockers, key)

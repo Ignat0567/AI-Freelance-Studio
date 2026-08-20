@@ -420,3 +420,85 @@ def test_the_api_turns_preflight_on_where_it_owns_a_real_machine():
     source = Path("api/orders.py").read_text(encoding="utf-8")
 
     assert "preflight_enabled=True" in source
+
+
+# --- a blocked order has to be startable once the block is gone -----------------------
+
+
+def _blocking_service(outcomes):
+    return ProjectExecutionService(
+        id_factory=_SequenceIds(),
+        clock=lambda: NOW,
+        mode=ExecutionMode.PRODUCTION,
+        live_adapter=FakeProjectExecutionAdapter(),
+        preflight=lambda: outcomes.pop(0),
+    )
+
+
+def test_fixing_the_block_lets_the_same_order_start():
+    """Observed live 2026-08-20: preflight blocked an order on an expired coding-CLI login
+    and told the client to sign in and start it again. Starting again answered
+    "execution_already_completed" -- the blocker's own instruction could not be followed and
+    the order had to be recreated."""
+    from order_workflow.readiness import ReadinessResult, readiness_blocker
+
+    brief, handoff = _approved_contract()
+    service = _blocking_service([
+        ReadinessResult.blocked(readiness_blocker("preflight_coding_cli_auth_expired", "login expired", "Re-authenticate")),
+        ReadinessResult.ready_result(),
+    ])
+
+    blocked = service.start(brief, handoff, live=True)
+    assert blocked.status is ExecutionStatus.AWAITING_USER
+    assert [b.code for b in blocked.blockers] == ["preflight_coding_cli_auth_expired"]
+
+    started = service.start(brief, handoff, live=True)
+
+    assert started.id != blocked.id, "the blocked attempt is replaced, not resumed"
+    assert service.wait(started.id, 5).status is ExecutionStatus.SUCCEEDED
+
+
+def test_a_still_blocked_order_blocks_again_rather_than_running():
+    from order_workflow.readiness import ReadinessResult, readiness_blocker
+
+    brief, handoff = _approved_contract()
+    blocker = ReadinessResult.blocked(readiness_blocker("preflight_docker_unavailable", "docker is down", "Start Docker"))
+    service = _blocking_service([blocker, blocker])
+
+    service.start(brief, handoff, live=True)
+    again = service.start(brief, handoff, live=True)
+
+    assert again.status is ExecutionStatus.AWAITING_USER
+    assert [b.code for b in again.blockers] == ["preflight_docker_unavailable"]
+
+
+def test_a_run_paused_mid_build_is_never_restarted_by_this_path():
+    """The opposite case, and the reason the discriminator is blockers-and-never-started
+    rather than the status alone: a mid-build pause owns a workspace and half-built code, and
+    has to resume through its answers. Restarting it would rebuild over its own checkpoints."""
+    from order_workflow.models import ExecutionStage
+
+    brief, handoff = _approved_contract()
+    service = ProjectExecutionService(
+        id_factory=_SequenceIds(), clock=lambda: NOW, mode=ExecutionMode.PRODUCTION,
+        live_adapter=FakeProjectExecutionAdapter(),
+    )
+    started = service.start(brief, handoff, live=True)
+    service.wait(started.id, 5)
+    record = service._records[started.id]
+    # A paused run: started, no blockers -- exactly what _create_blocked_execution never makes.
+    # finished_at and result are cleared with it: ProjectExecution refuses a non-terminal
+    # status that still carries a finish, which is the model correctly rejecting a state the
+    # pipeline would never produce.
+    record.snapshot = record.snapshot.model_copy(update={
+        "status": ExecutionStatus.AWAITING_USER,
+        "stage": ExecutionStage.UI_SHELL,
+        "blockers": (),
+        "finished_at": None,
+        "result": None,
+    })
+
+    with pytest.raises(ExecutionServiceError) as raised:
+        service.start(brief, handoff, live=True)
+
+    assert raised.value.code == "execution_already_completed"
