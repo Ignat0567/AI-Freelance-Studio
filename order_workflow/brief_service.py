@@ -15,6 +15,7 @@ from .clarification import (
     RequirementDimension,
     infer_requirement_signals,
 )
+from .reconciliation import reconcile_description_with_brief
 from .models import (
     ElenaDesignChoice,
     ElenaDesignConcept,
@@ -421,7 +422,7 @@ class ProjectBriefService:
             acceptance = _generic_acceptance(features)
 
         now = utc_now(self._clock)
-        return ProjectBrief(
+        brief = ProjectBrief(
             id=new_public_id("brief", self._id_factory),
             order_id=order.id,
             product_type=order.product_type,
@@ -440,6 +441,12 @@ class ProjectBriefService:
             created_at=now,
             updated_at=now,
         )
+        # Appended after construction because the check compares the finished brief against
+        # the words the client wrote -- both sides have to exist before they can disagree.
+        contradictions = reconcile_description_with_brief(order, brief)
+        if contradictions:
+            return brief.model_copy(update={"assumptions": _unique((*brief.assumptions, *contradictions))})
+        return brief
 
     def revise(
         self,
