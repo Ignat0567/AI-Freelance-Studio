@@ -8,8 +8,16 @@ class StylePack:
     slug: str
     name: str
     description: str
+    # What the project is about -- an industry, an audience, a kind of product.
     when_to_use: tuple[str, ...]
-    spec: str
+    # What the client said it should look like. Kept apart from when_to_use because the two
+    # are not equally strong evidence: someone who writes "near-black with frosted glass" has
+    # stated a preference, while someone who writes "product" has merely named their domain.
+    # Scoring them together let a single domain word outrank an explicit description of the
+    # design -- on 2026-08-18 an order asking for "a deep near-black ground" and "frosted
+    # glass" was given the white SaaS pack, because it also contained the word "product".
+    visual_cues: tuple[str, ...] = ()
+    spec: str = ""
 
 
 LIQUID_GLASS = StylePack(
@@ -17,6 +25,7 @@ LIQUID_GLASS = StylePack(
     name="Liquid Glass",
     description="iOS-style frosted glass panels over an ambient, mouse-reactive gradient background. Calm, premium, consumer-facing.",
     when_to_use=("consumer", "landing", "marketing", "portfolio", "premium", "apple", "minimal"),
+    visual_cues=("frosted glass", "glassmorphism", "liquid glass", "glass panel", "glass card", "blur", "blurred", "translucent", "aurora", "ambient gradient", "iridescent", "glow"),
     spec=(
         "**Typography:** `-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", system-ui, Helvetica, Arial, sans-serif` "
         "for everything. No separate display font — weight differentiates headings (700) from body/emphasis (500/600).\n\n"
@@ -51,6 +60,7 @@ NEUBRUTALISM = StylePack(
     name="Neubrutalism",
     description="Flat saturated color blocks, thick black borders, hard offset shadows, no gradients or blur. Loud, confident, internet-native.",
     when_to_use=("bold", "playful", "startup", "creative", "youth", "brutalist", "loud", "meme"),
+    visual_cues=("thick border", "hard shadow", "offset shadow", "flat colour", "flat color", "saturated blocks", "sticker"),
     spec=(
         "**Typography:** a single grotesque/geometric sans at extreme weight contrast — headings 800-900 weight, very large "
         "(clamp(32px, 6vw, 72px)), tight letter-spacing (-0.02em); body 500-600 weight, 16-18px. No serif, no script, no soft rounded "
@@ -77,6 +87,7 @@ SWISS_EDITORIAL = StylePack(
     name="Swiss Editorial",
     description="Strict grid, huge confident type, near-monochrome palette with one accent rule. Serious, high-trust, content-first.",
     when_to_use=("professional", "editorial", "news", "publication", "enterprise", "b2b", "finance", "legal", "corporate"),
+    visual_cues=("strict grid", "huge type", "oversized type", "serif", "editorial layout", "one accent"),
     spec=(
         "**Typography:** one grotesque sans (Helvetica/Inter/Suisse-like) for everything. Headings set extremely large "
         "(clamp(40px, 6vw, 96px)), weight 700, tight leading (1.0-1.05), tight tracking (-0.03em). Body copy 16-18px, weight 400-450, "
@@ -101,7 +112,8 @@ CYBERPUNK_NEON = StylePack(
     slug="cyberpunk_neon",
     name="Cyberpunk Neon",
     description="Near-black backgrounds, saturated neon glow accents, scanline/glitch texture. High-energy, tech/gaming.",
-    when_to_use=("gaming", "tech", "crypto", "hacker", "futuristic", "neon", "dark", "cyberpunk", "esports"),
+    when_to_use=("gaming", "tech", "crypto", "hacker", "futuristic", "dark", "cyberpunk", "esports"),
+    visual_cues=("near-black", "near black", "pitch black", "midnight", "dark ground", "dark background", "neon", "glitch", "scanline", "night sky", "stars"),
     spec=(
         "**Typography:** a technical/monospace or condensed grotesque for headings (weight 700-800, slightly wide letter-spacing on "
         "small labels, tight on large display text); a clean readable sans for body copy so long-form text stays legible against the "
@@ -130,6 +142,7 @@ SOFT_NEUMORPHISM = StylePack(
     name="Soft Neumorphism",
     description="Monochrome extruded surfaces with soft dual shadows, as if pressed from the same material as the background. Calm, tactile.",
     when_to_use=("wellness", "calm", "app", "minimal", "soft", "meditation", "health", "tactile"),
+    visual_cues=("neumorphism", "extruded", "embossed", "soft shadow", "pressed", "tactile surface"),
     spec=(
         "**Typography:** a single rounded or humanist sans (soft terminals, medium contrast) — headings weight 600-700, body 400-500. "
         "Generous line-height throughout; avoid anything condensed or sharp-edged.\n\n"
@@ -156,6 +169,7 @@ CORPORATE_GRADIENT_MESH = StylePack(
     name="Corporate Gradient Mesh",
     description="Clean white SaaS surfaces with soft multi-color gradient-mesh blobs as the only decoration. Trustworthy, modern B2B.",
     when_to_use=("saas", "b2b", "product", "software", "startup", "dashboard", "modern", "clean"),
+    visual_cues=("white surface", "light background", "pastel", "gradient mesh", "soft blobs", "airy"),
     spec=(
         "**Typography:** a clean geometric or grotesque sans (Inter/Manrope-like) — headings weight 600-700 with tight tracking, body "
         "400-450 weight at 15-17px. Numbers/metrics in a slightly heavier weight (600) to read as data.\n\n"
@@ -182,6 +196,7 @@ ORGANIC_WELLNESS = StylePack(
     name="Organic Wellness",
     description="Earthy palette, hand-drawn/organic shapes, generous soft gradients. Warm, human, health/lifestyle-oriented.",
     when_to_use=("wellness", "health", "yoga", "food", "nature", "sustainability", "lifestyle", "organic"),
+    visual_cues=("earthy", "hand-drawn", "organic shapes", "warm palette", "natural tones"),
     spec=(
         "**Typography:** pair a warm serif or humanist display face for headings (weight 500-600, slightly larger than strictly "
         "necessary for a gentle, unhurried feel) with a clean humanist sans for body copy (400-450 weight, 16-18px, generous "
@@ -206,7 +221,8 @@ RETRO_TERMINAL = StylePack(
     slug="retro_terminal",
     name="Retro Terminal",
     description="Monospace type on a CRT-green or amber-on-black terminal aesthetic, with scanlines and a blinking cursor motif. Nerdy, nostalgic, developer-facing.",
-    when_to_use=("developer", "terminal", "cli", "retro", "hacker", "nostalgic", "geek", "programming"),
+    when_to_use=("developer", "cli", "retro", "hacker", "nostalgic", "geek", "programming"),
+    visual_cues=("monospace", "terminal", "crt", "amber on black", "green on black", "blinking cursor", "scanlines"),
     spec=(
         "**Typography:** a single monospace face (JetBrains Mono / IBM Plex Mono / similar) for literally everything, including "
         "headings — vary size and weight, never switch families. Headings 700 weight, body 400-500. A blinking block or underscore "
@@ -235,7 +251,8 @@ MINIMAL_MONO = StylePack(
     slug="minimal_mono",
     name="Minimal Mono",
     description="Pure black-and-white, oversized type, no color and no decoration at all. Confident, gallery-like, content is the only ornament.",
-    when_to_use=("gallery", "art", "architecture", "luxury", "fashion", "monochrome", "high_end", "minimal"),
+    when_to_use=("gallery", "art", "architecture", "luxury", "fashion", "high_end", "minimal"),
+    visual_cues=("black and white", "monochrome", "no colour", "no color", "greyscale", "grayscale"),
     spec=(
         "**Typography:** one high-contrast serif or a razor-clean grotesque for display headings, set VERY large "
         "(clamp(48px, 8vw, 140px)), weight 400-500 (contrast comes from size and spacing, not boldness), tight leading (0.95-1.0). "
