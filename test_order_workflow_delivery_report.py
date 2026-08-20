@@ -242,3 +242,58 @@ def test_a_single_file_page_is_not_told_to_run_npm_install():
     section = report.split("## How to run it")[1]
     assert "npm install" not in section
     assert "index.html" in section
+
+
+# --- the gates the report used to omit entirely ---------------------------------------
+
+
+def test_a_browser_check_is_named_by_what_it_checked():
+    """Live run 2026-08-18: the visual gate demanded a repair and the delivered report said
+    only "the backend did not pass at first". Three of the four gates recorded their repairs
+    into the totals but were never labelled, so they produced no line here and no section in
+    qa_evidence.md -- the palette and contrast numbers, which are the most convincing thing
+    the pipeline measures, were missing from the evidence file."""
+    report = _report(gate_log=[("ui_shell/visual", 2, True)])
+
+    section = report.split("## What we found and fixed")[1].split("## Proof")[0]
+    assert "ui_shell/visual" not in section
+    assert "design and accessibility check" in section
+    assert "2 repair attempts" in section
+
+
+def test_every_browser_check_has_a_client_facing_name():
+    from order_workflow.delivery_report import _gate_label
+
+    for gate, expected in (
+        ("ui_shell/visual", "design and accessibility"),
+        ("core_feature/smoke", "browser render"),
+        ("core_feature/state", "survives a reload"),
+    ):
+        assert expected in _gate_label(gate)
+
+
+def test_a_phase_without_a_check_suffix_still_reads_as_the_phase():
+    from order_workflow.delivery_report import _gate_label
+
+    assert _gate_label("ui_shell") == "the screens and navigation"
+    assert _gate_label("static_page_build") == "the page"
+
+
+def test_an_unknown_check_degrades_to_something_readable():
+    from order_workflow.delivery_report import _gate_label
+
+    assert _gate_label("ui_shell/new_check_added_later") == "new check added later"
+
+
+def test_the_evidence_file_carries_the_visual_gates_measurements():
+    """The whole point of qa_evidence.md. Before the labels were fixed it shipped `vite build`
+    output and nothing from the browser."""
+    from order_workflow.delivery_report import build_qa_evidence
+
+    evidence = build_qa_evidence([
+        ("ui_shell", "vite build\n✓ built in 594ms"),
+        ("ui_shell/visual", "Palette: 4/4 approved colours painted (100%).\nContrast: all text clears AA."),
+    ])
+
+    assert "Palette: 4/4" in evidence
+    assert "design and accessibility check" in evidence

@@ -886,3 +886,28 @@ def test_the_delivered_folder_carries_the_checks_own_output(tmp_path):
     assert "Palette: 4/4 approved colours painted (100%)." in evidence
     report = next(tmp_path.rglob("delivery_report.md")).read_text(encoding="utf-8")
     assert "qa_evidence.md" in report
+
+
+def test_a_visual_gate_repair_reaches_the_delivered_report_and_evidence(tmp_path):
+    """The regression this file exists to prevent. On the 2026-08-18 live run the visual gate
+    demanded a repair and the delivered report mentioned only the backend: three of the four
+    gates fed their repair counts into the totals without a label, so they produced no line in
+    the report and no section in qa_evidence.md. The client was told less than had happened,
+    and the evidence file omitted the palette and contrast numbers -- the most convincing
+    measurements the pipeline takes."""
+    brief, handoff = _contract()
+    visual = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="visual check", exit_code=1, stdout_tail="Palette: 1/4 approved colours painted (25%).", stderr_tail="", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="visual check", exit_code=0, stdout_tail="Palette: 4/4 approved colours painted (100%).", stderr_tail="", duration=0.1),)),
+    ])
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), visual_check_runner=visual)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    report = next(tmp_path.rglob("delivery_report.md")).read_text(encoding="utf-8")
+    assert "design and accessibility check" in report
+    assert "1 repair attempt " in report
+
+    evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
+    assert "Palette: 4/4 approved colours painted (100%)." in evidence

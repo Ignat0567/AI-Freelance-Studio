@@ -612,7 +612,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 level=EventLevel.WARNING,
             )
             return None
-        self._gate_tally.record(smoke_repair)
+        self._gate_tally.record(smoke_repair, gate=f"{stage.value}/smoke")
         if smoke_repair.cancelled:
             return _cancelled_result(request)
         if smoke_repair.qa_outcome is None or not smoke_repair.qa_outcome.passed:
@@ -668,7 +668,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 level=EventLevel.WARNING,
             )
             return None
-        self._gate_tally.record(state_repair)
+        self._gate_tally.record(state_repair, gate=f"{stage.value}/state")
         if state_repair.cancelled:
             return _cancelled_result(request)
         if state_repair.qa_outcome is None or not state_repair.qa_outcome.passed:
@@ -745,7 +745,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 level=EventLevel.WARNING,
             )
             return None
-        self._gate_tally.record(visual_repair)
+        self._gate_tally.record(visual_repair, gate=f"{stage.value}/visual")
         if visual_repair.cancelled:
             return _cancelled_result(request)
         if visual_repair.qa_outcome is None or not visual_repair.qa_outcome.passed:

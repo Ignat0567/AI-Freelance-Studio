@@ -28,8 +28,20 @@ _GATE_LABELS = {
 }
 
 
+# The browser-backed gates arrive as "<phase>/<check>". Which phase they guarded is the
+# pipeline's business; what the client wants to know is what was checked.
+_CHECK_LABELS = {
+    "visual": "the design and accessibility check",
+    "smoke": "the browser render check",
+    "state": "the check that data survives a reload",
+}
+
+
 def _gate_label(stage: str) -> str:
-    return _GATE_LABELS.get(stage, stage.replace("_", " "))
+    phase, _, check = stage.partition("/")
+    if check:
+        return _CHECK_LABELS.get(check, check.replace("_", " "))
+    return _GATE_LABELS.get(phase, phase.replace("_", " "))
 
 
 def _found_and_fixed_lines(gate_log: list[tuple[str, int, bool | None]]) -> list[str]:
