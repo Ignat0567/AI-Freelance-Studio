@@ -502,3 +502,33 @@ def test_a_run_paused_mid_build_is_never_restarted_by_this_path():
         service.start(brief, handoff, live=True)
 
     assert raised.value.code == "execution_already_completed"
+
+
+def test_an_internal_error_leaves_a_traceback_behind(caplog):
+    """2026-08-21: a ValidationError thrown while composing a mid-build question ended a
+    40-minute run with a completed UI shell, and the only record anywhere was the phrase
+    "Execution failed because of an internal error" -- no traceback in the log, none in the
+    transcript, nothing to search for. The cause had to be found by reading the code and
+    reproducing it offline. An internal error is the one failure class that is entirely ours."""
+    import logging
+
+    brief, handoff = _approved_contract()
+
+    class ExplodingAdapter(FakeProjectExecutionAdapter):
+        def execute(self, request, event_sink, cancellation):
+            raise ValueError("a very specific internal failure")
+
+    service = ProjectExecutionService(
+        id_factory=_SequenceIds(), clock=lambda: NOW,
+        mode=ExecutionMode.PRODUCTION, live_adapter=ExplodingAdapter(),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="order_workflow.execution"):
+        started = service.start(brief, handoff, live=True)
+        finished = service.wait(started.id, 5)
+
+    assert finished.status is ExecutionStatus.FAILED
+    assert "execution_internal_error" in finished.result.errors
+    assert any("a very specific internal failure" in record.getMessage() or
+               (record.exc_info and "a very specific internal failure" in str(record.exc_info[1]))
+               for record in caplog.records), "the traceback has to reach the log"

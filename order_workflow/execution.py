@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+import logging
 import re
 from threading import BoundedSemaphore, RLock, Thread
 from time import monotonic
@@ -46,6 +47,9 @@ from .readiness import (
     UNRESOLVED_QUESTIONS,
     UNSUPPORTED_PRODUCT_TYPE,
 )
+
+
+_logger = logging.getLogger(__name__)
 
 
 TERMINAL_EXECUTION_STATUSES = frozenset(
@@ -614,6 +618,17 @@ class ProjectExecutionService:
             if finished_event is not None:
                 self._notify_collaboration(finished_event)
         except Exception:
+            # Logged, not swallowed. On 2026-08-21 a ValidationError thrown while composing a
+            # mid-build question ended a 40-minute run with a completed UI shell, and the only
+            # record anywhere was the phrase below -- no traceback in the log, none in the
+            # transcript, nothing to search for. The cause had to be rediscovered by reading
+            # the code and reproducing it offline. An internal error is the one failure class
+            # that is entirely ours, so it is the one that must leave a trace.
+            _logger.exception(
+                "Execution %s failed with an unhandled error during %s",
+                execution_id,
+                getattr(record.snapshot, "stage", "unknown"),
+            )
             result = ExecutionResult(
                 success=False,
                 outcome="failed",

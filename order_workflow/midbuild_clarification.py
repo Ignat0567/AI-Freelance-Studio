@@ -38,6 +38,27 @@ def midbuild_clarification_enabled(environ: dict[str, str] | None = None) -> boo
     return (environ or os.environ).get("FREELANCERSTUDIO_ENABLE_MIDBUILD_CLARIFICATION", "").strip() == "1"
 
 
+# ClarificationQuestion.text is ShortText (240). An assumption is ShortText too, so a long
+# one plus the wrapper below overflows -- and the wrapper is what pushes it over, so the
+# wrapper is what has to make room. A whole web_app run died here after 40 minutes and a
+# completed UI shell: an assumption of 196 characters became a 254-character question, the
+# ValidationError reached the execution service's catch-all, and the record said only
+# "internal error". Checking that assumptions fit their own field was not enough; nothing
+# checked that they still fit once another component wrapped them in a sentence.
+_QUESTION_WRAPPER_CHARS = len("The shell was built assuming: . Is that still right?")
+_MAX_ASSUMPTION_CHARS = 240 - _QUESTION_WRAPPER_CHARS
+
+
+def _fits_in_question(assumption: str) -> str:
+    text = assumption.strip().rstrip(".")
+    if len(text) <= _MAX_ASSUMPTION_CHARS:
+        return text
+    # Cut at a word boundary so the question stays readable, and mark the cut so nobody
+    # mistakes a truncated assumption for the whole of one.
+    clipped = text[: _MAX_ASSUMPTION_CHARS - 1].rsplit(" ", 1)[0]
+    return f"{clipped}…"
+
+
 def build_midbuild_questions(brief: ProjectBrief, *, shell_summary: str = "") -> tuple[ClarificationQuestion, ...]:
     """One checkpoint's worth of questions, derived from the approved brief.
 
@@ -48,7 +69,7 @@ def build_midbuild_questions(brief: ProjectBrief, *, shell_summary: str = "") ->
     questions: list[ClarificationQuestion] = []
 
     for index, assumption in enumerate(brief.assumptions[:_ASSUMPTION_QUESTION_LIMIT]):
-        text = assumption.strip().rstrip(".")
+        text = _fits_in_question(assumption)
         if not text:
             continue
         questions.append(

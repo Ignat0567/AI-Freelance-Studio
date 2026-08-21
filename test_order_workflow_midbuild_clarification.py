@@ -393,3 +393,91 @@ def test_a_resumed_attended_run_does_not_ask_twice(tmp_path):
     )
 
     assert resumed.outcome != "awaiting_user"
+
+
+# --- the length trap that killed a 40-minute run --------------------------------------
+
+
+def _brief_with_assumption(assumption: str):
+    from datetime import datetime, timezone
+
+    from order_workflow.models import ElenaDesignChoice, ProductType, ProjectBrief, RecommendedStack
+
+    now = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    return ProjectBrief(
+        id="brief_len",
+        order_id="order_len",
+        product_type=ProductType.WEB_APP,
+        goal="A presentation site.",
+        target_users=("A small internal team",),
+        core_features=("Show the pipeline",),
+        acceptance_criteria=("It renders",),
+        assumptions=(assumption,),
+        recommended_stack=RecommendedStack(),
+        elena_design_choice=ElenaDesignChoice.SHOW_ELENA_CONCEPT,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+THE_ASSUMPTION_THAT_CRASHED_A_RUN = (
+    'Your description says nobody signs in, but the audience was recorded as "A small internal '
+    'team". A shared audience makes the build add a server and a database. Narrow it if this is '
+    "for one person."
+)
+
+
+def test_a_maximum_length_assumption_still_produces_a_valid_question():
+    """2026-08-21: a 196-character assumption became a 254-character question, ClarificationQuestion
+    refused it, the ValidationError reached the execution service's catch-all, and a web_app run
+    died after 40 minutes with a completed UI shell and a record that said only "internal error".
+
+    Assumptions are ShortText, so the longest one is 240 -- and the wrapper adds ~51 on top."""
+    from order_workflow.midbuild_clarification import build_midbuild_questions
+
+    questions = build_midbuild_questions(_brief_with_assumption("x" * 240))
+
+    assert questions
+    assert all(len(question.text) <= 240 for question in questions)
+
+
+def test_the_exact_assumption_from_the_failed_run_is_handled():
+    from order_workflow.midbuild_clarification import build_midbuild_questions
+
+    questions = build_midbuild_questions(_brief_with_assumption(THE_ASSUMPTION_THAT_CRASHED_A_RUN))
+
+    assert questions
+    assert all(len(question.text) <= 240 for question in questions)
+
+
+def test_a_clipped_assumption_says_that_it_was_clipped():
+    """Otherwise a truncated assumption reads as the whole of one, and the client confirms
+    something narrower than what was actually assumed."""
+    from order_workflow.midbuild_clarification import build_midbuild_questions
+
+    # 200 characters: longer than the wrapper leaves room for, but still a legal assumption --
+    # ShortText caps the field itself at 240, so a longer one could never reach here.
+    questions = build_midbuild_questions(_brief_with_assumption(("word " * 40).strip()))
+
+    assert "\u2026" in questions[0].text
+
+
+def test_a_short_assumption_is_not_touched():
+    from order_workflow.midbuild_clarification import build_midbuild_questions
+
+    questions = build_midbuild_questions(_brief_with_assumption("Elena will prepare a design concept."))
+
+    assert "Elena will prepare a design concept" in questions[0].text
+    assert "\u2026" not in questions[0].text
+
+
+def test_questions_are_built_even_when_the_pause_is_off():
+    """The crash did not need the checkpoint enabled: build_core_feature_prompt calls this to
+    compute corrections on every web_app run, so the length trap was on the main path, not
+    behind an opt-in flag."""
+    from pathlib import Path
+
+    source = Path("order_workflow/phased_adapter.py").read_text(encoding="utf-8")
+    core_feature_block = source.split("core_feature_checkpoint = _load_phase_checkpoint")[1][:1200]
+
+    assert "build_midbuild_questions" in core_feature_block
