@@ -98,3 +98,100 @@ def test_the_two_vocabularies_stay_separate():
     an inferred domain are not equally strong evidence."""
     for style in STYLE_LIBRARY:
         assert not set(style.visual_cues) & set(style.when_to_use)
+
+
+# --- the palette the build is actually bound to ---------------------------------------
+
+
+def _concept(description: str):
+    from order_workflow.brief_service import ProjectBriefService
+    from order_workflow.clarification import AlexClarificationService
+    from order_workflow.models import ClarificationAnswer, UserOrder
+
+    order = UserOrder(
+        id="order_palette",
+        title="AI Freelance Studio",
+        description=description,
+        product_type="web_app",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    clarification = AlexClarificationService(clock=lambda: NOW)
+    started = clarification.begin(order)
+    current_order, session = started.order, started.session
+    if any(question.id == "core-features" for question in current_order.questions):
+        answered = clarification.apply_answers(
+            current_order, session,
+            (ClarificationAnswer(question_id="core-features", value="Read it; scroll the steps; subscribe by email"),),
+        )
+        current_order, session = answered.order, answered.session
+    resolved = clarification.use_recommended_defaults(current_order, session)
+    return ProjectBriefService(clock=lambda: NOW).generate(resolved.order, resolved.session).elena_design_concept
+
+
+DARK_ORDER = (
+    "A presentation page with a deep near-black ground, a slow aurora of light and frosted "
+    "glass panels. A visitor reads what it does, scrolls five steps, and subscribes by email."
+)
+
+
+def test_the_concept_palette_follows_the_described_style():
+    """Fixing style selection alone did not reach this. The pack decided the prose in the
+    prompt while ElenaDesignConcept kept a hardcoded pale blue -- and the concept, not the
+    prose, is what design_tokens.py writes into the workspace and what the visual gate
+    measures adherence to."""
+    concept = _concept(DARK_ORDER)
+
+    assert concept.visual_direction == "Liquid Glass"
+    assert concept.light_theme.background != "#eef4fb"
+
+
+def test_a_design_described_as_dark_is_dark_by_default():
+    """light_theme is the slot that becomes `:root`. Leaving the near-black in the dark slot
+    would serve a near-white page to every visitor whose system is not already in dark mode --
+    which is not what "a deep near-black ground" asks for."""
+    concept = _concept(DARK_ORDER)
+
+    assert concept.light_theme.background == "#08080b"
+    assert concept.dark_theme.background == "#08080b"
+
+
+def test_an_order_that_describes_no_look_keeps_a_light_default():
+    concept = _concept("A clean SaaS product dashboard for software startups with charts and a settings page.")
+
+    assert concept.visual_direction == "Corporate Gradient Mesh"
+    assert concept.light_theme.background == "#eef4fb"
+    assert concept.dark_theme.background == "#101725"
+
+
+def test_every_pack_palette_clears_AA_in_both_themes():
+    """These palettes are handed to the coding CLI as binding variables and then measured by
+    the contrast gate. A pack that cannot pass its own gate would fail every order that chose
+    it, through no fault of the generated code."""
+    from order_workflow.design_tokens import contrast_ratio
+
+    for style in STYLE_LIBRARY:
+        for theme in (style.light_theme, style.dark_theme):
+            assert contrast_ratio(theme.text, theme.background) >= 4.5, f"{style.slug} text on background"
+            assert contrast_ratio(theme.text, theme.surface) >= 4.5, f"{style.slug} text on surface"
+
+
+def test_a_keyword_inside_a_longer_word_does_not_count():
+    """"hear the answers spoken aloud" scored a point for the loud, playful pack, because
+    "loud" sits inside "aloud" -- so a PDF voice assistant was styled with thick borders and
+    hard offset shadows. The bug predates the two vocabularies; it was invisible while the
+    concept ignored style selection entirely."""
+    from order_workflow.style_library import select_style_pack
+
+    spoken = "Create a browser voice assistant that reads answers back to you, spoken aloud."
+
+    assert select_style_pack(spoken).slug != "neubrutalism"
+
+
+def test_a_keyword_that_matches_almost_every_order_carries_no_signal():
+    """"app" sat in a pack's domain list and matched nearly anything anyone would order --
+    the same weakness as "product", which is what started all of this."""
+    from order_workflow.style_library import STYLE_LIBRARY
+
+    for style in STYLE_LIBRARY:
+        assert "app" not in style.when_to_use

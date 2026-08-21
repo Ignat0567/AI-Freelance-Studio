@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+
+from .models import ThemePalette
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,11 +20,18 @@ class StylePack:
     # design -- on 2026-08-18 an order asking for "a deep near-black ground" and "frosted
     # glass" was given the white SaaS pack, because it also contained the word "product".
     visual_cues: tuple[str, ...] = ()
+    # The palette this pack actually paints with. Roles are stated rather than inferred: the
+    # spec below carries hex values in prose, and guessing which of them is "text" is how a
+    # contrast failure gets authored instead of prevented (see design_tokens.py).
+    light_theme: ThemePalette | None = None
+    dark_theme: ThemePalette | None = None
     spec: str = ""
 
 
 LIQUID_GLASS = StylePack(
     slug="liquid_glass",
+    light_theme=ThemePalette(background="#f5f5f7", surface="#ffffff", text="#1d1d1f", accent="#0071e3"),
+    dark_theme=ThemePalette(background="#08080b", surface="#17181f", text="#f5f4f1", accent="#6ea8fe"),
     name="Liquid Glass",
     description="iOS-style frosted glass panels over an ambient, mouse-reactive gradient background. Calm, premium, consumer-facing.",
     when_to_use=("consumer", "landing", "marketing", "portfolio", "premium", "apple", "minimal"),
@@ -57,6 +67,8 @@ LIQUID_GLASS = StylePack(
 
 NEUBRUTALISM = StylePack(
     slug="neubrutalism",
+    light_theme=ThemePalette(background="#fdf6e3", surface="#ffffff", text="#0a0a0a", accent="#ff4d00"),
+    dark_theme=ThemePalette(background="#12100c", surface="#1e1b16", text="#fdf6e3", accent="#ff7a33"),
     name="Neubrutalism",
     description="Flat saturated color blocks, thick black borders, hard offset shadows, no gradients or blur. Loud, confident, internet-native.",
     when_to_use=("bold", "playful", "startup", "creative", "youth", "brutalist", "loud", "meme"),
@@ -84,6 +96,8 @@ NEUBRUTALISM = StylePack(
 
 SWISS_EDITORIAL = StylePack(
     slug="swiss_editorial",
+    light_theme=ThemePalette(background="#fafaf8", surface="#ffffff", text="#111111", accent="#d21b1b"),
+    dark_theme=ThemePalette(background="#0f0f0f", surface="#1a1a1a", text="#f2f2f0", accent="#ff4b4b"),
     name="Swiss Editorial",
     description="Strict grid, huge confident type, near-monochrome palette with one accent rule. Serious, high-trust, content-first.",
     when_to_use=("professional", "editorial", "news", "publication", "enterprise", "b2b", "finance", "legal", "corporate"),
@@ -110,6 +124,8 @@ SWISS_EDITORIAL = StylePack(
 
 CYBERPUNK_NEON = StylePack(
     slug="cyberpunk_neon",
+    light_theme=ThemePalette(background="#f0f0f5", surface="#ffffff", text="#14141c", accent="#7a1fa2"),
+    dark_theme=ThemePalette(background="#05050a", surface="#101018", text="#e6e6f0", accent="#00f0ff"),
     name="Cyberpunk Neon",
     description="Near-black backgrounds, saturated neon glow accents, scanline/glitch texture. High-energy, tech/gaming.",
     when_to_use=("gaming", "tech", "crypto", "hacker", "futuristic", "dark", "cyberpunk", "esports"),
@@ -139,9 +155,11 @@ CYBERPUNK_NEON = StylePack(
 
 SOFT_NEUMORPHISM = StylePack(
     slug="soft_neumorphism",
+    light_theme=ThemePalette(background="#e6e7ee", surface="#eef0f7", text="#2b2f3a", accent="#5b6bd6"),
+    dark_theme=ThemePalette(background="#1b1d24", surface="#23262f", text="#e8eaf2", accent="#8f9ff0"),
     name="Soft Neumorphism",
     description="Monochrome extruded surfaces with soft dual shadows, as if pressed from the same material as the background. Calm, tactile.",
-    when_to_use=("wellness", "calm", "app", "minimal", "soft", "meditation", "health", "tactile"),
+    when_to_use=("wellness", "calm", "minimal", "soft", "meditation", "health", "tactile"),
     visual_cues=("neumorphism", "extruded", "embossed", "soft shadow", "pressed", "tactile surface"),
     spec=(
         "**Typography:** a single rounded or humanist sans (soft terminals, medium contrast) — headings weight 600-700, body 400-500. "
@@ -166,6 +184,8 @@ SOFT_NEUMORPHISM = StylePack(
 
 CORPORATE_GRADIENT_MESH = StylePack(
     slug="corporate_gradient_mesh",
+    light_theme=ThemePalette(background="#eef4fb", surface="#ffffff", text="#172033", accent="#356cf6"),
+    dark_theme=ThemePalette(background="#101725", surface="#182236", text="#f4f7ff", accent="#75a1ff"),
     name="Corporate Gradient Mesh",
     description="Clean white SaaS surfaces with soft multi-color gradient-mesh blobs as the only decoration. Trustworthy, modern B2B.",
     when_to_use=("saas", "b2b", "product", "software", "startup", "dashboard", "modern", "clean"),
@@ -193,6 +213,8 @@ CORPORATE_GRADIENT_MESH = StylePack(
 
 ORGANIC_WELLNESS = StylePack(
     slug="organic_wellness",
+    light_theme=ThemePalette(background="#f6f1e7", surface="#fffdf8", text="#2f2a22", accent="#7a8b50"),
+    dark_theme=ThemePalette(background="#1a1712", surface="#25211a", text="#f2ece1", accent="#a8bd6a"),
     name="Organic Wellness",
     description="Earthy palette, hand-drawn/organic shapes, generous soft gradients. Warm, human, health/lifestyle-oriented.",
     when_to_use=("wellness", "health", "yoga", "food", "nature", "sustainability", "lifestyle", "organic"),
@@ -219,6 +241,8 @@ ORGANIC_WELLNESS = StylePack(
 
 RETRO_TERMINAL = StylePack(
     slug="retro_terminal",
+    light_theme=ThemePalette(background="#f4f4ec", surface="#ffffff", text="#1a1a14", accent="#0f7b2e"),
+    dark_theme=ThemePalette(background="#0a0f0a", surface="#111a11", text="#9dff9d", accent="#39ff6a"),
     name="Retro Terminal",
     description="Monospace type on a CRT-green or amber-on-black terminal aesthetic, with scanlines and a blinking cursor motif. Nerdy, nostalgic, developer-facing.",
     when_to_use=("developer", "cli", "retro", "hacker", "nostalgic", "geek", "programming"),
@@ -249,6 +273,8 @@ RETRO_TERMINAL = StylePack(
 
 MINIMAL_MONO = StylePack(
     slug="minimal_mono",
+    light_theme=ThemePalette(background="#ffffff", surface="#fafafa", text="#000000", accent="#000000"),
+    dark_theme=ThemePalette(background="#000000", surface="#0d0d0d", text="#ffffff", accent="#ffffff"),
     name="Minimal Mono",
     description="Pure black-and-white, oversized type, no color and no decoration at all. Confident, gallery-like, content is the only ornament.",
     when_to_use=("gallery", "art", "architecture", "luxury", "fashion", "high_end", "minimal"),
@@ -292,3 +318,62 @@ _BY_SLUG = {style.slug: style for style in STYLE_LIBRARY}
 
 def get_style(slug: str) -> StylePack | None:
     return _BY_SLUG.get(slug)
+
+
+def _mentions(haystack: str, needle: str) -> bool:
+    """Whole words only.
+
+    Plain substring matching made "hear the answers spoken aloud" score a point for the loud,
+    playful pack, because "loud" sits inside "aloud" -- so a PDF voice assistant was styled
+    with thick borders and hard offset shadows. The bug predates the two vocabularies; it was
+    simply invisible while the concept ignored the selection entirely.
+    """
+    # A trailing "s" is the case a bare word boundary would miss: packs describe a
+    # "thick border" and clients write "thick borders".
+    return re.search(r"\b" + re.escape(needle) + r"s?\b", haystack) is not None
+
+
+def select_style_pack(text: str) -> StylePack:
+    """A stated look beats an inferred one.
+
+    Scoring visual wording and domain wording together let one incidental domain word decide
+    the design: an order asking for "a deep near-black ground" with "frosted glass" panels was
+    given the white SaaS pack because it also said "product", while Liquid Glass -- frosted
+    glass over an ambient gradient -- scored zero.
+
+    Lives here rather than in design_preview because brief_service needs it too, and
+    design_preview imports brief_service; this module imports nothing of ours but the models.
+    """
+    haystack = text.casefold()
+    described = [(sum(1 for cue in style.visual_cues if _mentions(haystack, cue)), style) for style in STYLE_LIBRARY]
+    best = max(described, key=lambda pair: pair[0])
+    if best[0]:
+        # Among packs the client actually described, the domain still breaks ties.
+        contenders = [style for score, style in described if score == best[0]]
+        return max(contenders, key=lambda style: sum(1 for keyword in style.when_to_use if _mentions(haystack, keyword)))
+
+    ranked = max(
+        STYLE_LIBRARY,
+        key=lambda style: sum(1 for keyword in style.when_to_use if _mentions(haystack, keyword)),
+    )
+    matched = sum(1 for keyword in ranked.when_to_use if _mentions(haystack, keyword))
+    return ranked if matched else STYLE_LIBRARY[0]
+
+
+# Wording that asks for a dark design outright, rather than for a dark *mode*.
+_DARK_GROUND_CUES = (
+    "near-black", "near black", "pitch black", "midnight", "dark ground",
+    "dark background", "black background", "night sky", "dark theme", "on black",
+)
+
+
+def wants_dark_ground(text: str) -> bool:
+    """True when the client asked for a design that is dark, not one with a dark mode.
+
+    The concept carries a light theme and a dark theme, and the light one is the default --
+    it is what lands in `:root`. So an order asking for "a deep near-black ground" was served
+    a near-white page to everyone whose system was not already in dark mode, even once the
+    right style pack was chosen. There is no field for "dark, full stop", so the described
+    palette takes the default slot instead.
+    """
+    return any(cue in text.casefold() for cue in _DARK_GROUND_CUES)

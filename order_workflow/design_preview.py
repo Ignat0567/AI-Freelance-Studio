@@ -10,7 +10,7 @@ from pydantic import Field, model_validator
 
 from .brief_service import BriefServiceError, sanitize_public_text, verify_brief_approval
 from .models import LongText, ProductType, ProjectBrief, ShortText, StrictDomainModel, new_public_id, utc_now
-from .style_library import STYLE_LIBRARY, StylePack
+from .style_library import STYLE_LIBRARY, StylePack, select_style_pack
 from .ui_vocabulary import get_pattern
 
 
@@ -278,37 +278,9 @@ def _style_by_name(name: str) -> StylePack | None:
 
 
 def _select_style(brief: ProjectBrief) -> StylePack:
-    """A stated look beats an inferred one.
-
-    Scoring visual wording and domain wording together let one incidental domain word decide
-    the design. On 2026-08-18 an order asking for "a deep near-black ground" with "frosted
-    glass" panels was given the white SaaS pack, because it also contained the word
-    "product" -- and the Liquid Glass pack, which is literally frosted glass over an ambient
-    gradient, scored zero. The palette then became binding: it went into the prompt as "paint
-    the page ground exactly #eef4fb", into the workspace as CSS variables, and the visual
-    gate measured adherence to it and passed. One wrong word at the start, reinforced by
-    every step after it.
-
-    So a description that says what it should look like decides on its own, and the domain
-    keywords only break ties or answer when nobody described anything.
-    """
-    text = _brief_text(brief)
-
-    described = [(sum(1 for cue in style.visual_cues if cue in text), style) for style in STYLE_LIBRARY]
-    best_described = max(described, key=lambda pair: pair[0])
-    if best_described[0]:
-        # Among packs the client actually described, the domain still breaks ties.
-        contenders = [style for score, style in described if score == best_described[0]]
-        return max(contenders, key=lambda style: sum(1 for keyword in style.when_to_use if keyword in text))
-
-    best_style: StylePack | None = None
-    best_score = 0
-    for style in STYLE_LIBRARY:
-        score = sum(1 for keyword in style.when_to_use if keyword in text)
-        if score > best_score:
-            best_score = score
-            best_style = style
-    return best_style or STYLE_LIBRARY[0]
+    """Thin wrapper: the rule itself lives in style_library so brief_service can use it too,
+    without importing this module (which imports brief_service)."""
+    return select_style_pack(_brief_text(brief))
 
 
 def _has(text: str, *needles: str) -> bool:

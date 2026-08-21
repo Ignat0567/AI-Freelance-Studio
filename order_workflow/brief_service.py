@@ -16,6 +16,7 @@ from .clarification import (
     infer_requirement_signals,
 )
 from .reconciliation import reconcile_description_with_brief
+from .style_library import select_style_pack, wants_dark_ground
 from .models import (
     ElenaDesignChoice,
     ElenaDesignConcept,
@@ -277,7 +278,7 @@ def verify_brief_approval(brief: ProjectBrief) -> bool:
     return _brief_fingerprint(unapproved) == brief.approval_fingerprint
 
 
-def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType = ProductType.WEB_APP) -> ElenaDesignConcept | None:
+def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType = ProductType.WEB_APP, described: str = "") -> ElenaDesignConcept | None:
     if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT or product_type in {ProductType.BOT, ProductType.STATIC_PAGE}:
         # A bot has no screens/light-dark theme -- there is nothing for Elena's visual
         # design concept to describe. In practice, product_type BOT orders never reach
@@ -290,13 +291,25 @@ def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType =
         # prompt and no gate ever reads -- visible in the UI, inert in the build, and
         # contradicting the art direction the order actually asked for.
         return None
+    # The palette comes from the style the order describes, not from a constant. It used to
+    # be this exact pale blue for every web_app ever ordered -- which meant an order asking
+    # for "a deep near-black ground" was told, in its own prompt, to paint #eef4fb, had that
+    # written into its workspace as binding CSS variables, and then passed a visual gate
+    # measuring adherence to it. Fixing style selection alone did not reach this: the pack
+    # decided the prose in the prompt while the palette stayed hardcoded.
+    style = select_style_pack(described)
+    # A design described as dark is dark by default, not only for visitors whose system
+    # already is. light_theme is the slot that becomes `:root`, so that is where the
+    # described palette has to go; the dark slot keeps it dark rather than flipping back.
+    dark_by_default = wants_dark_ground(described)
+    default_theme = style.dark_theme if dark_by_default else style.light_theme
     return ElenaDesignConcept(
-        visual_direction="Liquid Glass",
+        visual_direction=style.name,
         layout="A focused responsive workspace with clear intake, content, action, and status regions.",
         screens=("Primary workflow", "Loading and empty states", "Actionable blocker state"),
         components=("Navigation", "Content workspace", "Primary actions", "Status feedback"),
-        light_theme=ThemePalette(background="#eef4fb", surface="#ffffff", text="#172033", accent="#356cf6"),
-        dark_theme=ThemePalette(background="#101725", surface="#182236", text="#f4f7ff", accent="#75a1ff"),
+        light_theme=default_theme,
+        dark_theme=style.dark_theme,
         accessibility_notes=(
             "Maintain accessible contrast and visible keyboard focus.",
             "Respect reduced-motion preferences and do not rely on color alone.",
@@ -437,7 +450,7 @@ class ProjectBriefService:
             open_questions=(),
             recommended_stack=stack,
             elena_design_choice=session.elena_choice,
-            elena_design_concept=_elena_placeholder(session.elena_choice, product_type=order.product_type),
+            elena_design_concept=_elena_placeholder(session.elena_choice, product_type=order.product_type, described=f"{order.title} {order.description} {goal}"),
             created_at=now,
             updated_at=now,
         )
@@ -498,7 +511,7 @@ class ProjectBriefService:
                 "assumptions": tuple(assumptions),
                 "acceptance_criteria": tuple(criteria),
                 "elena_design_choice": choice,
-                "elena_design_concept": _elena_placeholder(choice, product_type=brief.product_type),
+                "elena_design_concept": _elena_placeholder(choice, product_type=brief.product_type, described=brief.goal),
                 "approved_at": None,
                 "approved_revision": None,
                 "approval_fingerprint": None,
