@@ -84,6 +84,10 @@ class ExecutionConfigurationProvider:
         self._opencode_version_probe = opencode_version_probe or _probe_opencode_version
         self._active_backend_probe = active_backend_probe or _active_cli_backend
         self._workspace_root = Path(workspace_root).resolve() if workspace_root is not None else Path(config_storage.DATA_DIR, "generated_projects").resolve()
+        # Whether this is the application's own default location or somewhere the operator
+        # named. The two deserve opposite treatment when the directory is missing: see
+        # get_workspace_status().
+        self._workspace_root_is_default = workspace_root is None
         self._environ = environ
 
     def snapshot(self) -> ExecutionConfigurationSnapshot:
@@ -131,7 +135,20 @@ class ExecutionConfigurationProvider:
 
     def get_workspace_status(self) -> WorkspaceStatus:
         root = self._workspace_root
+        if not root.is_dir() and self._workspace_root_is_default:
+            # The default root lives under the application's own data directory and holds
+            # nothing but generated output, so its absence is not a decision anyone made --
+            # it is simply a first run. Blocking on it made a fresh checkout unable to
+            # execute a single order: generated_projects/ is gitignored, nothing created it,
+            # and the acceptance run on 2026-08-23 failed 3/3 in 34 seconds because of it.
+            # Invisible from a working tree, where the directory has existed since day one.
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
         if not root.is_dir():
+            # Still missing: either creation failed, or an operator pointed the setting at a
+            # path that does not exist -- which is a real choice to correct, not a first run.
             return WorkspaceStatus(code="workspace_root_unavailable", root=root.name or "generated_projects", available=False, writable=False, message="Generated projects workspace root is missing.")
         writable = _is_writable(root)
         if not writable:

@@ -145,3 +145,54 @@ def test_readiness_snapshot_does_not_expose_secrets(tmp_path):
     assert "secret-value" not in serialized
     assert "api_key" not in serialized
     assert "token" not in serialized
+
+
+# --- a first run has no generated_projects/ yet ---------------------------------------
+
+
+def test_the_default_workspace_root_is_created_on_first_use(tmp_path, monkeypatch):
+    """The acceptance run on 2026-08-23 failed 3 of 3 orders in 34 seconds from a fresh
+    clone: generated_projects/ is gitignored, nothing created it, and readiness blocked on
+    its absence. Invisible from a working tree, where it has existed since day one."""
+    import config_storage
+    from order_workflow.execution_config import ExecutionConfigurationProvider
+
+    monkeypatch.setattr(config_storage, "DATA_DIR", str(tmp_path))
+    root = tmp_path / "generated_projects"
+    assert not root.exists()
+
+    status = ExecutionConfigurationProvider(config_loader=lambda: {}).get_workspace_status()
+
+    assert root.is_dir()
+    assert status.code == "workspace_ready"
+    assert status.available is True
+
+
+def test_a_root_the_operator_named_is_not_conjured_into_existence(tmp_path):
+    """The opposite case, and why the check distinguishes them: a path someone typed into
+    Settings that does not exist is a decision to correct, not a first run. Creating it
+    silently would hide the typo and write generated projects somewhere unexpected."""
+    from order_workflow.execution_config import ExecutionConfigurationProvider
+
+    chosen = tmp_path / "somewhere" / "the-operator-meant"
+    provider = ExecutionConfigurationProvider(config_loader=lambda: {}, workspace_root=chosen)
+
+    status = provider.get_workspace_status()
+
+    assert not chosen.exists()
+    assert status.code == "workspace_root_unavailable"
+
+
+def test_an_existing_default_root_is_left_alone(tmp_path, monkeypatch):
+    import config_storage
+    from order_workflow.execution_config import ExecutionConfigurationProvider
+
+    monkeypatch.setattr(config_storage, "DATA_DIR", str(tmp_path))
+    root = tmp_path / "generated_projects"
+    root.mkdir()
+    (root / "existing-project").mkdir()
+
+    status = ExecutionConfigurationProvider(config_loader=lambda: {}).get_workspace_status()
+
+    assert status.code == "workspace_ready"
+    assert (root / "existing-project").is_dir()
