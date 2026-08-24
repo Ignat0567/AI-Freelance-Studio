@@ -40,6 +40,11 @@ CSV_COLUMNS: tuple[str, ...] = (
     "gates_failed",
     "cli_calls",
     "cli_seconds",
+    # How many coding-CLI calls were stopped at their ceiling rather than finishing. The
+    # direct answer to "is the budget too low", and the one the timing line alone cannot
+    # give: before 2026-08-24 a killed call emitted nothing, so the sample contained only
+    # the calls that fit and every ceiling-strike was invisible.
+    "cli_timeouts",
     # What the run actually spent. The pipeline reported this only for failures until
     # 2026-08-17, so every successful run in the archive looks free.
     "cost_usd",
@@ -53,6 +58,7 @@ CSV_COLUMNS: tuple[str, ...] = (
 )
 
 _BUDGET_LINE = re.compile(r"returned after (\d+(?:\.\d+)?)s of its (\d+)s budget")
+_CEILING_MARKER = "stopped at the ceiling"
 _REPAIR_LINE = re.compile(r"QA failed; asking .* to fix \(attempt (\d+) of (\d+)\)")
 _MODEL_LINE = re.compile(r"Sending (\w+) prompt to the coding CLI \(model: ([^)]*)\)")
 
@@ -149,6 +155,7 @@ def row_from_transcript(
         "gates_failed": int(test_summary.get("failed") or 0),
         "cli_calls": len(timings),
         "cli_seconds": round(sum(elapsed for elapsed, _ in timings), 1),
+        "cli_timeouts": sum(1 for event in events if _CEILING_MARKER in (event.get("message") or "")),
         "cost_usd": round(float((result.get("usage") or {}).get("total_cost_usd") or 0.0), 3),
         "output_tokens": int((result.get("usage") or {}).get("output_tokens") or 0),
         # The ratio that says whether the ceiling is manufacturing failures. Near 1.0 means
@@ -194,8 +201,10 @@ def summarise_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
             gates[key] = gates.get(key, 0) + int(value or 0)
 
     ratios = [float(row.get("cli_max_budget_ratio") or 0.0) for row in rows]
+    timeouts = sum(int(row.get("cli_timeouts") or 0) for row in rows)
     costs = [float(row.get("cost_usd") or 0.0) for row in rows]
     return {
+        "cli_timeouts": timeouts,
         "cost_usd_total": round(sum(costs), 2),
         "cost_usd_median": round(median([c for c in costs if c]), 2) if any(costs) else 0.0,
         "runs": len(rows),
@@ -227,6 +236,8 @@ def format_report(summary: dict[str, Any]) -> str:
     ]
     if summary.get("cost_usd_total"):
         lines.append(f"cost                ${summary['cost_usd_total']:.2f} total, ${summary['cost_usd_median']:.2f} median per run")
+    if summary.get("cli_timeouts"):
+        lines.append(f"calls hit the ceiling {summary['cli_timeouts']}   <-- these are the ones the budget question is about")
     if summary.get("repairs_by_gate"):
         lines.append("repairs by gate     " + ", ".join(f"{key} {value}" for key, value in summary["repairs_by_gate"].items()))
     if summary.get("failures_by_cause"):

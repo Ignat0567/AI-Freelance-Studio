@@ -348,3 +348,33 @@ def test_a_failed_call_is_timed_too(monkeypatch, tmp_path):
     assert result.errors == ("claude_code_auth_expired",)
     assert result.timeout_seconds == 450
     assert result.elapsed_seconds is not None
+
+
+def test_a_timed_out_call_still_reports_its_budget(monkeypatch, tmp_path):
+    """The calls the budget question is about were the only ones missing from the record."""
+    class _NeverFinishes(_FakeProcess):
+        # poll() returning None is what "still running" means to _invoke's wait loop, so the
+        # deadline is what ends this call -- the real shape of a ceiling strike. A one-second
+        # budget keeps the test at one second instead of the production 450.
+        def poll(self):
+            return None
+
+        # wait() returns normally: the deadline branch calls terminate() then wait(), and
+        # catching only subprocess.TimeoutExpired there means any other exception escapes as
+        # a failed launch instead of a timeout.
+        def wait(self, timeout=None):
+            return 0
+
+    fake_popen = _SequencedFakePopen([_NeverFinishes(stdout="", returncode=0)])
+    monkeypatch.setattr("order_workflow.claude_code_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("order_workflow.claude_code_client._ensure_isolated_git_repo", lambda _path: None)
+    sink = _RecordingSink()
+
+    client = ConfiguredClaudeCodeExecutionClient()
+    result = client.execute_project_prompt("build it", tmp_path, sink, CancellationToken(), timeout=1)
+
+    assert result.timed_out is True
+    budget_lines = [m for m in sink.messages if "budget" in m]
+    assert len(budget_lines) == 1, "a killed call has to enter the record like any other"
+    assert "1s budget" in budget_lines[0]
+    assert "stopped at the ceiling" in budget_lines[0]

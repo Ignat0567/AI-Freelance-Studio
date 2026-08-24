@@ -164,6 +164,20 @@ class ConfiguredClaudeCodeExecutionClient:
             if outcome.cancelled:
                 return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled.", elapsed_seconds=elapsed, timeout_seconds=limit)
             if outcome.timed_out:
+                # Timed-out calls are the ones the budget question is *about*, so they have to
+                # enter the record in the same shape as the rest. Emitting only on the return
+                # path below meant every call killed by the ceiling vanished from the sample:
+                # five completed repairs looked like a comfortable p90 of 72% while three
+                # others that same week had been killed at 100% and left no trace. A
+                # distribution whose upper tail is deleted by the very limit under review
+                # cannot answer whether that limit is too low.
+                event_sink.emit(
+                    stage="implementation",
+                    agent="Claude Code",
+                    progress=50,
+                    message=f"Claude Code CLI returned after {elapsed:.0f}s of its {limit}s budget (100% -- stopped at the ceiling)",
+                    level=EventLevel.WARNING,
+                )
                 # The limit is named in the summary because it is no longer a single global
                 # value: a caller reading "timed out" cannot otherwise tell whether it had
                 # the full build budget or a repair's shorter one.

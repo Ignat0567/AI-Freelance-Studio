@@ -271,3 +271,42 @@ def test_results_csv_gains_a_column_without_corrupting_earlier_rows(tmp_path):
     assert rows[0]["duration_seconds"] == "1200"
     assert rows[0]["commit"] == ""
     assert path.with_suffix(".csv.bak").is_file()
+
+
+# --- the sample the budget question is about ------------------------------------------
+
+
+def test_a_call_stopped_at_its_ceiling_is_counted():
+    """Before 2026-08-24 a timed-out call emitted no timing line at all, so it left the
+    sample entirely. Five completed repairs then showed a comfortable p90 of 72% while three
+    others that same week had been killed at the ceiling and recorded nothing. A distribution
+    whose upper tail is deleted by the very limit under review cannot answer whether that
+    limit is too low."""
+    transcript = _transcript([
+        _event("Claude Code CLI returned after 300s of its 450s budget (67%)"),
+        _event("Claude Code CLI returned after 450s of its 450s budget (100% -- stopped at the ceiling)"),
+    ])
+
+    row = _row(transcript)
+
+    assert row["cli_calls"] == 2, "a killed call is still a call that happened"
+    assert row["cli_timeouts"] == 1
+    assert row["cli_max_budget_ratio"] == pytest.approx(1.0)
+
+
+def test_a_run_where_nothing_hit_the_ceiling_reports_zero():
+    row = _row(_transcript([_event("Claude Code CLI returned after 300s of its 1500s budget (20%)")]))
+
+    assert row["cli_timeouts"] == 0
+
+
+def test_ceiling_strikes_are_totalled_and_called_out():
+    rows = [
+        {"completed": 1, "clean": 1, "duration_seconds": 1200, "cli_timeouts": 2, "repairs_by_gate": ""},
+        {"completed": 1, "clean": 1, "duration_seconds": 1300, "cli_timeouts": 1, "repairs_by_gate": ""},
+    ]
+
+    summary = summarise_rows(rows)
+
+    assert summary["cli_timeouts"] == 3
+    assert "hit the ceiling" in format_report(summary)
