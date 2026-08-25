@@ -110,6 +110,7 @@ def build_delivery_report(
     evidence_file: str | None = None,
     screenshot_file: str | None = None,
     delivered_files: tuple[str, ...] = (),
+    built_by: str = "",
 ) -> str:
     """Assembled from data the run already produced -- brief, gate tally, deployment
     outcome -- not from a model call. The four sections below are MVP_ACCEPTANCE.md's
@@ -140,6 +141,11 @@ def build_delivery_report(
         lines.append("The build and its automated checks passed; container packaging was not part of this run.")
     if screenshot_file:
         lines.append(f"`{screenshot_file}` is the page as the check saw it, captured during the run.")
+    if built_by:
+        # Which code produced this folder. A delivery that cannot say what built it cannot be
+        # reproduced, and on 2026-08-21 a run was measured against a build twelve hours older
+        # than the fix it was supposed to be testing.
+        lines.append(f"Built by AI Freelance Studio {built_by}.")
     if evidence_file:
         lines.append(f"The checks' own output is in `{evidence_file}` -- the measurements, not a summary of them.")
     # Deliberately not a raw file count. The first live static-page delivery reported "477

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ai_utils import ask_studio_ai_with_history
+from build_identity import RUNNING_BUILD
 from project_docs import build_architecture_mermaid, build_module_map, build_overview_paragraph, build_readme
 
 from .complexity import classify_phase_complexity, describe_phase_complexity, model_for_complexity
@@ -876,6 +877,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             evidence_file=evidence_file,
             screenshot_file=screenshot,
             delivered_files=_delivered_files(workspace),
+            built_by=RUNNING_BUILD,
         )
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 

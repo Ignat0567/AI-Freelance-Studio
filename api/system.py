@@ -19,6 +19,7 @@ from api.orders import router as orders_router
 from api.presentation import router as presentation_router
 from api.video import router as video_router
 from requirements_checker import check_all, get_components
+from build_identity import build_status
 from system_settings import (
     ALLOWED_SYSTEM_KEYS,
     DEFAULT_SYSTEM_SETTINGS,
@@ -345,6 +346,22 @@ class SystemConfigPayload(StrictRequestModel):
     log_detail: Any | None = None
     vscode_path: Any | None = None
     pycharm_path: Any | None = None
+
+
+@router.get("/api/system/build")
+def get_build_identity():
+    """Which commit this backend process is executing, and whether the checkout has moved on.
+
+    Not a setting, so it does not belong in /api/config/system -- it is a fact about the
+    running process. Read-only and cheap enough to poll.
+    """
+    status = build_status()
+    return {
+        "running_build": status.running,
+        "current_build": status.current,
+        "stale": status.stale,
+        "message": status.message,
+    }
 
 
 @router.get("/api/config/system")
