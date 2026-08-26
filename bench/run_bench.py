@@ -184,7 +184,7 @@ def run_one(order: BenchOrder, *, csv_path: Path) -> dict:
             if event["id"] in seen:
                 continue
             seen.add(event["id"])
-            harness.log(f"[{event.get('stage','?'):<17}] {event.get('message','')}")
+            harness.log_event(event)
         if execution.get("status") in {"succeeded", "failed", "cancelled"}:
             break
         if time.time() > deadline:

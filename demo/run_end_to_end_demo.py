@@ -67,6 +67,22 @@ def log(message: str, *, prefix: str = "  ") -> None:
     print(f"[{_stamp()}]{prefix}{message}", flush=True)
 
 
+def log_event(event: dict, *, prefix: str = "  ") -> None:
+    """One event as the operator sees it, its details included.
+
+    A gate says what it found in `details`; the message only says that it failed. Until
+    2026-08-26 just replay.py printed them, so a *recording* of a run was more informative
+    than watching the run happen: live, a failing visual gate printed "QA failed; asking
+    Codex to fix (attempt 1 of 2)" and nothing else, while the six layout findings behind it
+    sat in the event stream and could only be read back out of the API afterwards.
+    """
+    marker = "*" if event.get("kind") == "milestone" else " "
+    log(f"{marker} [{event.get('stage', '?'):<17}] {event.get('message', '')}", prefix=prefix)
+    for detail in event.get("details") or ():
+        for line in str(detail).splitlines()[:6]:
+            log(f"      {line}", prefix=prefix)
+
+
 def section(title: str) -> None:
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}", flush=True)
 
@@ -260,8 +276,7 @@ def main() -> int:
                 if event["id"] in seen:
                     continue
                 seen.add(event["id"])
-                marker = "*" if event.get("kind") == "milestone" else " "
-                log(f"{marker} [{event.get('stage','?'):<17}] {event.get('message','')}", prefix="  ")
+                log_event(event)
             if execution.get("status") in {"succeeded", "failed", "cancelled"}:
                 break
 

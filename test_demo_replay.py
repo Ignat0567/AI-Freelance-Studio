@@ -179,3 +179,32 @@ def test_no_successful_transcript_returns_nothing_rather_than_a_failure_reel(tmp
     failed = _transcript(tmp_path, [_event(0)], status="failed", name="failed.json")
 
     assert pick_transcript([failed]) is None
+
+
+def test_a_watched_run_shows_what_the_gate_found_not_only_that_it_failed(capsys):
+    """The live runners printed the message and dropped the details, so watching a run told
+    you less than replaying its recording did. A failing gate's findings are the whole
+    reason anyone is watching."""
+    from demo.run_end_to_end_demo import log_event
+
+    log_event(
+        {
+            "stage": "ui_shell",
+            "message": "QA failed; asking Codex to fix (attempt 1 of 2)",
+            "details": ("VISUAL CHECK FAILED:\n- Tap targets under 24x24px at phone width.\n- Text extends 132px outside the viewport.",),
+        }
+    )
+
+    printed = capsys.readouterr().out
+    assert "QA failed; asking Codex to fix" in printed
+    assert "Tap targets under 24x24px at phone width." in printed
+    assert "Text extends 132px outside the viewport." in printed
+
+
+def test_an_event_without_details_prints_one_line(capsys):
+    from demo.run_end_to_end_demo import log_event
+
+    log_event({"stage": "ui_shell", "message": "QA passed."})
+
+    assert len(capsys.readouterr().out.strip().splitlines()) == 1
+

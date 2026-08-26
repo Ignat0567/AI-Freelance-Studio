@@ -143,11 +143,7 @@ def replay(path: Path, *, speed: float = DEFAULT_SPEED, sleeper=time.sleep) -> i
 
     for delay, event in replay_schedule(events, speed=speed):
         sleeper(delay)
-        marker = "*" if event.get("kind") == "milestone" else " "
-        harness.log(f"{marker} [{event.get('stage', '?'):<17}] {event.get('message', '')}", prefix="  ")
-        for detail in event.get("details") or ():
-            for detail_line in str(detail).splitlines()[:6]:
-                harness.log(f"      {detail_line}", prefix="  ")
+        harness.log_event(event)
 
     execution = data.get("execution") or {}
     result = execution.get("result") or {}
