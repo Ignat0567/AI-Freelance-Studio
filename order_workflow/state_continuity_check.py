@@ -30,6 +30,38 @@ _CHECK_FILENAME = "___freelancerstudio_state_check.mjs"
 _PREVIEW_URL = "http://localhost:4173"
 DEFAULT_STATE_CHECK_TIMEOUT_SECONDS = 240
 
+# The one rule that decides whether a field is required to survive navigation. Kept as its
+# own constant so the browser fixture below and the shipped check cannot drift apart: a
+# rule verified in a fixture that is not the rule being shipped verifies nothing.
+_TRANSIENT_INPUT_JS = """\n// A field whose value the app is *supposed* to drop on navigation. Two kinds: the
+// empty-me-after-submit inputs of an add/create form, and a search or filter box.
+// Without this the gate demanded that a half-typed new item and a stale search query
+// survive navigation, which is not continuity -- it is a product nobody ordered. The
+// reading-journal delivery of 2026-08-26 shows the price: to satisfy those four
+// findings the repair wrote the draft book form and the search query into
+// localStorage, so the app now reopens with a stale filter and a half-typed book.
+//
+// Deliberately narrow. A "Save"/"Apply"/"Update" form is still checked, because the
+// defect this gate exists for -- a Focus Timer settings screen whose duration was
+// component-local state -- lives in exactly such a form.
+const isTransient = (node, label) => {
+  const text = `${label} ${node.getAttribute('placeholder') || ''}`.toLowerCase();
+  if (node.type === 'search' || /(search|filter|find|query)/.test(text)) return true;
+  const form = node.closest('form');
+  if (!form) return false;
+  // type=button is included on purpose: a React add-form usually avoids a page reload
+  // with `<button type="button" onClick={add}>`, and excluding those left exactly the
+  // forms this rule is about unexempted. The label match below is what separates "Add"
+  // from "Cancel", so nothing is lost by looking at every button but a reset.
+  const submits = Array.from(form.querySelectorAll('button, input[type=submit]')).filter(
+    (element) => element.type !== 'reset',
+  );
+  return submits.some((element) =>
+    /^\\s*(add|create|new|post|insert|append)\\b/i.test(element.value || element.innerText || ''),
+  );
+};"""
+
+
 _CHECK_SCRIPT = f"""import {{ chromium }} from 'playwright';
 
 const TARGET_URL = {_PREVIEW_URL!r};
@@ -39,6 +71,7 @@ const TARGET_URL = {_PREVIEW_URL!r};
 // so an in-page mutation would silently do nothing and every app would look broken.
 async function readControls(page) {{
   return page.evaluate(() => {{
+    {_TRANSIENT_INPUT_JS}
     const nodes = Array.from(document.querySelectorAll('input:not([type=hidden]), select, textarea'));
     return nodes
       .filter((node) => {{
@@ -57,6 +90,7 @@ async function readControls(page) {{
           index,
           key: `${{node.tagName.toLowerCase()}}:${{node.type || ''}}:${{label}}`,
           label: label.slice(0, 60),
+          transient: isTransient(node, label),
           tag: node.tagName.toLowerCase(),
           type: node.type || '',
           value: node.type === 'checkbox' || node.type === 'radio' ? String(node.checked) : String(node.value ?? ''),
@@ -146,6 +180,7 @@ async function main() {{
 
   const failures = [];
   const checked = [];
+  const skipped = [];
 
   for (const route of routes) {{
     await goTo(page, route);
@@ -155,6 +190,10 @@ async function main() {{
 
     const elsewhere = routes.find((other) => other !== route);
     for (const control of controls.slice(0, 6)) {{
+      if (control.transient) {{
+        skipped.push(`${{route}} ${{control.label}}`);
+        continue;
+      }}
       const mutated = await mutate(page, control);
       if (!mutated) continue;
 
@@ -180,6 +219,11 @@ async function main() {{
   await browser.close();
 
   console.log(`Checked ${{checked.length}} control(s) across ${{routes.length}} screens for state continuity.`);
+  // Printed rather than silent: a reader of qa_evidence.md has to be able to see what this
+  // gate decided not to ask about, and to disagree with it.
+  if (skipped.length > 0) {{
+    console.log(`Not required to survive navigation (draft or search inputs): ${{skipped.join(', ')}}.`);
+  }}
   if (failures.length > 0) {{
     console.error('STATE CONTINUITY CHECK FAILED:');
     for (const failure of failures.slice(0, 5)) console.error(`- ${{failure}}`);
@@ -206,6 +250,50 @@ _SHELL_COMMAND = (
     "pkill -f 'preview' >/dev/null 2>&1 || true; "
     "exit $STATUS"
 )
+
+
+# The cases the rule has to get right, as a page a browser can actually load. Written down
+# here rather than in a comment because this rule is a judgement about product behaviour and
+# the only honest way to check a DOM judgement is to put it in front of a DOM:
+#
+#   python -c "from order_workflow.state_continuity_check import build_transient_input_fixture as f; #              open('fixture.html','w',encoding='utf-8').write(f())"
+#
+# then open the file and call `__classify()` in the console. Verified this way on 2026-08-26:
+# the add-book form's three fields and the search box are exempt, while a "Save" settings
+# field and a standalone notes textarea are still required to survive navigation.
+_FIXTURE_HTML = """<!doctype html><meta charset="utf-8"><title>state continuity rule fixture</title>
+<h1>Which fields must survive navigation</h1>
+<form>
+  <label>Title <input name="title"></label>
+  <label>Author <input name="author"></label>
+  <label>Page count <input name="pages" type="number"></label>
+  <button type="submit">Add book</button>
+</form>
+<label>Search by title or author <input name="q"></label>
+<form>
+  <label>Session length <input name="duration" type="number"></label>
+  <button type="submit">Save</button>
+</form>
+<label>Notes <textarea name="notes"></textarea></label>
+<form>
+  <label>Nickname <input name="nick"></label>
+  <button type="button">Add person</button>
+</form>
+<script>
+%s
+
+window.__classify = () =>
+  Array.from(document.querySelectorAll('input:not([type=hidden]), select, textarea')).map((node) => {
+    const label = (node.labels && node.labels[0] ? node.labels[0].innerText.trim() : '') || node.getAttribute('name') || '';
+    return { label, transient: isTransient(node, label) };
+  });
+</script>
+"""
+
+
+def build_transient_input_fixture() -> str:
+    """The fixture page carrying the very rule the check ships, not a copy of it."""
+    return _FIXTURE_HTML % _TRANSIENT_INPUT_JS
 
 
 def run_state_continuity_check_in_docker(

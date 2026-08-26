@@ -61,6 +61,49 @@ def test_disabled_and_readonly_controls_are_left_alone():
     assert "!node.readOnly" in _CHECK_SCRIPT
 
 
+def test_a_draft_or_search_field_is_not_required_to_survive_navigation():
+    """The reading-journal order spent its whole repair budget on four findings that were
+    not defects: three fields of an "Add book" form and a search box, each reported for
+    going empty after navigation. The repair satisfied them by writing the draft book and
+    the search query into localStorage, so the delivered app reopens with a stale filter."""
+    from order_workflow.state_continuity_check import _TRANSIENT_INPUT_JS
+
+    assert "search|filter|find|query" in _TRANSIENT_INPUT_JS
+    assert "add|create|new|post|insert|append" in _TRANSIENT_INPUT_JS
+    # The exemption is what the loop acts on, not just a field nobody reads.
+    assert "if (control.transient)" in _CHECK_SCRIPT
+    assert "transient: isTransient(node, label)" in _CHECK_SCRIPT
+
+
+def test_a_settings_field_behind_a_save_button_is_still_checked():
+    # The defect this whole gate exists for -- a Focus Timer settings screen whose duration
+    # was component-local state -- sits in a form with a Save button. An exemption wide
+    # enough to cover "any form" would delete the gate's reason to exist.
+    from order_workflow.state_continuity_check import _TRANSIENT_INPUT_JS
+
+    assert "save" not in _TRANSIENT_INPUT_JS.split("insert|append")[1].lower()
+
+
+def test_the_fixture_carries_the_rule_that_ships_rather_than_a_copy():
+    # A rule verified against a fixture that has drifted from the shipped rule verifies
+    # nothing, which is why the fixture interpolates the same constant the check does.
+    from order_workflow.state_continuity_check import _TRANSIENT_INPUT_JS, build_transient_input_fixture
+
+    fixture = build_transient_input_fixture()
+
+    assert _TRANSIENT_INPUT_JS in fixture
+    assert _TRANSIENT_INPUT_JS in _CHECK_SCRIPT
+    # The cases a browser was pointed at on 2026-08-26: four exempt, two still required.
+    for label in ("Add book", "Search by title or author", "Save", "Notes"):
+        assert label in fixture
+
+
+def test_what_the_gate_declined_to_ask_about_is_printed():
+    # qa_evidence.md is read by the client. A gate that silently drops half the controls it
+    # looked at cannot be argued with.
+    assert "Not required to survive navigation" in _CHECK_SCRIPT
+
+
 def test_the_failure_message_names_the_control_and_both_values():
     # The repair loop gets this text verbatim; "state is broken" is not actionable.
     assert 'was set to "${mutated.value}" but reverted to "${same.value}"' in _CHECK_SCRIPT
