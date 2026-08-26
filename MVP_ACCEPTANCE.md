@@ -79,7 +79,47 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
-## Where it stands (2026-08-26)
+## Where it stands (2026-08-26, second run)
+
+**1 of 3 on the fourth attempt** -- and the reason is the most important thing found this
+week, because it was mis-attributed in every run before it.
+
+| order | outcome | duration | repairs | cost | cause |
+|---|---|---|---|---|---|
+| `b02-pricing-page` | succeeded | 379 s | 0 | $1.31 | -- |
+| `b06-reading-journal` | qa_failed | 2047 s | 2 | $6.38 | `generated_code` |
+| `b03-focus-timer` | qa_failed | 1744 s | 2 | $8.90 | `generated_code` |
+
+All four repairs were `ui_shell/visual`, and not one of them closed its gate. Reading the
+workspace rather than the summary:
+
+```
+17:05  dist/assets/index-CPAfjQJF.css   built, before the repair loop began
+17:20  src/styles/global.css            edited by repair attempt 2
+17:21  the visual gate                  three findings, word for word, off the 17:05 bundle
+```
+
+Every browser gate previews with `npm run preview`, which serves `dist/`. A repair edits
+`src/`. So **a repair could only ever pass if the model happened to run a build of its own**
+-- which is what separates the repairs that "worked" from the ones that changed nothing, and
+what has been read as model variance since the first live run. Both failures above were
+recorded as `generated_code`: the pipeline blamed the generated app for fixes its own gate
+could not see. Fixed in `e924850`; the delivered Dockerfile always rebuilt from source, so
+only the gates were judging a stale artifact.
+
+This makes the two earlier results below **not comparable to what comes next**, and none of
+them are evidence about repair quality. What they are evidence about is the cost of the
+defect: today's two runs spent $26 and about two hours, and 4 of the 8 repair calls in them
+were judged against a bundle they had not touched.
+
+Open, in order:
+
+1. **Re-run acceptance on `e924850` or later.** Nothing about repair yield, the ceilings, or
+   the gates' precision can be read from a run made before this fix.
+2. **Criterion 1** still needs three orders completing in one unattended sequence.
+3. **Criterion 3** -- somebody other than the author paying for a delivery -- is untouched.
+
+## Where it stood (2026-08-26, first run)
 
 **2 of 3. Not met.** A third attempt, again from a fresh clone, at `2e995fd`:
 
@@ -172,6 +212,10 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-26 (evening) — criterion unchanged; a fourth attempt recorded, at 1 of 3, along
+  with the reason: the browser gates were judging the build from before the repair, so no
+  earlier run says what it appeared to say about repair quality. Nothing was softened --
+  the worse number is written down as the worse number.
 - 2026-08-26 — criterion unchanged; the third attempt recorded above, and the ceiling
   question closed against the honest sample it was waiting for. 2 of 3 is written down as
   2 of 3: the run that failed did so on the provider's session limit, and that is recorded
