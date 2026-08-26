@@ -79,7 +79,49 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
-## Where it stands (2026-08-24)
+## Where it stands (2026-08-26)
+
+**2 of 3. Not met.** A third attempt, again from a fresh clone, at `2e995fd`:
+
+| order | outcome | duration | repairs | cost | cause |
+|---|---|---|---|---|---|
+| `b02-pricing-page` | succeeded | 335 s | 0 | $1.17 | -- |
+| `b06-reading-journal` | succeeded | 2155 s | 4 | $6.64 | -- |
+| `b03-focus-timer` | failed | 373 s | 0 | $1.44 | `provider` |
+
+The reading journal completed for the first time since the ceiling work: its visual gate
+closed after two repairs and its state gate after two more, and the delivered folder answers
+all four of criterion 2's questions -- HTTP 200 from the production image, a screenshot, the
+gates' own output, and a `docker run` line. The third order died on the provider's session
+limit for the second acceptance in a row, this time 371 seconds into an opus build. The
+pipeline said nothing wrong; the account ran out of week.
+
+**The time ceilings are not what is short, and that question is now closed by data rather
+than impression.** Seven repair calls are on record against the 450s limit: one was stopped
+by it, and the six that finished have a median of 173 s and a p90 of 396 s. The ten build
+calls against 1500 s peak at 55%. The single strike is the interesting one -- the call spent
+its whole 454 seconds writing four Playwright scripts to re-find elements the gate had
+already named, pixel offsets included, and edited no source file at all. Raising the ceiling
+would have bought more of that. `ca8778a` tells the repair its findings are already
+measured; `bench/budget.py` is how the next sample gets read.
+
+Five defects were found by reading this run rather than by any test, all now fixed: the
+delivered README told the client of a single HTML file to run `npm test` while the delivery
+report in the same folder said to open it in a browser (`9dc2036`); a benchmark row outlived
+the transcript it cites, because the transcript went to the clone and the row to the main
+repository (fixed in this run's own commit, `2e995fd`); the live log printed that a gate failed but not what it found, while
+a *replay* of the same run printed both (`9b09eac`); a core feature was sliced mid-word into
+the client's delivery report (`52b1e40`); and the state gate demanded that a half-typed "Add
+book" form and a search box survive navigation, which the repair satisfied by persisting
+both to localStorage -- a product nobody ordered (`b2b1f41`).
+
+Open, in order:
+
+1. **Criterion 1 still needs three in one unattended sequence.** Two of the three are now
+   proven on today's code; the third has never been given a working provider session.
+2. **Criterion 3** -- somebody other than the author paying for a delivery -- is untouched.
+
+## Where it stood (2026-08-24)
 
 **1 of 3. Not met.** Two attempts, both from a fresh clone.
 
@@ -130,3 +172,7 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-26 — criterion unchanged; the third attempt recorded above, and the ceiling
+  question closed against the honest sample it was waiting for. 2 of 3 is written down as
+  2 of 3: the run that failed did so on the provider's session limit, and that is recorded
+  as an external cause rather than counted as a pass.
