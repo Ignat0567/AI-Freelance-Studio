@@ -140,5 +140,11 @@ def run_qa_repair_loop(
         progress=80,
         message=qa_status_message,
         level=EventLevel.INFO if qa_passed else EventLevel.ERROR if qa_outcome is not None else EventLevel.WARNING,
+        # What the gate said the *last* time it looked. Every repair request carried its
+        # findings and this closing event carried none, so a run that failed recorded only
+        # that it failed: b06 on 2026-08-26 ended with "QA failed after 2 repair attempt(s)"
+        # and nothing anywhere -- not the event stream, not the transcript -- saying whether
+        # the 3px overflow its last repair was chasing had shrunk, moved or come back.
+        details=((qa_outcome.failure_summary()[:2000],) if qa_outcome is not None and not qa_passed else ()),
     )
     return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message=qa_status_message, cancelled=False, usages=tuple(usages), fix_timed_out=fix_timed_out)
