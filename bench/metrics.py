@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from statistics import median
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, NamedTuple, Sequence
 
 from order_workflow.failure_cause import classify_failure_cause
 
@@ -77,14 +77,34 @@ def _result(transcript: dict) -> dict:
     return dict(execution.get("result") or {})
 
 
+class CallRecord(NamedTuple):
+    """One coding-CLI call: how long it ran, the ceiling it ran under, and whether that
+    ceiling is what ended it.
+
+    The third field is the whole point. Elapsed-against-budget cannot distinguish a call that
+    finished at 99% from one that was killed at 100%, and those are opposite facts: the first
+    says the ceiling held, the second says the ceiling decided the outcome.
+    """
+
+    elapsed: float
+    budget: int
+    stopped_at_ceiling: bool
+
+
+def cli_call_records(transcript: dict) -> list[CallRecord]:
+    """Every coding-CLI call the run made, killed ones included."""
+    records: list[CallRecord] = []
+    for event in _events(transcript):
+        message = event.get("message") or ""
+        found = _BUDGET_LINE.search(message)
+        if found:
+            records.append(CallRecord(float(found.group(1)), int(found.group(2)), _CEILING_MARKER in message))
+    return records
+
+
 def cli_call_timings(transcript: dict) -> list[tuple[float, int]]:
     """(elapsed, budget) for every coding-CLI call the run made."""
-    timings: list[tuple[float, int]] = []
-    for event in _events(transcript):
-        found = _BUDGET_LINE.search(event.get("message") or "")
-        if found:
-            timings.append((float(found.group(1)), int(found.group(2))))
-    return timings
+    return [(record.elapsed, record.budget) for record in cli_call_records(transcript)]
 
 
 def repairs_by_gate(transcript: dict) -> dict[str, int]:
@@ -169,7 +189,7 @@ def row_from_transcript(
     }
 
 
-def _percentile(values: Sequence[float], fraction: float) -> float:
+def percentile(values: Sequence[float], fraction: float) -> float:
     """Nearest-rank percentile. Deliberately not interpolating: with a handful of runs an
     interpolated p90 invents a duration no run had."""
     if not values:
@@ -215,7 +235,7 @@ def summarise_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "completion_yield": round(len(completed) / len(rows), 3),
         "clean_yield": round(sum(int(row.get("clean") or 0) for row in rows) / len(rows), 3),
         "median_duration_seconds": round(median(durations), 1) if durations else 0.0,
-        "p90_duration_seconds": round(_percentile(durations, 0.9), 1),
+        "p90_duration_seconds": round(percentile(durations, 0.9), 1),
         "repairs_total": sum(int(row.get("repair_attempts") or 0) for row in rows),
         "repairs_by_gate": dict(sorted(gates.items(), key=lambda item: -item[1])),
         "failures_by_cause": dict(sorted(causes.items(), key=lambda item: -item[1])),
