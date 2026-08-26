@@ -36,7 +36,6 @@ from bench.orders import BENCH_ORDERS, BENCH_ORDERS_BY_ID, BenchOrder, order_pay
 from demo import run_end_to_end_demo as harness  # noqa: E402
 
 RESULTS_CSV = REPO_ROOT / "bench" / "results.csv"
-TRANSCRIPT_DIR = REPO_ROOT / "bench" / "transcripts"
 POLL_SECONDS = 5
 # Long enough for a build plus two repairs at the current budgets, short enough that a wedged
 # run cannot consume the whole night and leave the remaining orders unmeasured.
@@ -45,6 +44,17 @@ RUN_TIMEOUT_SECONDS = 3600
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _transcript_dir(csv_path: Path) -> Path:
+    """Transcripts live beside the results file, not beside this script.
+
+    Acceptance runs from a fresh clone with --csv pointing at the main repository, so the
+    rows outlived the checkout that produced them: three rows from 2026-08-23 name transcript
+    files that were deleted with the clone. A row whose evidence is gone is an assertion, not
+    a measurement -- and the missing one was the failed run, the only one worth reading.
+    """
+    return csv_path.resolve().parent / "transcripts"
 
 
 _COMMIT_AT_STARTUP: str | None = None
@@ -189,8 +199,9 @@ def run_one(order: BenchOrder, *, csv_path: Path) -> dict:
         "execution": execution,
         "bench": {"id": order.id, "kind": order.kind, "covers": order.covers},
     }
-    TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-    path = TRANSCRIPT_DIR / f"bench-{order.id}-{run_at}.json"
+    transcript_dir = _transcript_dir(csv_path)
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    path = transcript_dir / f"bench-{order.id}-{run_at}.json"
     path.write_text(json.dumps(transcript, indent=2), encoding="utf-8")
 
     row = row_from_transcript(
