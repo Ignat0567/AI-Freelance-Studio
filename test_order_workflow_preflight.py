@@ -532,3 +532,59 @@ def test_an_internal_error_leaves_a_traceback_behind(caplog):
     assert any("a very specific internal failure" in record.getMessage() or
                (record.exc_info and "a very specific internal failure" in str(record.exc_info[1]))
                for record in caplog.records), "the traceback has to reach the log"
+
+
+def test_a_single_401_is_not_taken_as_proof_that_the_login_is_gone():
+    """2026-08-26, 21:35: this probe got a 401 and blocked a three-order unattended run at
+    its first order. Nine minutes later the same probe answered "login accepted" with nobody
+    having signed in -- the CLI refreshes its OAuth token on demand."""
+    from order_workflow.preflight import probe_coding_cli_credentials
+
+    calls = []
+
+    def runner(command, prompt, timeout):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return 1, '{"api_error_status": 401}', ""
+        return 0, '{"result": "ok"}', ""
+
+    status, message, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner)
+
+    assert status == "ok"
+    assert blocker is None
+    assert "token refresh" in message
+    assert len(calls) == 2
+
+
+def test_a_login_that_is_really_gone_answers_401_twice_and_blocks():
+    from order_workflow.preflight import probe_coding_cli_credentials
+
+    calls = []
+
+    def runner(command, prompt, timeout):
+        calls.append(prompt)
+        return 1, '{"api_error_status": 401}', ""
+
+    status, message, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner)
+
+    assert status == "blocked"
+    assert blocker is not None
+    assert len(calls) == 2
+
+
+def test_a_rate_limit_still_does_not_block_and_is_not_retried():
+    # 429 is not proof of anything about the login, and asking twice only spends more of the
+    # budget that is already exhausted.
+    from order_workflow.preflight import probe_coding_cli_credentials
+
+    calls = []
+
+    def runner(command, prompt, timeout):
+        calls.append(prompt)
+        return 1, '{"api_error_status": 429}', ""
+
+    status, _, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner)
+
+    assert status == "unknown"
+    assert blocker is None
+    assert len(calls) == 1

@@ -34,6 +34,9 @@ class _FakeHarness:
     def log(self, text: str) -> None:
         self.logs.append(text)
 
+    def log_event(self, event: dict, *, prefix: str = "  ") -> None:
+        self.logs.append(event.get("message", ""))
+
     def request(self, method: str, path: str, payload: dict | None = None) -> dict:
         if path == "/api/orders":
             return {"order": {"id": "order-1"}}
@@ -91,3 +94,32 @@ def test_a_relative_csv_path_does_not_land_transcripts_in_the_cwd(tmp_path, monk
     resolved = run_bench._transcript_dir(Path("elsewhere/results.csv"))
 
     assert resolved == (tmp_path / "elsewhere" / "transcripts").resolve()
+
+
+def test_a_run_that_stops_to_ask_a_human_is_recorded_immediately(tmp_path, monkeypatch):
+    """Tonight's run: a transient 401 blocked the first order at 21:35 and the harness sat on
+    it, because `awaiting_user` is not one of the statuses the poll loop calls terminal. Left
+    alone it would have waited an hour, three times over."""
+
+    class _AwaitingHarness(_FakeHarness):
+        def request(self, method: str, path: str, payload: dict | None = None) -> dict:
+            if path.endswith("/execution") and method == "GET":
+                return {
+                    "execution": {
+                        "status": "awaiting_user",
+                        "events": [{"id": "e1", "level": "warning", "message": "The coding CLI's login has expired.", "stage": "requirements"}],
+                    }
+                }
+            return super().request(method, path, payload)
+
+    monkeypatch.setattr(run_bench, "harness", _AwaitingHarness())
+    monkeypatch.setattr(run_bench, "POLL_SECONDS", 0)
+    monkeypatch.setattr(run_bench, "_run_commit", lambda: "abc1234")
+    csv_path = tmp_path / "results.csv"
+
+    row = run_bench.run_one(ORDER, csv_path=csv_path)
+
+    assert row["outcome"] == "not_started"
+    assert row["failure_cause"] == "environment"
+    assert "login has expired" in row["notes"]
+    assert csv_path.is_file()

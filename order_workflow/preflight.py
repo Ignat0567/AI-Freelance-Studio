@@ -162,21 +162,28 @@ def probe_coding_cli_credentials(
     if not binary:
         return "unknown", "coding CLI was not found; the adapter's own readiness check covers this", None
     command = [binary, "-p", "--output-format", "json", "--model", "sonnet"]
-    try:
-        code, stdout, stderr = runner(command, "Reply with the single word: ok", timeout)
-    except OSError as exc:
-        return "unknown", f"login could not be probed ({exc})", None
-    if code == 0:
-        return "ok", "login accepted", None
-    try:
-        payload = json.loads(_ANSI.sub("", stdout))
-    except ValueError:
-        payload = None
-    status = payload.get("api_error_status") if isinstance(payload, dict) else None
-    if status == 401:
-        return "blocked", "login has expired (HTTP 401)", CODING_CLI_AUTH_EXPIRED
-    detail = (stderr or stdout).strip()[:120] or f"exit code {code}"
-    return "unknown", f"login probe was inconclusive ({detail})", None
+    # A 401 is asked for twice before it is believed. On 2026-08-26 at 21:35 this probe got
+    # one, blocked a three-order unattended run at its first order, and nine minutes later
+    # the same probe returned "login accepted" with nobody having signed in: the CLI holds an
+    # OAuth token it refreshes on demand, so a single 401 can mean "the access token needed
+    # refreshing" rather than "the login is gone". A login that is really expired answers 401
+    # both times; the retry costs one trivial call and only on the failing path.
+    for attempt in (1, 2):
+        try:
+            code, stdout, stderr = runner(command, "Reply with the single word: ok", timeout)
+        except OSError as exc:
+            return "unknown", f"login could not be probed ({exc})", None
+        if code == 0:
+            return "ok", "login accepted" if attempt == 1 else "login accepted on a second call (the first needed a token refresh)", None
+        try:
+            payload = json.loads(_ANSI.sub("", stdout))
+        except ValueError:
+            payload = None
+        status = payload.get("api_error_status") if isinstance(payload, dict) else None
+        if status != 401:
+            detail = (stderr or stdout).strip()[:120] or f"exit code {code}"
+            return "unknown", f"login probe was inconclusive ({detail})", None
+    return "blocked", "login has expired (HTTP 401 twice)", CODING_CLI_AUTH_EXPIRED
 
 
 def _default_cli_runner(command: Sequence[str], prompt: str, timeout: int) -> tuple[int, str, str]:

@@ -187,6 +187,17 @@ def run_one(order: BenchOrder, *, csv_path: Path) -> dict:
             harness.log_event(event)
         if execution.get("status") in {"succeeded", "failed", "cancelled"}:
             break
+        if execution.get("status") == "awaiting_user":
+            # A run that stops to ask a human has finished, as far as an unattended
+            # benchmark is concerned. Without this the poll loop waited out the full hour on
+            # a run that had already said what it wanted -- three times over for three
+            # orders. It cost tonight's run: a transient 401 blocked the first order at
+            # 21:35 and the harness sat on it.
+            asked = next((event.get("message", "") for event in reversed(events) if event.get("level") in {"warning", "error"}), "")
+            harness.log(f"the run is waiting for a human: {asked}")
+            row = _failed_row(order, run_at, "environment", f"awaiting_user: {asked}"[:500])
+            _append_row(row, csv_path)
+            return row
         if time.time() > deadline:
             harness.log(f"giving up after {RUN_TIMEOUT_SECONDS}s -- recording as wedged and moving on")
             row = _failed_row(order, run_at, "product_bug", f"no terminal status within {RUN_TIMEOUT_SECONDS}s")
