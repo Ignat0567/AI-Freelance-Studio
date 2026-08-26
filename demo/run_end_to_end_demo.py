@@ -67,6 +67,11 @@ def log(message: str, *, prefix: str = "  ") -> None:
     print(f"[{_stamp()}]{prefix}{message}", flush=True)
 
 
+# Enough to carry a gate's verdict and its findings without turning the log into the
+# transcript. A visual check fails with up to five findings plus its own header.
+_DETAIL_LINES = 12
+
+
 def log_event(event: dict, *, prefix: str = "  ") -> None:
     """One event as the operator sees it, its details included.
 
@@ -79,7 +84,16 @@ def log_event(event: dict, *, prefix: str = "  ") -> None:
     marker = "*" if event.get("kind") == "milestone" else " "
     log(f"{marker} [{event.get('stage', '?'):<17}] {event.get('message', '')}", prefix=prefix)
     for detail in event.get("details") or ():
-        for line in str(detail).splitlines()[:6]:
+        # The tail, not the head. A gate's detail opens with the shell command it ran, its
+        # exit code and an empty stderr, and closes with the verdict -- so the first six
+        # lines of a failing visual check are the container invocation and the findings are
+        # exactly what falls off. Watched live on 2026-08-26, this printed "Palette: 4/4
+        # approved colours painted" and stopped.
+        lines = str(detail).splitlines()
+        if len(lines) > _DETAIL_LINES:
+            log(f"      ... {len(lines) - _DETAIL_LINES} earlier line(s)", prefix=prefix)
+            lines = lines[-_DETAIL_LINES:]
+        for line in lines:
             log(f"      {line}", prefix=prefix)
 
 

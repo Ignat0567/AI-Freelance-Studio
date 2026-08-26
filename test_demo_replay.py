@@ -208,3 +208,17 @@ def test_an_event_without_details_prints_one_line(capsys):
 
     assert len(capsys.readouterr().out.strip().splitlines()) == 1
 
+
+def test_a_long_detail_keeps_its_verdict_rather_than_its_header(capsys):
+    """A gate's detail opens with the shell command that ran it and closes with what it
+    found. Printing the first lines showed the container invocation and dropped the
+    findings -- which is what a live run printed on 2026-08-26 before this."""
+    from demo.run_end_to_end_demo import log_event
+
+    detail = chr(10).join(["Command failed: npm install ...", "Exit code: 1", "Stderr:", "", "Stdout:", "Palette: 4/4"] + [f"- finding {n}" for n in range(1, 9)])
+
+    log_event({"stage": "ui_shell", "message": "QA failed", "details": (detail,)})
+
+    printed = capsys.readouterr().out
+    assert "- finding 8" in printed
+    assert "earlier line(s)" in printed
