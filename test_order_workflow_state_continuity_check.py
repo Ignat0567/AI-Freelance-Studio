@@ -146,3 +146,19 @@ def test_the_runner_matches_the_repair_loop_signature(tmp_path, monkeypatch):
     outcome = run_state_continuity_check_in_docker(("label",), Path(tmp_path))
 
     assert outcome.passed is True
+
+
+def test_the_gate_rebuilds_before_it_previews():
+    """`npm run preview` serves dist/, and dist/ is whatever the phase built before the
+    repair loop began. Measured on 2026-08-26: dist built 17:05, the repair edited
+    src/styles/global.css at 17:20, and the gate at 17:21 reported its three findings word
+    for word off the 17:05 bundle. Two repairs and 865 seconds bought nothing visible."""
+    from order_workflow.functional_smoke_check import _SHELL_COMMAND as smoke
+    from order_workflow.state_continuity_check import _SHELL_COMMAND as state
+    from order_workflow.visual_check import _SHELL_COMMAND as visual
+
+    for command in (visual, state, smoke):
+        assert command.index("npm run build") < command.index("npm run preview")
+        # A rebuild that fails has to say so: an unexplained non-zero exit sends the repair
+        # looking at the browser findings it can no longer even reach.
+        assert "BUILD FAILED" in command

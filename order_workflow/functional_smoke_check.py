@@ -108,6 +108,16 @@ main().catch((err) => {{
 _SHELL_COMMAND = (
     "npm install --no-audit --no-fund >/dev/null 2>&1 && "
     f"npm install --no-save --no-audit --no-fund playwright@{PLAYWRIGHT_NPM_VERSION} >/dev/null 2>&1 && "
+    # The bundle has to be the one the repair just wrote. `npm run preview` serves
+    # whatever is in dist/, and dist/ is whatever the phase built before the repair loop
+    # started -- so a repair that edited src/ was invisible here unless the model happened
+    # to rebuild on its own. Measured on 2026-08-26: dist/assets built 17:05, the repair
+    # edited src/styles/global.css at 17:20, and the gate at 17:21 returned its three
+    # findings word for word, having loaded the 17:05 bundle. Two repair calls and 865
+    # seconds bought nothing a browser could see.
+    "if ! npm run build >/tmp/freelancerstudio-build.log 2>&1; then "
+    "echo 'BUILD FAILED -- the last change left the project not compiling:'; "
+    "tail -n 30 /tmp/freelancerstudio-build.log; exit 1; fi; "
     "(npm run preview >/tmp/freelancerstudio-preview.log 2>&1 &) && "
     "sleep 4 && "
     f"node {_SMOKE_CHECK_FILENAME}; "
