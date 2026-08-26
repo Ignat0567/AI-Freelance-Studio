@@ -79,6 +79,39 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Where it stands (2026-08-24)
+
+**1 of 3. Not met.** Two attempts, both from a fresh clone.
+
+The first attempt failed 3 of 3 in 34 seconds, all with `workspace_root_unavailable`:
+`generated_projects/` is gitignored and nothing created it, so a clean checkout could not run
+a single order. Invisible from a working tree, where that directory has existed since the
+first run, and missed by every test and every live delivery before it. Fixed in `36f5470` --
+which is the clearest argument for keeping "fresh clone" in step 1 above.
+
+The second attempt, at `36f5470`:
+
+| order | outcome | duration | repairs | cause |
+|---|---|---|---|---|
+| `b02-pricing-page` | succeeded | 117 s | 0 | — |
+| `b06-reading-journal` | qa_failed | 1666 s | 2 | `generated_code` |
+| `b03-focus-timer` | failed | 4 s | 0 | `provider` |
+
+The two failures are different in kind and should not be averaged. The third order died on
+the provider's session limit, costing four seconds and nothing, and says nothing whatever
+about the pipeline. The second is the real result: the visual gate never closed, and its
+first repair was killed by the 450s ceiling.
+
+Open, in order:
+
+1. **The time ceilings.** 450 s for a repair and 1500 s for a build both look low for
+   multi-screen apps, but that impression rests on a sample the ceiling itself was deleting
+   -- a killed call emitted no timing at all until `b55028a`. The honest sample starts now;
+   decide from it, not from the impression.
+2. **Re-run acceptance** when the provider's session limit is free, or the third order dies
+   for nothing again.
+3. **Criterion 3** -- somebody other than the author paying for a delivery -- is untouched.
+
 ## Changes to this file
 
 The criterion may not be relaxed to fit what happened to get built. Any edit gets a dated
@@ -94,3 +127,6 @@ least visible.
   (delivery_screenshot.png, captured by the visual gate and verified in a container against
   a fixture page). What still needs live runs: the three unattended orders, and someone
   paying for one.
+- 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
+  acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
+  down as 1 of 3.
