@@ -327,11 +327,26 @@ def test_automated_callers_stay_unattended_by_default():
 
 
 def test_the_bench_runner_does_not_ask_to_be_attended():
+    """What the benchmark actually sends. This used to assert that the word "attended" did
+    not occur anywhere in run_bench.py, which a comment about *unattended* runs was enough to
+    break -- and which would have passed just as happily on `"attended": False` spelled with
+    a different key."""
+    import ast
     from pathlib import Path
 
-    source = Path("bench/run_bench.py").read_text(encoding="utf-8")
-
-    assert "attended" not in source
+    tree = ast.parse(Path("bench/run_bench.py").read_text(encoding="utf-8"))
+    payloads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", "") == "request"
+        and len(node.args) >= 3
+        and isinstance(node.args[2], ast.Dict)
+    ]
+    assert payloads, "the runner no longer posts a literal execution payload; check this test still measures something"
+    for call in payloads:
+        keys = [key.value for key in call.args[2].keys if isinstance(key, ast.Constant)]
+        assert "attended" not in keys
 
 
 def test_an_attended_request_pauses_even_with_the_env_gate_off(tmp_path):
