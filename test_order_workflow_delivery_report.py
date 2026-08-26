@@ -297,3 +297,39 @@ def test_the_evidence_file_carries_the_visual_gates_measurements():
 
     assert "Palette: 4/4" in evidence
     assert "design and accessibility check" in evidence
+
+
+def test_a_bullet_that_only_repeats_the_goal_is_not_printed():
+    """An order written as one paragraph produces a single "core feature" that is the goal
+    itself, trimmed to its field. The reading-journal delivery of 2026-08-26 printed the
+    same sentence twice under "What was built", the second time ending mid-thought."""
+    from order_workflow.delivery_report import build_delivery_report
+
+    goal = "A personal reading journal that lives in one browser on my laptop. I add a book by typing its title."
+
+    report = build_delivery_report(
+        goal=goal,
+        requirements=("A personal reading journal that lives in one browser on my laptop. I add a book by\u2026",),
+        note="No backend was required.",
+        gate_log=[],
+        files_created=3,
+        meaningful_artifact_count=3,
+    )
+
+    assert report.count("A personal reading journal") == 1
+
+
+def test_a_real_feature_list_is_still_printed():
+    from order_workflow.delivery_report import build_delivery_report
+
+    report = build_delivery_report(
+        goal="A reading journal.",
+        requirements=("Drag a book between shelves", "Write notes on a book"),
+        note="",
+        gate_log=[],
+        files_created=3,
+        meaningful_artifact_count=3,
+    )
+
+    assert "- Drag a book between shelves" in report
+    assert "- Write notes on a book" in report

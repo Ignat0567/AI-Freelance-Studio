@@ -106,6 +106,23 @@ def resolve_run_instruction(run_command: str | None) -> str:
     return run_command or DEFAULT_RUN_INSTRUCTION
 
 
+def _requirements_worth_listing(goal: str, requirements: tuple[str, ...]) -> tuple[str, ...]:
+    """Drop a bullet that only repeats the goal printed directly above it.
+
+    An order written as one paragraph yields a single "core feature" that is the goal itself,
+    cut to fit its field. The client then reads the same sentence twice, the second time
+    ending in an ellipsis -- which reads like the document lost its nerve halfway through.
+    """
+    trimmed = " ".join(goal.split())
+    kept = []
+    for item in requirements:
+        candidate = " ".join(item.split()).rstrip("…").rstrip()
+        if candidate and trimmed.startswith(candidate):
+            continue
+        kept.append(item)
+    return tuple(kept)
+
+
 def build_delivery_report(
     *,
     goal: str,
@@ -133,7 +150,7 @@ def build_delivery_report(
         "",
         goal.strip(),
         "",
-        *([f"- {item}" for item in requirements] if requirements else []),
+        *[f"- {item}" for item in _requirements_worth_listing(goal, requirements)],
         "",
         note.strip(),
         "",
