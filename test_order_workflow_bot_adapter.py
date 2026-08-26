@@ -196,3 +196,8 @@ def test_bot_build_finalizes_with_readme_and_architecture(tmp_path):
     readme_text = (workspace.project_path / "README.md").read_text(encoding="utf-8")
     assert "npm test" not in readme_text
     assert "pip install -r requirements.txt" in readme_text
+    # The README's Setup/Run section used to print the QA gate's commands, which for a bot
+    # happened to look like setup steps and for a static page said `npm test`. It now prints
+    # the project's real run instruction, which has to name the entry point.
+    assert "python bot.py" in readme_text
+    assert "npm install" not in readme_text

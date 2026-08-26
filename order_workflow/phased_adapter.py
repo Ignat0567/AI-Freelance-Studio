@@ -13,7 +13,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_ove
 
 from .complexity import classify_phase_complexity, describe_phase_complexity, model_for_complexity
 from .deployment import DeploymentOutcome, build_and_verify_container
-from .delivery_report import build_delivery_report, build_qa_evidence
+from .delivery_report import build_delivery_report, build_qa_evidence, resolve_run_instruction
 from .design_tokens import write_design_tokens
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
@@ -863,6 +863,9 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         if evidence:
             evidence_file = "qa_evidence.md"
             (workspace.project_path / evidence_file).write_text(evidence, encoding="utf-8")
+        # Resolved once: the delivery report and the README have to answer "how do I start
+        # it" with the same sentence, and they did not.
+        run_text = resolve_run_instruction((deployment.run_command if deployment is not None and deployment.run_command else None) or run_instruction)
         delivery_report = build_delivery_report(
             goal=request.brief.goal,
             requirements=request.handoff.requirements,
@@ -873,7 +876,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             usage=self._gate_tally.total_usage(),
             deployment_status=deployment.status_message if deployment is not None else None,
             deployment_image=deployment.image_tag if deployment is not None else None,
-            run_command=(deployment.run_command if deployment is not None and deployment.run_command else None) or run_instruction,
+            run_command=run_text,
             evidence_file=evidence_file,
             screenshot_file=screenshot,
             delivered_files=_delivered_files(workspace),
@@ -893,7 +896,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             goal=request.brief.goal,
             tech_stack=tech_stack,
             features=request.handoff.requirements,
-            setup_commands=self.qa_commands,
+            run_instruction=run_text,
             module_map=module_map,
             overview=overview,
         )
@@ -1016,7 +1019,19 @@ class TelegramBotExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
             return build.failure
 
         self._emit_milestone(event_sink, ExecutionStage.BOT_BUILD, "Bot build complete: handlers implemented, module imports cleanly.")
-        return self._finalize_success(request, event_sink, workspace, note="Telegram bot generated. No backend or browser frontend required.")
+        return self._finalize_success(
+            request,
+            event_sink,
+            workspace,
+            note="Telegram bot generated. No backend or browser frontend required.",
+            # A Python bot has no package.json, so the generic Vite instruction was as wrong
+            # here as it was for the single-file page. The steps are the ones the bot prompt
+            # requires the project to support: install, set the token, run the entry point.
+            run_instruction=(
+                "Install dependencies with `pip install -r requirements.txt`, copy `.env.example` to `.env` "
+                "and set `BOT_TOKEN` to your token from @BotFather, then start it with `python bot.py`."
+            ),
+        )
 
 
 class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):

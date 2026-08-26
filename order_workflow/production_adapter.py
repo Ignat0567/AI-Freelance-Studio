@@ -9,6 +9,7 @@ from typing import Protocol
 from ai_utils import ask_studio_ai_with_history
 from project_docs import build_architecture_mermaid, build_module_map, build_overview_paragraph, build_readme
 
+from .delivery_report import resolve_run_instruction
 from .execution_plan import ProductionExecutionPackage, build_production_execution_package
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
 from .models import ArtifactKind, ExecutionResult, ExecutionStage, EventLevel, ProjectBrief, TestSummary, TokenUsage
@@ -298,7 +299,9 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 goal=request.brief.goal,
                 tech_stack=tech_stack,
                 features=request.handoff.requirements,
-                setup_commands=package.qa_commands,
+                # This path has no run command of its own; the shared default is still an
+                # answer to the client's question, which `npm test` never was.
+                run_instruction=resolve_run_instruction(None),
                 module_map=module_map,
                 overview=overview,
             )

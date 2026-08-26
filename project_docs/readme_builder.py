@@ -65,7 +65,7 @@ def build_readme(
     goal: str,
     tech_stack: str,
     features: tuple[str, ...],
-    setup_commands: tuple[str, ...],
+    run_instruction: str,
     module_map: dict[str, tuple[str, ...]],
     overview: str,
 ) -> str:
@@ -86,9 +86,11 @@ def build_readme(
         "",
         "## Setup / Run",
         "",
-        "```",
-        *setup_commands,
-        "```",
+        # The delivered project's own run instruction, the same string delivery_report.md
+        # prints. This was the QA gate's command list until 2026-08-26, so the README of a
+        # single self-contained HTML file told its client to run `npm test` -- while the
+        # delivery report in the same folder correctly said to open the file in a browser.
+        run_instruction,
         "",
         "## Project Structure",
         "",

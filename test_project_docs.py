@@ -105,7 +105,7 @@ def test_build_readme_contains_every_real_substituted_value():
         goal="Build a demo API",
         tech_stack="Frontend: React\nBackend: FastAPI\nStorage: SQLite",
         features=("Real-time chat", "User auth"),
-        setup_commands=("pip install -r requirements.txt", "uvicorn main:app"),
+        run_instruction="Install dependencies with `pip install -r requirements.txt`, then start it with `uvicorn main:app`.",
         module_map=module_map,
         overview="A real overview paragraph.",
     )
@@ -118,3 +118,21 @@ def test_build_readme_contains_every_real_substituted_value():
     assert "pip install -r requirements.txt" in readme
     assert "ARCHITECTURE.md" in readme
     assert "**models** (1 file)" in readme
+
+
+def test_the_readme_tells_the_client_how_to_run_the_project_not_how_it_was_tested():
+    """A single-file page's README said `npm test` -- the QA gate's command, printed under
+    "Setup / Run" -- while delivery_report.md in the same folder said to open the file in a
+    browser. Two documents, one question, opposite answers, in the same delivered folder."""
+    readme = build_readme(
+        project_name="Pricing Page",
+        goal="Three pricing tiers on one page",
+        tech_stack="Frontend: Single-file HTML + inline JS (no framework, no build)",
+        features=("Three tiers",),
+        run_instruction="Open `index.html` in any browser. There is nothing to install and nothing to start.",
+        module_map={},
+        overview="A pricing page.",
+    )
+
+    assert "Open `index.html` in any browser." in readme
+    assert "npm test" not in readme

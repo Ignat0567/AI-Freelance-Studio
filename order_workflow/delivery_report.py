@@ -95,6 +95,17 @@ def _cost_line(usage: TokenUsage | None) -> str | None:
     return f"Build cost: ${usage.total_cost_usd:.2f}."
 
 
+# What a delivery says when nothing more specific is known. Kept here, next to the report
+# that shows it, because the README used to answer the same question from a different source
+# -- the QA gate commands -- and told the client of a single-file page to run `npm test`.
+DEFAULT_RUN_INSTRUCTION = "Install dependencies, then start the preview server: `npm install && npm run preview`."
+
+
+def resolve_run_instruction(run_command: str | None) -> str:
+    """The one answer to "how do I start it", for every document that has to give it."""
+    return run_command or DEFAULT_RUN_INSTRUCTION
+
+
 def build_delivery_report(
     *,
     goal: str,
@@ -163,7 +174,7 @@ def build_delivery_report(
         "",
         "## How to run it",
         "",
-        run_command or "Install dependencies, then start the preview server: `npm install && npm run preview`.",
+        resolve_run_instruction(run_command),
         "",
     ]
     return "\n".join(lines)
