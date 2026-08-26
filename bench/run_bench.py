@@ -39,7 +39,13 @@ RESULTS_CSV = REPO_ROOT / "bench" / "results.csv"
 POLL_SECONDS = 5
 # Long enough for a build plus two repairs at the current budgets, short enough that a wedged
 # run cannot consume the whole night and leave the remaining orders unmeasured.
-RUN_TIMEOUT_SECONDS = 3600
+#
+# 3600 -> 5400 when the repair ceiling went 450 -> 900 (2026-08-26). A realistic_app runs two
+# phases, each a build plus up to two repairs, so the theoretical worst case is now far past
+# either number; this is set against the longest run actually recorded (2155s) with room for
+# the repairs to use their new budget, not against that worst case. A run that really is
+# wedged still costs at most this, and is recorded as product_bug rather than lost.
+RUN_TIMEOUT_SECONDS = 5400
 
 
 def _now() -> str:

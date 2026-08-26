@@ -79,6 +79,32 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## The repair ceiling, decided (2026-08-26, evening)
+
+**Raised 450s -> 900s.** This corrects the paragraph below, written this morning, which said
+"the time ceilings are not what is short". That was read off 7 repair calls with 1 strike. It
+is now read off 13, and the shape is different:
+
+|  | morning (7 calls) | tonight (13 calls) |
+|---|---|---|
+| stopped at the ceiling | 1 (14%) | **4 (31%)** |
+| finished: median | 173 s | 216 s |
+| finished: p90 | 396 s (88%) | **411 s (91%)** |
+
+Nearly a third killed, and the survivors pressed flat against the limit, is the shape of a
+ceiling that is deciding outcomes rather than catching runaways. Two direct observations
+fixed where to put the new one: tonight's killed calls wrote their **first file at ~444 s**,
+so 450 was cutting exactly as output began landing; and build calls, doing strictly more work
+under 1500 s, peak at 74%. 900 gives the writing half of a repair the room the reading half
+took, and two repairs still fit inside one build's wall time. `bench/run_bench.py`'s per-run
+timeout went 3600 -> 5400 to match.
+
+Said plainly, because it matters more than the number: **the morning conclusion was drawn
+from a sample taken while repairs were fighting the stale bundle** described below -- some of
+those seconds were spent on work that could never have shown up. The corrected figure is not
+"the same measurement, more data"; it is the first measurement of repairs that could actually
+land. Both samples are recorded above rather than one replacing the other.
+
 ## Where it stands (2026-08-26, second run)
 
 **1 of 3 on the fourth attempt** -- and the reason is the most important thing found this
@@ -212,6 +238,9 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-26 (evening) — criterion unchanged; the repair ceiling raised 450s -> 900s from
+  13 recorded calls, and this morning's "the ceilings are not what is short" corrected in
+  place rather than deleted.
 - 2026-08-26 (evening) — criterion unchanged; a fourth attempt recorded, at 1 of 3, along
   with the reason: the browser gates were judging the build from before the repair, so no
   earlier run says what it appeared to say about repair quality. Nothing was softened --

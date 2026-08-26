@@ -31,11 +31,24 @@ from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
 # asking for; prevention is only cheaper than repair if the prevention is allowed to finish.
 CLAUDE_CODE_TASK_TIMEOUT = 1500
 # A repair call is a narrower job than the build it follows: the project already exists and
-# the prompt names the exact gate output to fix. Sharing the full build budget means one
-# timed-out repair can eat a quarter of an hour and still leave the phase unverified, so
-# repairs get their own, smaller clock -- two of them together stay inside one build's worth
-# of wall time. See run_qa_repair_loop, which passes this per call.
-CLAUDE_CODE_REPAIR_TIMEOUT = 450
+# the prompt names the exact gate output to fix. It still gets its own, smaller clock than a
+# build, so that a repair which is going nowhere cannot eat the phase. See run_qa_repair_loop,
+# which passes this per call.
+#
+# 450 -> 900 on 2026-08-26, decided from 13 recorded repair calls rather than from the feeling
+# that the number looked low (which it had done for six days on a sample the ceiling itself
+# was censoring -- see b55028a and bench/budget.py):
+#
+#   ceiling 450s   13 calls, 4 stopped at it (31%)
+#   finished       n=9  median=216s  p90=411s (91% of the ceiling)
+#
+# Nearly a third killed and the survivors pressed against the limit is the shape of a ceiling
+# that decides outcomes. Two direct observations settled where to put it: the killed calls
+# wrote their first file at ~444s, so 450 cut exactly when output began landing; and build
+# calls, doing strictly more work under 1500s, peak at 74%. 900 gives the writing half of a
+# repair as much room as the reading half took, and two repairs still stay inside a build's
+# worth of wall time.
+CLAUDE_CODE_REPAIR_TIMEOUT = 900
 
 
 @dataclass(frozen=True, slots=True)
