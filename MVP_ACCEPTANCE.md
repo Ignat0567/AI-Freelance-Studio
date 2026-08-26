@@ -79,6 +79,32 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Where it stands (2026-08-26, third run -- on the gate fix)
+
+**2 of 3.** The first run made on `04a2b93`, i.e. the first whose gates could see what its
+repairs did:
+
+| order | outcome | duration | repairs | cost | cause |
+|---|---|---|---|---|---|
+| `b02-pricing-page` | succeeded | 131 s | 0 | $0.45 | -- |
+| `b06-reading-journal` | qa_failed | 1612 s | 2 | $3.06 | `generated_code` |
+| `b03-focus-timer` | **succeeded** | 1875 s | 2 | $8.57 | -- |
+
+**The focus timer completed for the first time.** It had never once got past `ui_shell`: two
+attempts died on the provider's session limit and one on the stale bundle. Here its visual
+gate closed after two repairs, the container served HTTP 200, and the delivered folder
+answers criterion 2's four questions with its README and its delivery report finally saying
+the same thing -- both now print `docker run ...` where the README used to say `npm test`.
+
+The gate fix is confirmed in production rather than in a test: `dist/assets` rebuilt at 22:30
+against source edited at 22:22, where before tonight the gate would have re-read the 22:11
+bundle and returned its findings verbatim.
+
+The one failure is now a clean statement instead of a confused one: b06's two repair calls
+were both killed at 454 s, the second having written its first file at ~444 s. That is the
+ceiling, not the generated code -- and it is what the section below acts on. Expect this row
+to be the thing that changes on the next run at 900 s.
+
 ## The repair ceiling, decided (2026-08-26, evening)
 
 **Raised 450s -> 900s.** This corrects the paragraph below, written this morning, which said
@@ -238,6 +264,9 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-26 (night) — criterion unchanged; a fifth attempt recorded at 2 of 3, the first
+  on gates that can see their own repairs, and the first in which the focus timer ever
+  completed.
 - 2026-08-26 (evening) — criterion unchanged; the repair ceiling raised 450s -> 900s from
   13 recorded calls, and this morning's "the ceilings are not what is short" corrected in
   place rather than deleted.
