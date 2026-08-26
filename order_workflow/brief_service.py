@@ -164,6 +164,23 @@ def _pdf_features(signals) -> tuple[str, ...]:
 
 _FEATURE_SEPARATORS = re.compile(r"[\n;]+|^\s*(?:[-*•]|\d+[.)])\s+", re.MULTILINE)
 _MAX_GENERIC_FEATURES = 8
+# ShortText's own limit. Applied in one place so nothing downstream has to guess whether it
+# is holding a whole capability or the front of one.
+_MAX_FEATURE_CHARS = 240
+
+
+def _fit_feature(text: str) -> str:
+    """Trim a capability to the field it lives in, at a word boundary, and mark the cut.
+
+    A hard slice put a mid-word stump in front of the client: the reading-journal order's
+    only "feature" ended "...it goes onto one of three shelves: Want to re", and that string
+    is what delivery_report.md lists under "What was built", what the build prompt receives
+    as its requirement, and what the acceptance criteria are written from.
+    """
+    if len(text) <= _MAX_FEATURE_CHARS:
+        return text
+    clipped = text[: _MAX_FEATURE_CHARS - 1].rsplit(" ", 1)[0].rstrip(",;:-")
+    return f"{clipped or text[: _MAX_FEATURE_CHARS - 1]}…"
 
 
 def _split_capabilities(text: str) -> tuple[str, ...]:
@@ -182,7 +199,7 @@ def _split_capabilities(text: str) -> tuple[str, ...]:
     parts = [
         # A trailing item usually reads "...; and log the result" -- the conjunction joined
         # it to the previous clause and means nothing once it stands alone.
-        sanitize_public_text(re.sub(r"^\s*(?:and|or)\s+", "", part, flags=re.IGNORECASE))[:240]
+        _fit_feature(sanitize_public_text(re.sub(r"^\s*(?:and|or)\s+", "", part, flags=re.IGNORECASE)))
         for part in _FEATURE_SEPARATORS.split(text)
         if part and part.strip()
     ]
@@ -197,7 +214,7 @@ def _generic_features(order: UserOrder) -> tuple[str, ...]:
     split = _split_capabilities(source)
     if split:
         return split
-    return (sanitize_public_text(source)[:240],)
+    return (_fit_feature(sanitize_public_text(source)),)
 
 
 _SECTION_HEADING = re.compile(r"^\s*\d+\.\s+(.+)$", re.MULTILINE)

@@ -518,6 +518,29 @@ def test_a_bulleted_answer_is_split_on_the_bullets():
     assert features == ("Add a book", "Mark it finished", "See the count")
 
 
+def test_a_capability_too_long_for_its_field_is_cut_at_a_word(  ):
+    """The reading-journal order's only feature ended "...three shelves: Want to re" -- a
+    mid-word stump that goes into the delivery report's "What was built", into the build
+    prompt as a requirement, and into the acceptance criteria written from it."""
+    from order_workflow.brief_service import _MAX_FEATURE_CHARS, _split_capabilities
+
+    prose = "A personal reading journal that lives in one browser. " + "I add a book by typing its title and page count and it goes onto a shelf. " * 6
+
+    feature = _split_capabilities(prose)[0]
+
+    assert len(feature) <= _MAX_FEATURE_CHARS
+    assert feature.endswith("…")
+    assert not feature[:-1].endswith(" ")
+    # The cut lands between words: the last word before it is whole.
+    assert prose.startswith(feature[:-1])
+
+
+def test_a_capability_that_fits_is_left_exactly_as_it_is():
+    from order_workflow.brief_service import _split_capabilities
+
+    assert _split_capabilities("Add a book to a shelf") == ("Add a book to a shelf",)
+
+
 def test_punctuation_noise_is_not_mistaken_for_a_feature():
     from order_workflow.brief_service import _split_capabilities
 
