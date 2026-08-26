@@ -370,9 +370,26 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         )
 
 
-def _build_qa_fix_prompt(qa_outcome: QAOutcome) -> str:
+def _build_qa_fix_prompt(qa_outcome: QAOutcome, *, budget_seconds: int | None = None) -> str:
+    """The repair prompt.
+
+    The sentence about the findings already being measured is there for a measured reason.
+    On 2026-08-26 a repair call spent its entire 450s budget writing four Playwright scripts
+    of its own to re-find the elements the visual gate had already named, pixel offsets
+    included -- and was killed at the ceiling having edited no source file at all. Re-running
+    the gate afterwards produced the same eight findings, word for word.
+    """
+    clock = (
+        f"You have about {budget_seconds // 60} minutes before this call is stopped; spend them editing code.\n"
+        if budget_seconds
+        else ""
+    )
     return (
-        "The QA commands you were asked to satisfy are now failing. Fix the code so they pass.\n"
+        "A check that has to pass before this project can be delivered is failing. Fix the code so it passes.\n"
+        "The findings below were produced moments ago by a program -- a compiler, a test runner, or a real "
+        "headless browser at the viewport each finding names. Take them as given: they are already measured, and "
+        "reproducing them yourself costs the time you have to fix them with.\n"
+        f"{clock}"
         "Do not rewrite unrelated parts of the project.\n\n"
         f"{qa_outcome.failure_summary()}\n\n"
         "After fixing, stop and exit. Do not keep rewriting files."

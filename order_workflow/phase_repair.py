@@ -38,7 +38,7 @@ def run_qa_repair_loop(
     stage: ExecutionStage,
     agent: str,
     max_attempts: int,
-    fix_prompt_builder: Callable[[QAOutcome], str],
+    fix_prompt_builder: Callable[..., str],
     model: str | None = None,
     fix_timeout: int | None = None,
 ) -> RepairLoopResult:
@@ -74,7 +74,10 @@ def run_qa_repair_loop(
             )
             fix_timed_out = False
             try:
-                fix_result = opencode_client.execute_project_prompt(fix_prompt_builder(qa_outcome), workspace_path, event_sink, cancellation, **fix_kwargs)
+                # The builder is given the budget as well: a repair that does not know its
+                # clock spends it re-deriving what the gate already measured.
+                prompt = fix_prompt_builder(qa_outcome, budget_seconds=fix_timeout)
+                fix_result = opencode_client.execute_project_prompt(prompt, workspace_path, event_sink, cancellation, **fix_kwargs)
             except Exception as exc:
                 # Previously a bare `break`: the loop ended with no trace of why, so the
                 # phase reported the gate's own finding as the reason and whoever read it

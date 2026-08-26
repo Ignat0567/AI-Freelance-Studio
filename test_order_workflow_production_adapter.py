@@ -138,3 +138,35 @@ def test_production_mode_uses_injected_dry_run_adapter_and_never_fake(tmp_path):
         "dry_run_report.md",
     }
     assert all(item.simulated for item in finished.artifacts)
+
+
+def test_the_repair_prompt_says_the_findings_are_already_measured():
+    """A repair call on 2026-08-26 spent its whole 450s budget writing four Playwright
+    scripts to re-find the elements the visual gate had already named, pixel offsets
+    included, and was killed at the ceiling having edited no source file. Re-running the
+    gate produced the same eight findings word for word."""
+    from order_workflow.production_adapter import _build_qa_fix_prompt
+    from order_workflow.qa_runner import QACommandResult, QAOutcome
+
+    outcome = QAOutcome(
+        passed=False,
+        results=(QACommandResult(command="visual", exit_code=1, stdout_tail="VISUAL CHECK FAILED:\n- text extends 132px outside the viewport", stderr_tail="", duration=9.0),),
+    )
+
+    prompt = _build_qa_fix_prompt(outcome, budget_seconds=450)
+
+    assert "already measured" in prompt
+    assert "reproducing them yourself costs the time you have to fix them with" in prompt
+    assert "about 7 minutes" in prompt
+    assert "132px outside the viewport" in prompt
+
+
+def test_the_repair_prompt_omits_the_clock_when_there_is_no_ceiling():
+    # The legacy path runs repairs on the full build budget; naming a limit it does not have
+    # would be a lie the model then plans around.
+    from order_workflow.production_adapter import _build_qa_fix_prompt
+    from order_workflow.qa_runner import QACommandResult, QAOutcome
+
+    outcome = QAOutcome(passed=False, results=(QACommandResult(command="npm test", exit_code=1, stdout_tail="1 failing", stderr_tail="", duration=2.0),))
+
+    assert "minutes before this call is stopped" not in _build_qa_fix_prompt(outcome)
