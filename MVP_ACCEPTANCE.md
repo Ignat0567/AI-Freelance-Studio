@@ -79,6 +79,33 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Criteria 1 and 2, in one pass (2026-08-27, 23:12)
+
+**3 of 3 again, and this time every folder is complete in the same sequence.**
+
+| order | outcome | duration | repairs |
+|---|---|---|---|
+| `b02-pricing-page` | succeeded | 144 s | 0 |
+| `b06-reading-journal` | succeeded | 1583 s | 1 |
+| `b03-focus-timer` | succeeded | 1585 s | 0 |
+
+One repair across three orders, $16.58, 56 minutes, unattended. All three folders carry the
+delivery report, the README agreeing with it, the checks' own output and a screenshot -- the
+static page included, which is what the previous 3-of-3 could not show.
+
+The reading journal, which failed six of its first eight runs, needed a single repair and its
+`core_feature` phase passed every gate first time. The focus timer needed none at all.
+
+Two of today's fixes were confirmed live in this run rather than in a test:
+
+* The cleanup stopped two processes a build had left running inside the workspace -- a node
+  process and the CLI's own shell -- and said so in the event stream (`5d99671`). Before
+  today those outlived the run; three of them squatted the benchmark's own port last night.
+* Findings named their element (`<div.ambient-layer> inside "Reading Journal Workspac"`), and
+  the repair closed all three in one attempt.
+
+Still true, and unchanged by any of this: **criterion 3 has not been started.**
+
 ## Criterion 1 is met (2026-08-27, 17:29)
 
 **3 of 3, unattended, first time.**
@@ -389,6 +416,9 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-27 (night) — criterion unchanged; a second 3-of-3, with all three delivery
+  folders complete in the same sequence -- the verification the previous entry said was
+  still owed. Criterion 3 remains untouched.
 - 2026-08-27 (evening, later) — criterion unchanged; **criterion 2 met for every product
   kind**: the static page now ships the screenshot and the HTTP status its check already
   had. Verified on a delivered folder, not in a test.
