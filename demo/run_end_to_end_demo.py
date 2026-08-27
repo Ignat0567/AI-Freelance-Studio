@@ -63,8 +63,41 @@ def _stamp() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def _use_utf8_output() -> None:
+    """Best effort: make this process's own output able to carry any character.
+
+    Redirected to a file on a Russian Windows, stdout defaults to cp1251, and a generated
+    page's text is not ASCII.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_use_utf8_output()
+
+
+def _printable(text: str) -> str:
+    """Whatever the stream can actually encode.
+
+    A log line must never be able to kill the run it describes. On 2026-08-27 a three-order
+    acceptance run died mid-build with UnicodeEncodeError: the visual gate had found an
+    element labelled with "▲", the log prints the gate's findings, and stdout was cp1251
+    because the run was redirected to a file. The pipeline's own messages are ASCII; the
+    gate's findings are the *generated page's* text, which is arbitrary Unicode -- so this
+    became reachable the moment those findings started being printed.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    except (LookupError, UnicodeError):
+        return text.encode("ascii", errors="replace").decode("ascii")
+
+
 def log(message: str, *, prefix: str = "  ") -> None:
-    print(f"[{_stamp()}]{prefix}{message}", flush=True)
+    print(_printable(f"[{_stamp()}]{prefix}{message}"), flush=True)
 
 
 # Enough to carry a gate's verdict and its findings without turning the log into the

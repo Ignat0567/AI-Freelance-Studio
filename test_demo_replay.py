@@ -222,3 +222,30 @@ def test_a_long_detail_keeps_its_verdict_rather_than_its_header(capsys):
     printed = capsys.readouterr().out
     assert "- finding 8" in printed
     assert "earlier line(s)" in printed
+
+
+def test_a_log_line_cannot_kill_the_run_it_describes(monkeypatch, capsys):
+    """2026-08-27: a three-order acceptance run died mid-build with UnicodeEncodeError. The
+    visual gate had found an element labelled with a triangle, the log prints the gate's
+    findings, and stdout was cp1251 because the run was redirected to a file. The pipeline's
+    own messages are ASCII; a gate's findings are the generated page's text."""
+    import demo.run_end_to_end_demo as harness
+
+    class _Cp1251Stdout:
+        encoding = "cp1251"
+
+    monkeypatch.setattr(harness.sys, "stdout", _Cp1251Stdout(), raising=False)
+    line = harness._printable("- ▲ All books across your three shelves")
+    monkeypatch.undo()
+
+    assert "All books across your three shelves" in line
+    assert "▲" not in line
+
+    harness.log_event({"stage": "ui_shell", "message": "QA failed", "details": ("- " + chr(0x25B2) + " All books" + chr(10) + "- and more",)})
+    assert "All books" in capsys.readouterr().out
+
+
+def test_text_the_stream_can_carry_is_left_alone():
+    import demo.run_end_to_end_demo as harness
+
+    assert harness._printable("plain ascii") == "plain ascii"
