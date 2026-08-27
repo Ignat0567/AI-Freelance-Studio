@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Literal
@@ -147,6 +148,7 @@ def probe_coding_cli_credentials(
     binary_probe: Callable[[], str | None],
     runner: Callable[[Sequence[str], str, int], tuple[int, str, str]],
     timeout: int = AUTH_PROBE_TIMEOUT_SECONDS,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> tuple[PreflightStatus, str, ExecutionBlocker | None]:
     """Spend one trivial model call to find out whether the stored login still works.
 
@@ -162,19 +164,31 @@ def probe_coding_cli_credentials(
     if not binary:
         return "unknown", "coding CLI was not found; the adapter's own readiness check covers this", None
     command = [binary, "-p", "--output-format", "json", "--model", "sonnet"]
-    # A 401 is asked for twice before it is believed. On 2026-08-26 at 21:35 this probe got
-    # one, blocked a three-order unattended run at its first order, and nine minutes later
-    # the same probe returned "login accepted" with nobody having signed in: the CLI holds an
-    # OAuth token it refreshes on demand, so a single 401 can mean "the access token needed
-    # refreshing" rather than "the login is gone". A login that is really expired answers 401
-    # both times; the retry costs one trivial call and only on the failing path.
-    for attempt in (1, 2):
+    # A 401 is not believed until it has been asked for three times, spread over a minute.
+    #
+    # 2026-08-26 21:35 and 2026-08-27 11:19: this probe got a 401 and blocked an unattended
+    # run at its first order. Both times the same probe, unchanged and with nobody signing in,
+    # answered "login accepted" minutes later -- 9 and 6 respectively. The CLI holds an OAuth
+    # token it refreshes on demand, and the refresh is evidently not finished by the time the
+    # failing call returns. The first version of this retry asked twice back to back, which is
+    # a gap of seconds, and the second run was blocked exactly the same way.
+    #
+    # The gaps below are chosen against those two observations and no more: recovery inside a
+    # few minutes, unmeasured within that. They are the cheapest thing that would have saved
+    # both runs. A login that really is gone answers 401 all three times and costs 80 seconds
+    # to establish, against the twenty minutes of build the block is protecting.
+    backoffs = (0.0, 20.0, 60.0)
+    for attempt, pause in enumerate(backoffs, start=1):
+        if pause:
+            sleeper(pause)
         try:
             code, stdout, stderr = runner(command, "Reply with the single word: ok", timeout)
         except OSError as exc:
             return "unknown", f"login could not be probed ({exc})", None
         if code == 0:
-            return "ok", "login accepted" if attempt == 1 else "login accepted on a second call (the first needed a token refresh)", None
+            if attempt == 1:
+                return "ok", "login accepted", None
+            return "ok", f"login accepted on attempt {attempt} (the first needed a token refresh)", None
         try:
             payload = json.loads(_ANSI.sub("", stdout))
         except ValueError:
@@ -183,7 +197,7 @@ def probe_coding_cli_credentials(
         if status != 401:
             detail = (stderr or stdout).strip()[:120] or f"exit code {code}"
             return "unknown", f"login probe was inconclusive ({detail})", None
-    return "blocked", "login has expired (HTTP 401 twice)", CODING_CLI_AUTH_EXPIRED
+    return "blocked", f"login has expired (HTTP 401 on {len(backoffs)} calls over {int(sum(backoffs))}s)", CODING_CLI_AUTH_EXPIRED
 
 
 def _default_cli_runner(command: Sequence[str], prompt: str, timeout: int) -> tuple[int, str, str]:
@@ -223,6 +237,8 @@ def run_preflight(
     free_bytes_probe: Callable[[Path], int] | None = None,
     docker_probe: Callable[[], bool] | None = None,
     check_credentials: bool = True,
+    # Injected so a test exercising the 401 path does not spend the real backoff waiting.
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> PreflightReport:
     """Check the environment a live run depends on, in seconds rather than in minutes."""
     env = environ if environ is not None else dict(os.environ)
@@ -242,6 +258,7 @@ def run_preflight(
             probe_coding_cli_credentials(
                 binary_probe=binary_probe or claude_bridge._discover_claude,
                 runner=cli_runner or _default_cli_runner,
+                sleeper=sleeper,
             ),
         )
     else:

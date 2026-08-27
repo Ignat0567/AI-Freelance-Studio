@@ -63,6 +63,7 @@ def _preflight(**overrides):
         version_runner=_ok_node,
         free_bytes_probe=_plenty_of_disk,
         docker_probe=lambda: True,
+        sleeper=lambda _: None,
     )
     kwargs.update(overrides)
     return run_preflight(**kwargs)
@@ -223,7 +224,7 @@ def test_the_login_probe_runs_outside_any_project_workspace():
         assert timeout > 0
         return _healthy_cli(command, prompt, timeout)
 
-    probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner)
+    probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner, sleeper=lambda _: None)
 
     assert seen and seen[0][0] == "claude"
     # -p keeps it non-interactive; the cheapest model keeps the check's own cost negligible.
@@ -535,9 +536,10 @@ def test_an_internal_error_leaves_a_traceback_behind(caplog):
 
 
 def test_a_single_401_is_not_taken_as_proof_that_the_login_is_gone():
-    """2026-08-26, 21:35: this probe got a 401 and blocked a three-order unattended run at
-    its first order. Nine minutes later the same probe answered "login accepted" with nobody
-    having signed in -- the CLI refreshes its OAuth token on demand."""
+    """2026-08-26 21:35 and 2026-08-27 11:19: this probe got a 401 and blocked an unattended
+    run at its first order. Both times the same probe, with nobody signing in, answered
+    "login accepted" minutes later -- the CLI refreshes its OAuth token on demand, and is not
+    done by the time the failing call returns."""
     from order_workflow.preflight import probe_coding_cli_credentials
 
     calls = []
@@ -548,7 +550,7 @@ def test_a_single_401_is_not_taken_as_proof_that_the_login_is_gone():
             return 1, '{"api_error_status": 401}', ""
         return 0, '{"result": "ok"}', ""
 
-    status, message, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner)
+    status, message, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner, sleeper=lambda _: None)
 
     assert status == "ok"
     assert blocker is None
@@ -556,7 +558,7 @@ def test_a_single_401_is_not_taken_as_proof_that_the_login_is_gone():
     assert len(calls) == 2
 
 
-def test_a_login_that_is_really_gone_answers_401_twice_and_blocks():
+def test_a_login_that_is_really_gone_answers_401_every_time_and_blocks():
     from order_workflow.preflight import probe_coding_cli_credentials
 
     calls = []
@@ -565,11 +567,12 @@ def test_a_login_that_is_really_gone_answers_401_twice_and_blocks():
         calls.append(prompt)
         return 1, '{"api_error_status": 401}', ""
 
-    status, message, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner)
+    status, message, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner, sleeper=lambda _: None)
 
     assert status == "blocked"
     assert blocker is not None
-    assert len(calls) == 2
+    assert len(calls) == 3
+    assert "3 calls over 80s" in message
 
 
 def test_a_rate_limit_still_does_not_block_and_is_not_retried():
@@ -583,8 +586,30 @@ def test_a_rate_limit_still_does_not_block_and_is_not_retried():
         calls.append(prompt)
         return 1, '{"api_error_status": 429}', ""
 
-    status, _, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner)
+    status, _, blocker = probe_coding_cli_credentials(binary_probe=lambda: "claude", runner=runner, sleeper=lambda _: None)
 
     assert status == "unknown"
     assert blocker is None
     assert len(calls) == 1
+
+
+def test_the_retries_are_spread_out_rather_than_fired_back_to_back():
+    """The first version of this retry asked twice with only the call's own duration between
+    them -- seconds -- and the run of 2026-08-27 11:19 was blocked exactly as before. What
+    recovered, both times, was minutes of waiting."""
+    from order_workflow.preflight import probe_coding_cli_credentials
+
+    waits = []
+    attempts = []
+
+    def runner(command, prompt, timeout):
+        attempts.append(prompt)
+        return (0, '{"result": "ok"}', "") if len(attempts) == 3 else (1, '{"api_error_status": 401}', "")
+
+    status, message, _ = probe_coding_cli_credentials(
+        binary_probe=lambda: "claude", runner=runner, sleeper=waits.append
+    )
+
+    assert status == "ok"
+    assert "attempt 3" in message
+    assert waits == [20.0, 60.0]
