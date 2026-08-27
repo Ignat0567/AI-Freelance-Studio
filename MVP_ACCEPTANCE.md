@@ -79,6 +79,35 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Where it stands (2026-08-27, on the 900s ceiling)
+
+**1 of 3.** The first run made with repairs allowed to finish:
+
+| order | outcome | duration | repairs | cost | cause |
+|---|---|---|---|---|---|
+| `b02-pricing-page` | succeeded | 136 s | 0 | $0.39 | -- |
+| `b06-reading-journal` | qa_failed | 1746 s | 2 | $7.44 | `generated_code` |
+| `b03-focus-timer` | failed | 174 s | 0 | $0.68 | `provider` |
+
+**The ceiling change did what it was raised to do, and it is the first claim this week that
+its own numbers support rather than merely allow.** No call was stopped by a ceiling in this
+run at all -- worst budget ratio 68%. b06's first repair took 616 s, which the old 450 would
+have killed at 74% of the way through, and in those 616 s it went from three findings to one:
+the 1280px clipping fixed, the dark-mode contrast fixed (the page now really repaints,
+`#f5f5f7 -> #08080b`), and the 375px overflow down from 329 px to 3. The second repair took
+281 s of its 900 and finished.
+
+And then the gate failed the phase anyway, and **nothing recorded what it found**. Measuring
+the delivered bundle afterwards with the gate's own rules -- clipping, viewport overflow, tap
+targets, contrast in both colour schemes, text overlap, at 375 px and 1280 px -- every one of
+them passes. So the run failed on something the artifact does not show and the record does
+not name. That gap is closed in `4894780`: the event that ends a repair loop now carries the
+gate's final findings, the way every repair *request* already did. The next run says what
+this one could not.
+
+The third order died on the provider's session limit again (2:40 am reset), the third
+acceptance in a row lost to it and the third that says nothing about the pipeline.
+
 ## Where it stands (2026-08-26, third run -- on the gate fix)
 
 **2 of 3.** The first run made on `04a2b93`, i.e. the first whose gates could see what its
@@ -264,6 +293,9 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-27 — criterion unchanged; a sixth attempt recorded at 1 of 3, the first with the
+  900s repair ceiling. The ceiling behaved as intended (no strikes, a 616s repair that
+  fixed two findings of three); the phase still failed, on a finding nothing recorded.
 - 2026-08-26 (night) — criterion unchanged; a fifth attempt recorded at 2 of 3, the first
   on gates that can see their own repairs, and the first in which the focus timer ever
   completed.
