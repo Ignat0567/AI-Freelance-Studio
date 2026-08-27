@@ -165,11 +165,21 @@ def start_backend() -> subprocess.Popen:
     # /health answer, reports "backend is up", and the whole demo drives a stranger's
     # process (running whatever code it started with) while our own uvicorn dies unnoticed
     # on a bind error, several lines up in the output.
+    # `request` raises SystemExit on an HTTP error, and SystemExit is not an Exception, so
+    # `except Exception` let it through: a squatter that answers 404 on /health killed the
+    # runner outright, printing its 404 page instead of this message. Which is exactly what
+    # happened on 2026-08-27 -- three orphaned `python -m http.server 8099` processes, left
+    # behind by repair calls that started them inside the workspace and never stopped them.
+    occupied = False
     try:
         request("GET", "/health", timeout=2)
+    except SystemExit:
+        occupied = True
     except Exception:
         pass
     else:
+        occupied = True
+    if occupied:
         raise SystemExit(
             f"something is already serving {BASE_URL} -- stop it, or set "
             f"FREELANCERSTUDIO_DEMO_PORT to a free port, and run again"

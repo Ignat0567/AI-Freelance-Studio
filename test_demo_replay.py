@@ -249,3 +249,23 @@ def test_text_the_stream_can_carry_is_left_alone():
     import demo.run_end_to_end_demo as harness
 
     assert harness._printable("plain ascii") == "plain ascii"
+
+
+def test_a_squatter_on_the_port_is_reported_rather_than_crashing_the_runner(monkeypatch):
+    """`request` raises SystemExit on an HTTP error, and SystemExit is not an Exception. A
+    process answering 404 on /health -- three orphaned `python -m http.server 8099` from
+    repair calls, on 2026-08-27 -- therefore killed the runner and printed its 404 page where
+    this message belongs."""
+    import pytest
+
+    import demo.run_end_to_end_demo as harness
+
+    def refuse(method, path, payload=None, *, timeout=120):
+        raise SystemExit("HTTP 404 on GET /health: <html>...</html>")
+
+    monkeypatch.setattr(harness, "request", refuse)
+
+    with pytest.raises(SystemExit) as caught:
+        harness.start_backend()
+
+    assert "something is already serving" in str(caught.value)
