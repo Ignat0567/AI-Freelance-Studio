@@ -79,6 +79,38 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Criterion 1 is met (2026-08-27, 17:29)
+
+**3 of 3, unattended, first time.**
+
+| order | outcome | duration | repairs | cost |
+|---|---|---|---|---|
+| `b02-pricing-page` | succeeded | 707 s | 0 | $0.65 |
+| `b06-reading-journal` | succeeded | 2095 s | 2 | $11.64 |
+| `b03-focus-timer` | **succeeded** | 1577 s | **0** | $8.06 |
+
+Completion yield 100%, clean yield 67%, $20.35, 74 minutes wall clock, nothing touched while
+it ran. The focus timer -- which had never once passed `ui_shell` inside a full sequence,
+losing four acceptances to the provider's session limit and one to the stale bundle --
+completed with no repairs at all.
+
+What made the difference, all measured rather than guessed, all from the two days before it:
+gates that rebuild before they judge (`e924850`), a repair budget set from the calls that
+were being killed (`b8994d1`), findings that name the element they are about (`c011fe7`), a
+third repair attempt taken from the convergence curves (`2581cb4`), and a state gate that no
+longer demands a half-typed form survive navigation (`b2b1f41`).
+
+**Criterion 2 is met for two of the three.** The two web apps hand back a folder with the
+delivery report, the README agreeing with it, the checks' own output, a screenshot and an
+HTTP 200 from the production image. The static page has no screenshot and no HTTP 200: its
+path builds no container, and the visual gate that captures `delivery_screenshot.png` does not
+run for a single-file page. Its report answers the fourth question with "container packaging
+was not part of this run", which is a statement, not the proof the criterion asks for.
+
+**Criterion 3 is untouched.** Nobody but the author has ordered or paid for a delivery.
+
+So: **the MVP criterion is not met.** One of its three parts is, in full, for the first time.
+
 ## Where it stands (2026-08-27, second run of the day)
 
 **1 of 3**, $9.19. `b02` succeeded in 336 s with no repairs; `b06` failed after two repairs;
@@ -338,6 +370,9 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-27 (evening) — criterion unchanged; **criterion 1 met**: three orders, one
+  sequence, no intervention, all completed. Recorded together with the two parts that are
+  still open, so that meeting one third of the criterion cannot read as meeting it.
 - 2026-08-27 (afternoon) — criterion unchanged; a seventh attempt recorded at 1 of 3, the
   first whose failure says what the gate found. Repair attempts per phase raised 2 -> 3
   from the recorded convergence; no requirement touched.

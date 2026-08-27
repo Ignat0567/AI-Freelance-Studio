@@ -29,3 +29,6 @@ run_at,commit,bench_id,kind,product_type,outcome,completed,clean,failure_cause,f
 20260827T111718Z,b10d0bf,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,335.5,0,,1,0,1,318.0,0,1.166,24877,0.212,static_page_build=sonnet,5,1,0,bench-b02-pricing-page-20260827T111718Z.json
 20260827T112311Z,b10d0bf,b06-reading-journal,realistic_app,web_app,qa_failed,0,0,generated_code,ui_shell,2061.1,2,ui_shell/visual=2,2,1,3,1986.0,0,8.026,142194,0.961,ui_shell=sonnet,0,0,0,bench-b06-reading-journal-20260827T112311Z.json
 20260827T115747Z,b10d0bf,b03-focus-timer,small_app,web_app,failed,0,0,provider,ui_shell,3.9,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=opus,0,0,0,bench-b03-focus-timer-20260827T115747Z.json
+20260827T141531Z,4b10629,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,706.5,0,,1,0,1,689.0,0,2.851,59451,0.459,static_page_build=sonnet,5,1,0,bench-b02-pricing-page-20260827T141531Z.json
+20260827T142736Z,4b10629,b06-reading-journal,realistic_app,web_app,succeeded,1,0,,completed,2094.6,2,ui_shell/visual=2,6,0,4,1958.0,0,9.443,157430,0.639,ui_shell=sonnet;core_feature=sonnet,6,1,1,bench-b06-reading-journal-20260827T142736Z.json
+20260827T150244Z,4b10629,b03-focus-timer,small_app,web_app,succeeded,1,1,,completed,1576.8,0,,6,0,2,1479.0,0,8.06,103241,0.653,ui_shell=opus;core_feature=opus,6,1,1,bench-b03-focus-timer-20260827T150244Z.json
