@@ -213,9 +213,23 @@ const PAGE_PROBE = () => {{
   // Only the objectively wrong ones. "Badly composed" is not measurable and is left to a
   // human; "this text sits on top of that text" and "this label is silently cut in half"
   // are, and both are what "elements hang wrong" usually turns out to be.
+  // A finding has to say *which* element. "<div> is cut off by 185px" names one of several
+  // hundred divs: on 2026-08-27 two of three findings read that way, and the repair spent 25
+  // turns and $0.89 editing a theme toggle unrelated to any of them. Own text first, because
+  // that is what a reader of the report recognises; otherwise the selector that would find it,
+  // with the surrounding text as a landmark.
   function describe(node) {{
     const text = (node.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 32);
-    return text ? `"${{text}}"` : `<${{node.tagName.toLowerCase()}}>`;
+    if (text) return `"${{text}}"`;
+    const tag = node.tagName.toLowerCase();
+    const id = node.id ? `#${{node.id}}` : '';
+    const classes = (typeof node.className === 'string' ? node.className : '')
+      .trim().split(/\\s+/).filter(Boolean).slice(0, 2).map((name) => `.${{name}}`).join('');
+    const named = node.getAttribute('data-testid') || node.getAttribute('aria-label') || '';
+    const parent = node.parentElement && node.parentElement !== document.body ? node.parentElement : null;
+    const parentText = ((parent && parent.innerText) || '').trim().replace(/\\s+/g, ' ').slice(0, 24);
+    const landmark = parentText ? ` inside "${{parentText}}"` : '';
+    return `<${{tag}}${{id}}${{classes}}${{named ? `[${{named}}]` : ''}}>${{landmark}}`;
   }}
 
   const textBoxes = [];

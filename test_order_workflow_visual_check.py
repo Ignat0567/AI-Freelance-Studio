@@ -282,3 +282,29 @@ def test_a_failed_screenshot_cannot_fail_the_gate():
     assert guard < shot
     assert "catch" in following
     assert "process.exit" not in following.split("catch")[1][:200]
+
+
+def test_a_finding_names_which_element_it_is_about():
+    """"<div> is cut off by 185px" names one of several hundred divs. On 2026-08-27 two of
+    three findings on the reading-journal order read exactly that way, and the repair spent
+    25 turns and $0.89 editing a theme toggle unrelated to any of them."""
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    describe = script[script.index("function describe"):script.index("const textBoxes")]
+
+    # The selector that would actually find it...
+    assert "node.id" in describe and "className" in describe
+    # ...an accessible name where the markup carries one...
+    assert "data-testid" in describe and "aria-label" in describe
+    # ...and a landmark from the parent, but never from body, whose innerText is the page.
+    assert "document.body" in describe
+    # Text still wins: it is what a person reading the report recognises.
+    assert describe.index("innerText") < describe.index("node.id")
+
+
+def test_an_element_with_its_own_text_is_still_named_by_that_text():
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    describe = script[script.index("function describe"):script.index("const textBoxes")]
+
+    assert 'if (text) return `"${text}"`;' in describe
