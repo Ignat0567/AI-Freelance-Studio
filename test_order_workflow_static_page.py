@@ -298,3 +298,29 @@ def test_the_static_page_delivery_tells_the_client_to_open_the_file(tmp_path):
     assert "run_instruction=" in static_block
     assert "Open `index.html`" in static_block
     assert "nothing to install" in static_block
+
+
+def test_a_single_file_page_hands_back_the_proof_its_criterion_asks_for():
+    """MVP_ACCEPTANCE criterion 2 wants a screenshot and an HTTP 200 in every delivered
+    folder. The static-page path builds no container, so on 2026-08-27 its folder had
+    neither, and its report answered that question with "container packaging was not part of
+    this run" -- a statement rather than evidence. The check was already serving the page
+    over HTTP and already had it open in a browser."""
+    from order_workflow.static_page_check import _CHECK_SCRIPT
+    from order_workflow.visual_check import SCREENSHOT_FILENAME
+
+    assert SCREENSHOT_FILENAME in _CHECK_SCRIPT
+    assert "page.screenshot(" in _CHECK_SCRIPT
+    assert "Served over HTTP: ${httpStatus}" in _CHECK_SCRIPT
+    # Taken before the viewport is reshaped for the tablet measurement, or the delivery photo
+    # would show a layout no client asked about.
+    assert _CHECK_SCRIPT.index("page.screenshot(") < _CHECK_SCRIPT.index("setViewportSize({ width: 768")
+
+
+def test_a_failed_screenshot_cannot_fail_the_static_page_gate():
+    # Documentation must never be able to fail a page that rendered correctly.
+    from order_workflow.static_page_check import _CHECK_SCRIPT
+
+    after = _CHECK_SCRIPT[_CHECK_SCRIPT.index("page.screenshot("):]
+    assert after.index("catch") < after.index("STATIC PAGE CHECK PASSED")
+    assert "screenshot skipped: " in _CHECK_SCRIPT

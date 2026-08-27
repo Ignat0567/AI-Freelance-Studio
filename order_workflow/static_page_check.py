@@ -42,6 +42,7 @@ from pathlib import Path
 from .docker_qa_runner import PLAYWRIGHT_IMAGE, PLAYWRIGHT_NPM_VERSION, run_qa_commands_in_docker
 from .phase_prompts import STATIC_PAGE_ALLOWED_HOSTS, STATIC_PAGE_FILENAME, STATIC_PAGE_MAX_BYTES
 from .qa_runner import QACommandResult, QAOutcome
+from .visual_check import SCREENSHOT_FILENAME
 
 _SERVER_FILENAME = "___freelancerstudio_static_server.mjs"
 _CHECK_FILENAME = "___freelancerstudio_static_check.mjs"
@@ -148,6 +149,7 @@ http.createServer(async (req, res) => {{
 _CHECK_SCRIPT = f"""import {{ chromium }} from 'playwright';
 
 const TARGET_URL = 'http://localhost:{_PORT}/{STATIC_PAGE_FILENAME}';
+const SCREENSHOT_PATH = {SCREENSHOT_FILENAME!r};
 const ALLOWED_HOSTS = {list(ALLOWED_ASSET_HOSTS)!r};
 const MIN_FPS = {MIN_FPS};
 const NAV_TIMEOUT_MS = 30000;
@@ -250,10 +252,18 @@ async function main() {{
   // by the shell command that launches this script, so a slow start would otherwise read as
   // a broken page and send the repair loop after code that is fine. Cheaper to wait here
   // than to spend a coding-CLI call discovering the server simply was not up yet.
+  // The criterion a delivery is judged by asks for proof that it runs: a screenshot and an
+  // HTTP 200. A single-file page builds no container, so until 2026-08-27 its folder carried
+  // neither -- its delivery report answered that question with "container packaging was not
+  // part of this run", which is a statement rather than evidence. This check already serves
+  // the page over HTTP and already has it open in a real browser; both were simply not
+  // recorded.
+  let httpStatus = 0;
   let lastError = null;
   for (let attempt = 0; attempt < 15; attempt += 1) {{
     try {{
-      await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: NAV_TIMEOUT_MS }});
+      const response = await page.goto(TARGET_URL, {{ waitUntil: 'load', timeout: NAV_TIMEOUT_MS }});
+      httpStatus = response ? response.status() : 0;
       lastError = null;
       break;
     }} catch (err) {{
@@ -268,6 +278,15 @@ async function main() {{
     process.exit(1);
   }}
   await page.waitForTimeout(1500);
+
+  // Here and nowhere else: the scene has settled and the viewport is still the one a client
+  // would recognise -- the tablet measurement below reshapes it. Wrapped because a delivery
+  // photograph must never be able to fail a gate the page has otherwise passed.
+  try {{
+    await page.screenshot({{ path: SCREENSHOT_PATH, fullPage: false }});
+  }} catch (err) {{
+    console.error('screenshot skipped: ' + String(err && err.message ? err.message : err));
+  }}
 
   const first = await page.evaluate(() => ({{ ...window.__fsStats }}));
   const canvas = await page.evaluate(() => {{
@@ -326,6 +345,7 @@ async function main() {{
   if (pageErrors.length > 0) failures.push(`Uncaught page error(s): ${{pageErrors.slice(0, 4).join(' | ')}}`);
   if (consoleErrors.length > 0) failures.push(`Console error(s): ${{consoleErrors.slice(0, 4).join(' | ')}}`);
 
+  console.log(`Served over HTTP: ${{httpStatus}} from the check's own local server.`);
   console.log(`Canvas: ${{canvas ? `${{canvas.w}}x${{canvas.h}} ${{canvas.context}}` : 'absent'}}.`);
   console.log(`Draw calls: ${{first.drawCalls}} in the first 1.5s, ${{second.drawCalls}} total. Frames: ${{second.frames}} (${{fps.toFixed(1)}} fps).`);
   if (failures.length > 0) {{
