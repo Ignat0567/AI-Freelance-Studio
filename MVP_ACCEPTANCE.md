@@ -79,6 +79,51 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Where it stands (2026-08-27, second run of the day)
+
+**1 of 3**, $9.19. `b02` succeeded in 336 s with no repairs; `b06` failed after two repairs;
+`b03` died four seconds in on the provider's session limit, the fourth acceptance in a row
+lost to it.
+
+The b06 row is the first failure recorded since `4894780`, so for the first time the run says
+what it failed on rather than that it failed:
+
+```
+before repair 2                          final verdict
+- <div> cut off by 185px            ->   - <div> cut off by 28px
+- <div> cut off by 333px            ->   - <div> cut off by 27px
+- two texts overlapping by 100%     ->   (fixed)
+  dark mode does not repaint        ->   dark mode repaints (#f5f5f7 -> #08080b)
+                                    ->   - contrast 1.09:1 in dark mode (new, exposed by the fix above)
+```
+
+Repair 2 ran 865 s of its 900 and was **converging**: 185 px of clipping down to 28, 333 down
+to 27, the overlap gone, dark mode working. What ran out was not the budget of a call but the
+number of calls -- and that is now measured rather than asserted. Across the seven repair
+sequences on record, counted as total pixels of damage per gate run:
+
+| sequence | |
+|---|---|
+| `b03` 538 -> 85 | 84% down, closed |
+| `b03` 451 -> 378 | 16% down, attempts ran out |
+| `b06` 469 -> 3 | 99% down, closed |
+| `b06` 618 -> 618 -> 55 | 91% down, attempts ran out |
+| `b06` 968 -> 968, 469 -> 469, 510 -> 510 | 0% -- all three predate `e924850` |
+
+The three flat sequences are exactly the runs where the gate was re-reading the pre-repair
+bundle. Every sequence since converges, and two of four ran out of attempts mid-descent. So
+`MAX_PHASE_REPAIR_ATTEMPTS` goes 2 -> 3 (`2581cb4`), the same decision the ceiling got
+yesterday and made the same way.
+
+Two other fixes came out of this run, both mine from earlier the same day:
+
+* A gate finding that named no element (`<div> is cut off by 185px`, one of several hundred
+  divs) sent a repair to edit an unrelated theme toggle for 239 s and $0.89. Findings now
+  carry the selector that would find them (`c011fe7`).
+* Printing a gate's findings killed a run outright: `UnicodeEncodeError` on a page's own
+  glyph, with stdout at cp1251 because the run was redirected to a file. Eleven minutes and
+  about $3 of build lost, no row written (`b10d0bf`).
+
 ## Where it stands (2026-08-27, on the 900s ceiling)
 
 **1 of 3.** The first run made with repairs allowed to finish:
@@ -293,6 +338,9 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-27 (afternoon) — criterion unchanged; a seventh attempt recorded at 1 of 3, the
+  first whose failure says what the gate found. Repair attempts per phase raised 2 -> 3
+  from the recorded convergence; no requirement touched.
 - 2026-08-27 — criterion unchanged; a sixth attempt recorded at 1 of 3, the first with the
   900s repair ceiling. The ceiling behaved as intended (no strikes, a 616s repair that
   fixed two findings of three); the phase still failed, on a finding nothing recorded.
