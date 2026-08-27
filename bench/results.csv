@@ -32,3 +32,5 @@ run_at,commit,bench_id,kind,product_type,outcome,completed,clean,failure_cause,f
 20260827T141531Z,4b10629,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,706.5,0,,1,0,1,689.0,0,2.851,59451,0.459,static_page_build=sonnet,5,1,0,bench-b02-pricing-page-20260827T141531Z.json
 20260827T142736Z,4b10629,b06-reading-journal,realistic_app,web_app,succeeded,1,0,,completed,2094.6,2,ui_shell/visual=2,6,0,4,1958.0,0,9.443,157430,0.639,ui_shell=sonnet;core_feature=sonnet,6,1,1,bench-b06-reading-journal-20260827T142736Z.json
 20260827T150244Z,4b10629,b03-focus-timer,small_app,web_app,succeeded,1,1,,completed,1576.8,0,,6,0,2,1479.0,0,8.06,103241,0.653,ui_shell=opus;core_feature=opus,6,1,1,bench-b03-focus-timer-20260827T150244Z.json
+20260827T160901Z,2bcb5e0,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,241.6,0,,1,0,1,227.0,0,0.928,22339,0.151,static_page_build=sonnet,6,1,0,bench-b02-pricing-page-20260827T160901Z.json
+20260827T161521Z,17d8155,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,283.8,0,,1,0,1,269.0,0,0.984,25388,0.179,static_page_build=sonnet,6,1,0,bench-b02-pricing-page-20260827T161521Z.json

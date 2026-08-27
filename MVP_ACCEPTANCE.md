@@ -100,16 +100,35 @@ were being killed (`b8994d1`), findings that name the element they are about (`c
 third repair attempt taken from the convergence curves (`2581cb4`), and a state gate that no
 longer demands a half-typed form survive navigation (`b2b1f41`).
 
-**Criterion 2 is met for two of the three.** The two web apps hand back a folder with the
-delivery report, the README agreeing with it, the checks' own output, a screenshot and an
-HTTP 200 from the production image. The static page has no screenshot and no HTTP 200: its
-path builds no container, and the visual gate that captures `delivery_screenshot.png` does not
-run for a single-file page. Its report answers the fourth question with "container packaging
-was not part of this run", which is a statement, not the proof the criterion asks for.
+**Criterion 2 was met for two of the three, and is now met for all three product kinds.** The
+two web apps hand back a folder with the delivery report, the README agreeing with it, the
+checks' own output, a screenshot and an HTTP 200 from the production image. The static page
+had neither screenshot nor HTTP 200 -- its path builds no container, and the visual gate that
+writes `delivery_screenshot.png` does not run for a single file -- so its report answered the
+question with "container packaging was not part of this run": a statement where evidence
+belongs.
+
+Nothing new had to be built. The static-page check already served the page over HTTP from its
+own local server and already had it open in a browser; it now records the status it receives
+and photographs the page before the viewport is reshaped for the tablet measurement
+(`9c53767`), and the report leads with what happened rather than what did not (`17d8155`).
+Verified on a real delivery at 18:26:
+
+```
+## Proof it runs
+
+The page was served over HTTP and answered 200 during its checks.
+`delivery_screenshot.png` is the page as the check saw it, captured during the run.
+```
+
+That verification is a single-order run, not a sequence: the next full three-order run is what
+shows all three folders complete in one pass.
 
 **Criterion 3 is untouched.** Nobody but the author has ordered or paid for a delivery.
 
-So: **the MVP criterion is not met.** One of its three parts is, in full, for the first time.
+So: **the MVP criterion is not met.** Two of its three parts are -- criterion 1 in one
+unattended sequence, criterion 2 across every product kind the pipeline builds. The third,
+somebody other than the author ordering or paying for a delivery, has not been started.
 
 ## Where it stands (2026-08-27, second run of the day)
 
@@ -370,6 +389,9 @@ least visible.
 - 2026-08-24 — criterion unchanged; a "Where it stands" section added above recording two
   acceptance attempts and what is still open. No requirement was softened: 1 of 3 is written
   down as 1 of 3.
+- 2026-08-27 (evening, later) — criterion unchanged; **criterion 2 met for every product
+  kind**: the static page now ships the screenshot and the HTTP status its check already
+  had. Verified on a delivered folder, not in a test.
 - 2026-08-27 (evening) — criterion unchanged; **criterion 1 met**: three orders, one
   sequence, no intervention, all completed. Recorded together with the two parts that are
   still open, so that meeting one third of the criterion cannot read as meeting it.
