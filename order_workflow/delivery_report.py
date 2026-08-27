@@ -134,6 +134,9 @@ def build_delivery_report(
     usage: TokenUsage | None = None,
     deployment_status: str | None = None,
     deployment_image: str | None = None,
+    # The status a check saw when it fetched the page itself, for products that ship no
+    # container: a static page has no image to run but is still served, and still answers.
+    served_http_status: int | None = None,
     run_command: str | None = None,
     evidence_file: str | None = None,
     screenshot_file: str | None = None,
@@ -165,6 +168,12 @@ def build_delivery_report(
         lines.append(deployment_status)
         if deployment_image:
             lines.append(f"Image: {deployment_image}")
+    elif served_http_status:
+        # What actually happened, rather than what did not. A single-file page builds no
+        # container, and the sentence below is all its client used to get under "proof it
+        # runs" -- an absence where the criterion asks for evidence. The page *is* served
+        # over HTTP during its check, and that status is a fact worth stating.
+        lines.append(f"The page was served over HTTP and answered {served_http_status} during its checks.")
     else:
         lines.append("The build and its automated checks passed; container packaging was not part of this run.")
     if screenshot_file:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -877,6 +878,10 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # the page was in a client-recognisable state has long passed by now.
         screenshot = SCREENSHOT_FILENAME if (workspace.project_path / SCREENSHOT_FILENAME).is_file() else None
         evidence = build_qa_evidence(self._gate_tally.evidence)
+        # Read back out of the checks' own output rather than threaded through every gate:
+        # the status belongs to whichever check fetched the page, and only one ever does.
+        served = re.search(r"Served over HTTP: (\d{3})", evidence or "")
+        served_http_status = int(served.group(1)) if served else None
         evidence_file = None
         if evidence:
             evidence_file = "qa_evidence.md"
@@ -896,6 +901,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             deployment_image=deployment.image_tag if deployment is not None else None,
             run_command=run_text,
             evidence_file=evidence_file,
+            served_http_status=served_http_status,
             screenshot_file=screenshot,
             delivered_files=_delivered_files(workspace),
             built_by=RUNNING_BUILD,

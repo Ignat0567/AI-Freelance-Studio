@@ -333,3 +333,46 @@ def test_a_real_feature_list_is_still_printed():
 
     assert "- Drag a book between shelves" in report
     assert "- Write notes on a book" in report
+
+
+def test_a_page_with_no_container_says_it_was_served_not_that_it_was_not_packaged():
+    """Criterion 2 asks the folder to prove the thing runs. A single-file page builds no
+    container, and until 2026-08-27 its client read "container packaging was not part of this
+    run" under "Proof it runs" -- an absence in the place evidence belongs. The page is served
+    over HTTP by its own check, and that status is a fact."""
+    from order_workflow.delivery_report import build_delivery_report
+
+    report = build_delivery_report(
+        goal="Three pricing tiers on one page.",
+        requirements=(),
+        note="",
+        gate_log=[],
+        files_created=1,
+        meaningful_artifact_count=1,
+        served_http_status=200,
+        screenshot_file="delivery_screenshot.png",
+    )
+
+    proof = report.split("## Proof it runs")[1].split("## ")[0]
+    assert "served over HTTP and answered 200" in proof
+    assert "container packaging was not part of this run" not in proof
+    assert "delivery_screenshot.png" in proof
+
+
+def test_a_deployed_project_still_leads_with_its_container():
+    from order_workflow.delivery_report import build_delivery_report
+
+    report = build_delivery_report(
+        goal="An app.",
+        requirements=(),
+        note="",
+        gate_log=[],
+        files_created=9,
+        meaningful_artifact_count=9,
+        deployment_status="Container served HTTP 200 from the production image.",
+        served_http_status=200,
+    )
+
+    proof = report.split("## Proof it runs")[1].split("## ")[0]
+    assert "Container served HTTP 200 from the production image." in proof
+    assert "during its checks" not in proof
