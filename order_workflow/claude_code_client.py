@@ -21,6 +21,7 @@ from .executors import CancellationToken, ExecutionEventSink
 from .models import EventLevel, TokenUsage
 from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
+from .workspace_processes import stop_processes_left_in_workspace
 
 # Measured, not guessed. 900s was sized when a phase prompt asked for screens and navigation
 # and little else; once the ui_shell prompt started stating the visual gate's criteria (approved
@@ -58,6 +59,10 @@ class _InvokeOutcome:
     stderr_text: str
     timed_out: bool = False
     cancelled: bool = False
+    # Anything the call raised inside the workspace and left running, already stopped by the
+    # time this is returned. Carried so the caller can put it in the event stream: a build
+    # that had to have processes killed after it is a fact about the run, not housekeeping.
+    stopped_processes: tuple[str, ...] = ()
 
 
 def _strip_ansi(text: str) -> str:
@@ -174,6 +179,18 @@ class ConfiguredClaudeCodeExecutionClient:
             except OSError as exc:
                 return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}", elapsed_seconds=time.monotonic() - started, timeout_seconds=limit)
             elapsed = time.monotonic() - started
+            if outcome.stopped_processes:
+                # In the stream rather than a log file: a build that left servers running is
+                # a fact about that run, and the last time it happened it cost an hour of
+                # nobody understanding why the next run would not start.
+                event_sink.emit(
+                    stage="implementation",
+                    agent="Claude Code",
+                    progress=50,
+                    message=f"Stopped {len(outcome.stopped_processes)} process(es) the call left running in the workspace.",
+                    level=EventLevel.WARNING,
+                    details=("\n".join(outcome.stopped_processes)[:2000],),
+                )
             if outcome.cancelled:
                 return OpenCodeExecutionResult(success=False, summary="Claude Code execution was cancelled.", elapsed_seconds=elapsed, timeout_seconds=limit)
             if outcome.timed_out:
@@ -336,7 +353,22 @@ class ConfiguredClaudeCodeExecutionClient:
         except OSError:
             pass
 
-        return _InvokeOutcome(returncode=proc.returncode if proc.returncode is not None else -1, stdout_text=stdout_text, stderr_text=stderr_text, timed_out=timed_out, cancelled=cancelled)
+        # Whatever the call raised inside the workspace and did not stop. Three
+        # `python -m http.server 8099` processes outlived acceptance run 8 on 2026-08-27,
+        # serving a generated project to the local network and sitting on the port the demo
+        # backend uses. Done here rather than at the phase boundary because a timed-out or
+        # crashed call is the likeliest one to leave something running, and this is the only
+        # place that sees all three endings.
+        left_running = stop_processes_left_in_workspace(workspace_path)
+
+        return _InvokeOutcome(
+            returncode=proc.returncode if proc.returncode is not None else -1,
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            timed_out=timed_out,
+            cancelled=cancelled,
+            stopped_processes=tuple(left_running),
+        )
 
 
 def active_coding_backend() -> str:

@@ -14,3 +14,7 @@ pytest-timeout>=2.3.1
 pyinstaller>=6.0.0
 fastembed>=0.8.0
 python-pptx>=1.0.2
+# Used to find and stop what a coding-CLI call left running inside a generated workspace
+# (order_workflow/workspace_processes.py). Present transitively before 2026-08-27; declared
+# now because a fresh clone installs from this file and acceptance runs from a fresh clone.
+psutil>=5.9.0
