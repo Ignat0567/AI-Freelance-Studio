@@ -58,7 +58,25 @@ CORE_FEATURE_QA_COMMANDS: tuple[str, ...] = ("npm test",)
 # module has no syntax/import-time errors, without needing a real BOT_TOKEN or Telegram
 # connectivity (which QA must never attempt -- see build_bot_prompt).
 BOT_QA_COMMANDS: tuple[str, ...] = ("pip install -r requirements.txt", 'python -c "import bot"')
-MAX_PHASE_REPAIR_ATTEMPTS = 2
+# 2 -> 3 on 2026-08-27, from the seven repair sequences on record. Measured as the total
+# pixels of damage a gate reported on each of its runs within one phase:
+#
+#   b03  538 -> 85          84% down, closed
+#   b03  451 -> 378         16% down, ran out of attempts
+#   b06  469 -> 3           99% down, closed
+#   b06  618 -> 618 -> 55   91% down, ran out of attempts
+#   b06  968 -> 968, 469 -> 469, 510 -> 510   0% -- all three predate e924850, where the
+#                                             gate was re-reading the bundle from before
+#                                             the repair and could not see any of the work
+#
+# Every sequence recorded since the gates could see their own repairs converges, and two of
+# the four ran out of attempts while still converging -- the second at 91% of the way down.
+# The binding constraint moved here from the time ceiling (b8994d1), and this is the same
+# decision made the same way: from what the runs recorded, not from how it feels.
+#
+# The cost is bounded and one-sided: a third attempt is spent only on a phase that would
+# otherwise be recorded as failed.
+MAX_PHASE_REPAIR_ATTEMPTS = 3
 
 _logger = logging.getLogger(__name__)
 

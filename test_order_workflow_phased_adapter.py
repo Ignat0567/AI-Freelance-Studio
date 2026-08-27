@@ -346,7 +346,7 @@ def test_core_feature_phase_never_runs_if_ui_shell_fails(tmp_path):
 
     adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
 
-    assert client.call_count == 1 + 2  # 1 initial + MAX_PHASE_REPAIR_ATTEMPTS(2) re-prompts, all within UI_SHELL
+    assert client.call_count == 1 + MAX_PHASE_REPAIR_ATTEMPTS  # 1 initial + one re-prompt per attempt, all within UI_SHELL
 
 
 def test_ui_shell_qa_failure_then_repair_succeeds(tmp_path):
@@ -413,7 +413,7 @@ def test_a_timed_out_repair_still_spends_the_remaining_attempt(tmp_path):
 
     messages = [event["message"] for event in sink.events]
     assert "The repair call ran out of time and was stopped before it finished." in messages
-    assert "QA failed; asking Codex to fix (attempt 2 of 2)" in messages
+    assert f"QA failed; asking Codex to fix (attempt 2 of {MAX_PHASE_REPAIR_ATTEMPTS})" in messages
     assert result.success is True
     # The shorter repair budget actually reaches the client, rather than the build's.
     assert client.repair_timeouts == [CLAUDE_CODE_REPAIR_TIMEOUT, CLAUDE_CODE_REPAIR_TIMEOUT]
@@ -436,7 +436,7 @@ def test_a_timed_out_repair_that_already_landed_its_fix_is_not_repeated(tmp_path
 
     assert result.success is True
     assert client.repair_calls == 1  # the second attempt was never needed
-    assert "QA failed; asking Codex to fix (attempt 2 of 2)" not in [event["message"] for event in sink.events]
+    assert f"QA failed; asking Codex to fix (attempt 2 of {MAX_PHASE_REPAIR_ATTEMPTS})" not in [event["message"] for event in sink.events]
 
 
 def test_a_repair_timeout_is_reported_instead_of_blaming_the_gate(tmp_path):
@@ -451,7 +451,7 @@ def test_a_repair_timeout_is_reported_instead_of_blaming_the_gate(tmp_path):
 
     assert result.success is False
     assert "stopped by its time limit" in result.summary
-    assert client.repair_calls == 2  # both attempts spent, not one
+    assert client.repair_calls == MAX_PHASE_REPAIR_ATTEMPTS  # every attempt spent, not just the first
 
 
 def test_a_successful_run_records_the_gates_and_repairs_it_actually_needed(tmp_path):
