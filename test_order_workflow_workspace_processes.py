@@ -118,3 +118,22 @@ def test_a_real_server_started_in_the_workspace_is_really_stopped(tmp_path):
         if server.poll() is None:  # pragma: no cover - only on failure
             server.kill()
             server.wait(timeout=5)
+
+
+def test_the_invocation_path_cleans_up_after_itself(tmp_path):
+    """The wiring, not the rule. A call that leaves a server behind must have it stopped by
+    the time its outcome is returned -- which is what did not happen on 2026-08-27, three
+    times in one run."""
+    from order_workflow.claude_code_client import ConfiguredClaudeCodeExecutionClient
+    from order_workflow.executors import CancellationToken
+
+    outcome = ConfiguredClaudeCodeExecutionClient._invoke(
+        [sys.executable, "-c", "import subprocess, sys; subprocess.Popen([sys.executable, '-m', 'http.server', '0', '--bind', '127.0.0.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"],
+        "",
+        tmp_path,
+        CancellationToken(),
+        timeout=60,
+    )
+
+    assert outcome.stopped_processes, "the call left a server running and nothing stopped it"
+    assert "http.server" in outcome.stopped_processes[0]
