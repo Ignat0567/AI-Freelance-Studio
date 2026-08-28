@@ -134,6 +134,16 @@ def section(title: str) -> None:
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}", flush=True)
 
 
+# Starting an execution is synchronous up to the point a worker thread takes over, and the
+# preflight that runs inside it is allowed to spend real time before it answers: the login
+# probe retries a 401 three times over 80 seconds of sleeps, each attempt with a 90-second
+# ceiling of its own. That is up to ~350s inside one HTTP call, against a 120s client
+# timeout -- so on 2026-08-28 the runner timed out on a start it had just issued, killed the
+# backend, and recorded nothing: no workspace, no CSV row, no transcript. The instrument
+# stopped the run it was measuring. This is the operation's own worst case plus room.
+EXECUTION_START_TIMEOUT_SECONDS = 600
+
+
 def request(method: str, path: str, payload: dict | None = None, *, timeout: int = 120) -> dict:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(
@@ -319,7 +329,7 @@ def main() -> int:
         section("3/5  CODER + REVIEWER + SELF-HEALING  -- live execution")
         log("phases: UI_SHELL -> CORE_FEATURE -> BACKEND_DECISION")
         log("each phase: coding CLI -> QA in Docker -> repair loop on failure")
-        request("POST", f"/api/orders/{order_id}/execution", {"mode": "production", "live": True})
+        request("POST", f"/api/orders/{order_id}/execution", {"mode": "production", "live": True}, timeout=EXECUTION_START_TIMEOUT_SECONDS)
 
         seen: set[str] = set()
         events: list[dict] = []

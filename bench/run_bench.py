@@ -34,6 +34,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from bench.metrics import CSV_COLUMNS, format_report, row_from_transcript, summarise_rows  # noqa: E402
 from bench.orders import BENCH_ORDERS, BENCH_ORDERS_BY_ID, BenchOrder, order_payload  # noqa: E402
 from demo import run_end_to_end_demo as harness  # noqa: E402
+from demo.run_end_to_end_demo import EXECUTION_START_TIMEOUT_SECONDS  # noqa: E402
 
 RESULTS_CSV = REPO_ROOT / "bench" / "results.csv"
 POLL_SECONDS = 5
@@ -176,7 +177,12 @@ def run_one(order: BenchOrder, *, csv_path: Path) -> dict:
         _append_row(row, csv_path)
         return row
 
-    harness.request("POST", f"/api/orders/{order_id}/execution", {"mode": "production", "live": True})
+    harness.request(
+        "POST",
+        f"/api/orders/{order_id}/execution",
+        {"mode": "production", "live": True},
+        timeout=EXECUTION_START_TIMEOUT_SECONDS,
+    )
 
     seen: set[str] = set()
     events: list[dict] = []

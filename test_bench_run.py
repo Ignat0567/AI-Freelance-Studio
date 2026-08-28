@@ -37,7 +37,7 @@ class _FakeHarness:
     def log_event(self, event: dict, *, prefix: str = "  ") -> None:
         self.logs.append(event.get("message", ""))
 
-    def request(self, method: str, path: str, payload: dict | None = None) -> dict:
+    def request(self, method: str, path: str, payload: dict | None = None, *, timeout: int = 120) -> dict:
         if path == "/api/orders":
             return {"order": {"id": "order-1"}}
         if path.endswith("/autopilot"):
@@ -102,7 +102,7 @@ def test_a_run_that_stops_to_ask_a_human_is_recorded_immediately(tmp_path, monke
     alone it would have waited an hour, three times over."""
 
     class _AwaitingHarness(_FakeHarness):
-        def request(self, method: str, path: str, payload: dict | None = None) -> dict:
+        def request(self, method: str, path: str, payload: dict | None = None, *, timeout: int = 120) -> dict:
             if path.endswith("/execution") and method == "GET":
                 return {
                     "execution": {
@@ -123,3 +123,14 @@ def test_a_run_that_stops_to_ask_a_human_is_recorded_immediately(tmp_path, monke
     assert row["failure_cause"] == "environment"
     assert "login has expired" in row["notes"]
     assert csv_path.is_file()
+
+
+def test_the_start_call_outlives_the_preflight_it_waits_on():
+    """2026-08-28: the runner timed out after 120s on the POST that starts an execution,
+    killed the backend and recorded nothing -- no workspace, no CSV row, no transcript. That
+    call is synchronous through preflight, whose login probe alone may retry a 401 three times
+    over 80 seconds of sleeps with a 90-second ceiling each: ~350s inside one HTTP call."""
+    from demo.run_end_to_end_demo import EXECUTION_START_TIMEOUT_SECONDS
+    from order_workflow.preflight import AUTH_PROBE_TIMEOUT_SECONDS
+
+    assert EXECUTION_START_TIMEOUT_SECONDS >= 3 * AUTH_PROBE_TIMEOUT_SECONDS + 80
