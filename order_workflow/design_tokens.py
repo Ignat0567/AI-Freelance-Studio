@@ -71,6 +71,52 @@ def readable_on(background: str, *, candidates: tuple[str, ...] = ("#ffffff", "#
     return max(candidates, key=lambda candidate: contrast_ratio(candidate, background))
 
 
+MIN_TEXT_CONTRAST = 4.5
+
+
+def _rgb(hex_colour: str) -> tuple[int, int, int]:
+    raw = hex_colour.strip().lstrip("#")
+    if len(raw) == 3:
+        raw = "".join(char * 2 for char in raw)
+    return tuple(int(raw[index : index + 2], 16) for index in (0, 2, 4))  # type: ignore[return-value]
+
+
+def _blend(colour: str, towards: str, amount: float) -> str:
+    """`colour` moved `amount` of the way to `towards`, channel by channel."""
+    mixed = (round(a + (b - a) * amount) for a, b in zip(_rgb(colour), _rgb(towards)))
+    return "#" + "".join(f"{channel:02x}" for channel in mixed)
+
+
+def accent_text_on(accent: str, grounds: tuple[str, ...], *, minimum: float = MIN_TEXT_CONTRAST) -> str:
+    """The approved accent, moved just far enough to be legible *as text* on these grounds.
+
+    Every style pack tells the build to use the accent for links; five of the nine ship a
+    light accent that cannot carry text on their own background. `#0071e3` on `#f5f5f7` is
+    4.31:1 against a 4.5:1 floor -- measured on the page, reported by the gate, and reported
+    again on the next generation, because there was no way out of it: the tokens file says
+    not to write colour literals, and the palette check counts the approved accent as one of
+    the four colours that must be painted. So the build was told to use a colour, and then
+    failed for using it.
+
+    This is the same arithmetic as `readable_on`, in the other direction, and it belongs in
+    the same place -- upstream of the build rather than inside a repair loop. The accent
+    keeps its hue: it is darkened (or lightened) toward the end that has room, in small
+    steps, and the first step that clears the floor on *both* grounds wins.
+    """
+    if all(contrast_ratio(accent, ground) >= minimum for ground in grounds):
+        return accent
+    hardest = min(grounds, key=lambda ground: contrast_ratio(accent, ground))
+    direction = readable_on(hardest)
+    steps = 50
+    for step in range(1, steps + 1):
+        candidate = _blend(accent, direction, step / steps)
+        if all(contrast_ratio(candidate, ground) >= minimum for ground in grounds):
+            return candidate
+    # Both ends exhausted: the grounds themselves are mid-tone. The most legible colour
+    # available is still better than the one that measured as failing.
+    return direction
+
+
 def _tokens(palette: ThemePalette) -> list[str]:
     return [
         f"  --color-background: {palette.background};",
@@ -80,6 +126,9 @@ def _tokens(palette: ThemePalette) -> list[str]:
         # Not part of the approved palette -- derived from it. An accent is chosen to stand
         # out, which frequently makes it exactly the colour white text cannot sit on.
         f"  --color-on-accent: {readable_on(palette.accent)};",
+        # Also derived: the accent as the colour of *text*, which is what "use the accent for
+        # links" asks for and what several approved accents cannot do on their own background.
+        f"  --color-accent-text: {accent_text_on(palette.accent, (palette.background, palette.surface))};",
     ]
 
 
@@ -95,6 +144,13 @@ def build_design_tokens_css(concept: ElenaDesignConcept | None) -> str | None:
         "   Written by AI Freelance Studio from the design concept the client approved, before",
         "   the build started. These four colours are the project's palette -- use the variables,",
         "   do not introduce new colour literals.",
+        "",
+        "   Two of the variables are derived rather than approved, and exist because an accent",
+        "   chosen to stand out is rarely legible against either extreme: --color-on-accent is",
+        "   what text sitting *on* the accent must be, and --color-accent-text is the accent",
+        "   itself when it is the colour of text (links, eyebrows, figures) on the background or",
+        "   a surface. Use --color-accent for fills, borders and glows; use --color-accent-text",
+        "   the moment the accent becomes type.",
         "",
         "   Three states on purpose. A generated app that adds its own light/dark control writes",
         "   its choice onto the root element, and that choice has to win over the system",

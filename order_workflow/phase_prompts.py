@@ -115,6 +115,15 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additio
             "must use var(--color-on-accent), never white or the body text colour. That variable is "
             "already computed per theme to clear AA contrast against the accent; white on an accent "
             "is the single most common way this build fails its contrast check.",
+            # The mirror of the rule above, and a measured deadlock rather than a nicety: every
+            # style pack tells the build to use the accent for links, and five of the nine ship
+            # a light accent that fails AA as text on their own background (#0071e3 on #f5f5f7
+            # is 4.31:1). The gate then asks for a darker colour while this file asks for no new
+            # literals, so the same finding came back generation after generation.
+            "- Where the accent is the colour of text rather than a fill -- links, eyebrow labels, "
+            "figures, active nav items -- use var(--color-accent-text), not var(--color-accent). "
+            "It is the same accent moved just far enough to clear AA on the background and on a "
+            "surface; the accent itself stays for fills, borders and glows.",
         ] if design_tokens_file else []),
         "",
         "Do not expose secrets in logs, reports, or generated files.",

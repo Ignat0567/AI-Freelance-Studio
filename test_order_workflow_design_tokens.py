@@ -196,3 +196,82 @@ def test_the_prompt_names_the_on_accent_variable():
 
     assert "--color-on-accent" in prompt
     assert "never white" in prompt
+
+
+# --- the accent as text, not as a fill -----------------------------------------------
+
+
+def test_the_accent_that_no_repair_could_fix_is_moved_before_the_build_sees_it():
+    """2026-08-27/28, b06-reading-journal: `Contrast 4.31:1 (needs 4.5:1) -- #0071e3 on
+    #f5f5f7` came back generation after generation. It could not be repaired from inside the
+    build: the tokens file says not to write colour literals, the palette check counts the
+    approved accent among the colours that must be painted, and the accent is what every
+    style pack tells the build to use for links."""
+    from order_workflow.design_tokens import accent_text_on, contrast_ratio
+
+    accent, background, surface = "#0071e3", "#f5f5f7", "#ffffff"
+    assert contrast_ratio(accent, background) == pytest.approx(4.31, abs=0.01)  # the reported failure
+
+    derived = accent_text_on(accent, (background, surface))
+
+    assert contrast_ratio(derived, background) >= 4.5
+    assert contrast_ratio(derived, surface) >= 4.5
+
+
+def test_an_accent_that_already_reads_as_text_is_left_exactly_alone():
+    """The approved colour is the approved colour. Moving one that already clears the floor
+    would trade a contrast failure for a palette-adherence one."""
+    from order_workflow.design_tokens import accent_text_on
+
+    palette = ThemePalette(background="#0f0f0f", surface="#1a1a1a", text="#fafafa", accent="#ff4b4b")
+
+    assert accent_text_on(palette.accent, (palette.background, palette.surface)) == palette.accent
+
+
+def test_the_derived_colour_keeps_the_accent_s_hue():
+    """It is darkened toward the end that has room, not replaced by black: a link in an
+    orange-accented design still reads as orange."""
+    from order_workflow.design_tokens import accent_text_on
+
+    derived = accent_text_on("#ff4d00", ("#fdf6e3", "#ffffff"))
+    red, green, blue = (int(derived.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
+
+    assert red > green > blue  # still an orange
+    assert red > 120  # and not merely a dark neutral
+
+
+@pytest.mark.parametrize("pack", [
+    pack for pack in vars(__import__("order_workflow.style_library", fromlist=["style_library"])).values()
+    if type(pack).__name__ == "StylePack"
+])
+def test_every_style_pack_can_write_a_legible_link(pack):
+    """Measured across the whole library rather than on one palette: 8 of the 36
+    accent/ground pairs the packs ship were below 4.5:1 before this, all of them in light
+    themes, and each one was a finding the build could not clear."""
+    from order_workflow.design_tokens import accent_text_on, contrast_ratio
+
+    for palette in (pack.light_theme, pack.dark_theme):
+        if palette is None:
+            continue
+        derived = accent_text_on(palette.accent, (palette.background, palette.surface))
+        assert contrast_ratio(derived, palette.background) >= 4.5, f"{pack.slug} on background"
+        assert contrast_ratio(derived, palette.surface) >= 4.5, f"{pack.slug} on surface"
+
+
+def test_each_theme_block_carries_its_own_accent_text():
+    css = build_design_tokens_css(_concept())
+
+    # The declaration, not the mentions of it in the file's own header comment.
+    assert css.count("--color-accent-text:") == 4  # default, system preference, and both choices
+
+
+def test_the_prompt_says_which_accent_variable_is_for_type():
+    from test_order_workflow_preflight import _approved_contract
+
+    from order_workflow.phase_prompts import build_ui_shell_prompt
+
+    brief, handoff = _approved_contract()
+    prompt = build_ui_shell_prompt(brief, handoff, design_tokens_file=DESIGN_TOKENS_FILENAME)
+
+    assert "--color-accent-text" in prompt
+    assert "links" in prompt
