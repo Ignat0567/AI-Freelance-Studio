@@ -308,3 +308,27 @@ def test_an_element_with_its_own_text_is_still_named_by_that_text():
     describe = script[script.index("function describe"):script.index("const textBoxes")]
 
     assert 'if (text) return `"${text}"`;' in describe
+
+
+def test_a_box_with_nothing_in_it_is_not_reported_as_hiding_content():
+    """Seven generations in a row paid a repair for a decorative background layer -- an
+    aria-hidden wrapper of blurred blobs, deliberately larger than the viewport and clipped on
+    purpose. The rule exists for content that is silently cut off; that layer has no content
+    to lose. Verified in a real DOM: a clipped text card and a clipped image are still
+    reported, an empty spacer and the ambient layer are not."""
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    assert "holdsContent" in script
+    assert "img, svg, canvas, video, picture, iframe" in script
+    clipping = script[script.index("const clips = style.overflow"):script.index("clipped.push(")]
+    assert "holdsContent" in clipping
+
+
+def test_overflow_clip_hides_content_exactly_as_hidden_does():
+    """The rule matched `overflow: hidden` only, so a repair could silence a real finding by
+    switching the property to `clip` -- same visual result, no complaint. The delivered
+    reading journal of 2026-08-27 has exactly that in its theme.css."""
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    clips = script[script.index("const clips = style.overflow"):script.index("const scrollable")]
+    assert "'clip'" in clips and "'hidden'" in clips

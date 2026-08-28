@@ -246,9 +246,17 @@ const PAGE_PROBE = () => {{
     // Content silently cut off: the box clips its own overflow and has more to show, with
     // no ellipsis to signal it. A scrollable region is excluded -- there the overflow is
     // reachable rather than lost.
-    const clips = style.overflow === 'hidden' || style.overflowX === 'hidden';
+    const clips = style.overflow === 'hidden' || style.overflowX === 'hidden' || style.overflow === 'clip' || style.overflowX === 'clip';
     const scrollable = style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflowX === 'auto' || style.overflowX === 'scroll';
-    if (clips && !scrollable && style.textOverflow !== 'ellipsis' && node.scrollWidth > node.clientWidth + 2 && node.clientWidth > 0) {{
+    // ...and only where there is content to lose. Seven generations in a row were charged
+    // a repair for a decorative background layer: an aria-hidden, pointer-events-none
+    // wrapper holding three empty divs, styled with position fixed, inset 0 and overflow
+    // clip, whose children are blurred colour blobs deliberately larger than the viewport
+    // and drifting. The clipping is the design, not a defect, and there is no "end of the
+    // content" left invisible because there is no content. A box holding text or a picture
+    // is still checked, which is every case this rule was written for.
+    const holdsContent = (node.innerText || '').trim().length > 0 || node.querySelector('img, svg, canvas, video, picture, iframe') !== null;
+    if (clips && !scrollable && holdsContent && style.textOverflow !== 'ellipsis' && node.scrollWidth > node.clientWidth + 2 && node.clientWidth > 0) {{
       clipped.push({{ what: describe(node), lost: node.scrollWidth - node.clientWidth }});
     }}
 
