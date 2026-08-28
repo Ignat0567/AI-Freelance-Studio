@@ -320,7 +320,7 @@ def test_a_box_with_nothing_in_it_is_not_reported_as_hiding_content():
 
     assert "holdsContent" in script
     assert "img, svg, canvas, video, picture, iframe" in script
-    clipping = script[script.index("const clips = style.overflow"):script.index("clipped.push(")]
+    clipping = script[script.index("const clips = style.overflow"):script.index("clippedNodes.push(")]
     assert "holdsContent" in clipping
 
 
@@ -375,3 +375,22 @@ def test_the_phase_prompt_asks_for_what_the_gate_measures():
 
     assert "24px between their centres" in prompt
     assert "a link inside a sentence" in prompt
+
+
+def test_a_container_and_its_children_are_one_finding_not_four():
+    """2026-08-26, b06-reading-journal: "Finished 2 Finished books, sorta", "Finished 2", "2"
+    and "Finished books, sortable by colu" -- one table and three of its own descendants,
+    filling four of the eight findings the repair prompt carried. Moving the outermost box
+    back inside brings the rest with it.
+
+    Verified in a real DOM: a 1420px container holding a 1380px child inside a 1280px
+    viewport reports once, as the container, while a separate overhanging box beside it is
+    still reported."""
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    assert "function outermost(entries)" in script
+    assert "other.node.contains(entry.node)" in script
+    # Both layout lists are collapsed, and the node refs are dropped before the result
+    # crosses out of the page -- a DOM node cannot be serialised.
+    assert "const clipped = outermost(clippedNodes)" in script
+    assert "const pastViewport = outermost(pastViewportNodes)" in script

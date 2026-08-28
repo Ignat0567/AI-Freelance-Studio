@@ -233,8 +233,8 @@ const PAGE_PROBE = () => {{
   }}
 
   const textBoxes = [];
-  const clipped = [];
-  const pastViewport = [];
+  const clippedNodes = [];
+  const pastViewportNodes = [];
   const viewportWidth = document.documentElement.clientWidth;
 
   for (const node of document.querySelectorAll('*')) {{
@@ -257,7 +257,7 @@ const PAGE_PROBE = () => {{
     // is still checked, which is every case this rule was written for.
     const holdsContent = (node.innerText || '').trim().length > 0 || node.querySelector('img, svg, canvas, video, picture, iframe') !== null;
     if (clips && !scrollable && holdsContent && style.textOverflow !== 'ellipsis' && node.scrollWidth > node.clientWidth + 2 && node.clientWidth > 0) {{
-      clipped.push({{ what: describe(node), lost: node.scrollWidth - node.clientWidth }});
+      clippedNodes.push({{ node, what: describe(node), lost: node.scrollWidth - node.clientWidth }});
     }}
 
     // Static only. An absolutely or fixed positioned box sitting outside the viewport is a
@@ -265,7 +265,7 @@ const PAGE_PROBE = () => {{
     // lives at left:-9999px on purpose, and failing it would send the repair loop to delete
     // an accessibility feature. A box laid out by normal flow has no such excuse.
     if (style.position === 'static' && (rect.left < -1 || rect.right > viewportWidth + 1)) {{
-      pastViewport.push({{ what: describe(node), overhang: Math.round(Math.max(-rect.left, rect.right - viewportWidth)) }});
+      pastViewportNodes.push({{ node, what: describe(node), overhang: Math.round(Math.max(-rect.left, rect.right - viewportWidth)) }});
     }}
 
     // Own text only, and only statically positioned boxes: absolute/fixed layering is a
@@ -326,6 +326,19 @@ const PAGE_PROBE = () => {{
       near: describe(neighbour.node),
     }});
   }}
+
+  // One defect, one finding. A container that hangs past the viewport drags every child
+  // with it, and each of them satisfies the same condition: on 2026-08-26 the reading
+  // journal reported "Finished 2 Finished books, sorta", "Finished 2", "2" and "Finished
+  // books, sortable by colu" -- one table and three of its own descendants, filling four of
+  // the eight slots the repair prompt had. Moving the outermost box back inside brings the
+  // rest with it, so only the outermost is worth saying. The node refs stay behind here:
+  // this result is serialised out of the page, and a DOM node cannot cross that boundary.
+  function outermost(entries) {{
+    return entries.filter((entry) => !entries.some((other) => other !== entry && other.node.contains(entry.node)));
+  }}
+  const clipped = outermost(clippedNodes).map(({{ what, lost }}) => ({{ what, lost }}));
+  const pastViewport = outermost(pastViewportNodes).map(({{ what, overhang }}) => ({{ what, overhang }}));
 
   const overlaps = [];
   for (let i = 0; i < textBoxes.length && overlaps.length < 6; i += 1) {{
