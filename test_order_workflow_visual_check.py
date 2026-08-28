@@ -332,3 +332,46 @@ def test_overflow_clip_hides_content_exactly_as_hidden_does():
 
     clips = script[script.index("const clips = style.overflow"):script.index("const scrollable")]
     assert "'clip'" in clips and "'hidden'" in clips
+
+
+def test_a_text_link_is_not_charged_a_repair_for_being_text_sized():
+    """Every recorded finding of the tap-target rule named an <a> 102-271px wide and 18-23px
+    tall -- links sized by their own type, not controls too small to hit. WCAG 2.5.8 exempts
+    exactly those two cases by name, and "Enlarge them" asks for the one change that would
+    break the sentence or the list they sit in.
+
+    Verified in a real DOM: crowded 16x16 icon links and adjacent 20x20 toolbar buttons are
+    still reported; an inline link in a paragraph, a standalone 131x21 link, and rows spaced
+    16px apart are not -- while the same rows touching at 0px are."""
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    rule = script[script.index("const smallTargets = [];"):script.index("const overlaps = [];")]
+
+    # Inline: the parent holds text of its own around the link.
+    assert "parentOwnText" in rule
+    # Spacing: one diameter between centres for two undersized targets...
+    assert "< 24" in rule
+    # ...and the radius to the nearest point of a full-size one.
+    assert "< 12" in rule
+
+
+def test_a_small_target_is_reported_with_what_it_collides_with():
+    """A repair cannot act on "a 131x21px": there is no way to tell which link that is, and
+    nothing about the sentence says that crowding, not size alone, is the defect."""
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    assert "24px target circle overlaps" in script
+    assert "${t.what}" in script and "${t.near}" in script
+    assert "Tap targets under 24x24px" not in script  # the nameless list it replaced
+
+
+def test_the_phase_prompt_asks_for_what_the_gate_measures():
+    from test_order_workflow_preflight import _approved_contract
+
+    from order_workflow.phase_prompts import build_ui_shell_prompt
+
+    brief, handoff = _approved_contract()
+    prompt = build_ui_shell_prompt(brief, handoff)
+
+    assert "24px between their centres" in prompt
+    assert "a link inside a sentence" in prompt

@@ -33,8 +33,10 @@ def _visual_gate_rules(brief: ProjectBrief) -> list[str]:
         "4.5:1 for normal text, 3.0:1 for large text (>=24px, or >=18.66px bold). Muted and "
         "secondary label colours are where this usually fails -- check those specifically.",
         "- The layout must fit a 375x812 phone viewport with no horizontal scrolling: no fixed "
-        "widths wider than the screen, and side-by-side columns must stack. Every interactive "
-        "element must be at least 24x24px at that width.",
+        "widths wider than the screen, and side-by-side columns must stack. Controls that sit "
+        "next to each other -- icon buttons, toolbars, rows of links -- must be at least 24x24px "
+        "at that width or keep 24px between their centres; a link inside a sentence is sized by "
+        "its text and is fine as it is.",
         "- No two visible elements may overlap each other, at either 1280px or 375px wide.",
     ]
     if concept is not None:
