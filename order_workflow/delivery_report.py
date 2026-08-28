@@ -15,6 +15,8 @@ silence would be.
 
 from __future__ import annotations
 
+import re
+
 from .models import TokenUsage
 
 
@@ -42,6 +44,24 @@ def _gate_label(stage: str) -> str:
     if check:
         return _CHECK_LABELS.get(check, check.replace("_", " "))
     return _GATE_LABELS.get(phase, phase.replace("_", " "))
+
+
+def _phase_label(stage: str) -> str:
+    """Which phase a browser-backed check guarded -- normally the pipeline's business, but
+    the tie-breaker when the same check appears twice in one document."""
+    phase, _, check = stage.partition("/")
+    return _GATE_LABELS.get(phase, "") if check else ""
+
+
+# CSI and OSC sequences: the colours a terminal would have rendered. Everything a reader can
+# actually see is kept -- this strips the bytes that are not text. The delivered evidence of
+# 2026-08-27 carried 52 of them, so the client's copy of the test run opened as
+# "[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11".
+_TERMINAL_CODES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def _strip_terminal_codes(text: str) -> str:
+    return _TERMINAL_CODES.sub("", text)
 
 
 def _found_and_fixed_lines(gate_log: list[tuple[str, int, bool | None]]) -> list[str]:
@@ -74,11 +94,23 @@ def build_qa_evidence(evidence: list[tuple[str, str]]) -> str | None:
     that a freelancer's word does not.
 
     Verbatim on purpose: summarising it back into prose would reintroduce exactly the gap
-    it exists to close.
+    it exists to close. The only thing removed is the terminal colour codes, which are not
+    text a reader sees -- and the second copy of a check that ran twice and printed the same
+    thing, which is not a second measurement.
     """
-    sections = [(gate, text.strip()) for gate, text in evidence if text and text.strip()]
+    sections = [(gate, _strip_terminal_codes(text).strip()) for gate, text in evidence if text and text.strip()]
     if not sections:
         return None
+    # A check that runs after every phase appears under the same heading each time. The
+    # delivered evidence of 2026-08-27 carried "## the browser render check" twice, with
+    # byte-identical output, and nothing saying which run either belonged to.
+    shown: list[dict] = []
+    for gate, text in sections:
+        twin = next((item for item in shown if item["label"] == _gate_label(gate) and item["text"] == text), None)
+        if twin is not None:
+            twin["repeats"].append(_phase_label(gate))
+            continue
+        shown.append({"label": _gate_label(gate), "phase": _phase_label(gate), "text": text, "repeats": []})
     lines = [
         "# What the checks measured",
         "",
@@ -87,8 +119,21 @@ def build_qa_evidence(evidence: list[tuple[str, str]]) -> str | None:
         "browser, contrast arithmetic -- not opinions about the code.",
         "",
     ]
-    for gate, text in sections:
-        lines += [f"## {_gate_label(gate)}", "", "```", *text.splitlines(), "```", ""]
+    for item in shown:
+        # Same check, different output: say which phase each run guarded, or the two
+        # sections are indistinguishable.
+        ambiguous = sum(1 for other in shown if other["label"] == item["label"]) > 1
+        heading = f"{item['label']}, after {item['phase']}" if ambiguous and item["phase"] else item["label"]
+        lines += [f"## {heading}", ""]
+        if item["repeats"]:
+            ran_again = [phase for phase in item["repeats"] if phase]
+            lines += [
+                f"Ran again after {' and '.join(ran_again)}, with the same output."
+                if ran_again
+                else f"Ran {len(item['repeats']) + 1} times, with the same output each time.",
+                "",
+            ]
+        lines += ["```", *item["text"].splitlines(), "```", ""]
     return "\n".join(lines)
 
 

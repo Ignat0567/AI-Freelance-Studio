@@ -385,3 +385,45 @@ def test_a_deployed_project_still_leads_with_its_container():
     proof = report.split("## Proof it runs")[1].split("## ")[0]
     assert "Container served HTTP 200 from the production image." in proof
     assert "during its checks" not in proof
+
+
+# --- what the evidence file looks like when a person opens it --------------------------
+
+
+def test_terminal_colour_codes_do_not_reach_the_client():
+    """The delivered evidence of 2026-08-27 carried 52 escape sequences, so the client's copy
+    of the test run opened as "[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11". Every character a
+    reader can see is kept; only the bytes that are not text are dropped."""
+    from order_workflow.delivery_report import build_qa_evidence
+
+    document = build_qa_evidence([("core_feature", "\x1b[1m\x1b[36m RUN \x1b[39m v4.1.11\n\x1b[32m1 passed\x1b[39m")])
+
+    assert "\x1b" not in document
+    assert "RUN  v4.1.11" in document
+    assert "1 passed" in document
+
+
+def test_one_check_that_ran_twice_is_one_section():
+    """"## the browser render check" appeared twice in the delivered file, with byte-identical
+    output and nothing saying which run either belonged to."""
+    from order_workflow.delivery_report import build_qa_evidence
+
+    same = "FUNCTIONAL SMOKE CHECK PASSED\nRendered text length: 908"
+    document = build_qa_evidence([("ui_shell/smoke", same), ("core_feature/smoke", same)])
+
+    assert document.count("## the browser render check") == 1
+    assert document.count("FUNCTIONAL SMOKE CHECK PASSED") == 1
+    assert "Ran again after the core feature, with the same output." in document
+
+
+def test_the_same_check_with_different_output_keeps_both_and_says_which_is_which():
+    from order_workflow.delivery_report import build_qa_evidence
+
+    document = build_qa_evidence([
+        ("ui_shell/smoke", "FUNCTIONAL SMOKE CHECK PASSED\nVisible interactive elements: 9"),
+        ("core_feature/smoke", "FUNCTIONAL SMOKE CHECK PASSED\nVisible interactive elements: 22"),
+    ])
+
+    assert "## the browser render check, after the screens and navigation" in document
+    assert "## the browser render check, after the core feature" in document
+    assert "elements: 9" in document and "elements: 22" in document
