@@ -140,6 +140,49 @@ async function goTo(page, route) {{
   await page.waitForTimeout(500);
 }}
 
+// A destination reachable only by clicking. React Router's <Link> compiles to <a href>, so
+// anchors find most screens -- but a card that navigates with `onClick={{() => navigate(...)}}`
+// is not an anchor, and neither is a tab. All three delivered reading journals were skipped
+// as having "fewer than two navigable screens" while having exactly two routes: `/`, from
+// the nav links, and `/book/:id`, reachable only by clicking a book card. That is the app
+// whose whole subject is data it must not lose, and this gate never ran on it.
+//
+// Runs only when the anchors alone would end the check, so its cost and its clicking are
+// confined to the case that is otherwise vacuous. The page is reloaded after every click, so
+// whatever a click did to the app's state is discarded before the real checks begin.
+const ACTION_LABEL = /^\\s*(add|create|new|save|delete|remove|clear|reset|submit|cancel|sign|log ?(in|out)|buy|pay|export|import|upload|download|theme|dark|light)\\b/i;
+
+async function discoverClickRoutes(page, known) {{
+  const found = [];
+  let handles = [];
+  try {{
+    handles = await page.$$('[role="link"], [role="tab"], button, [class*="card"], [class*="item"], li, tr');
+  }} catch {{
+    return found;
+  }}
+  for (const handle of handles.slice(0, 16)) {{
+    if (found.length >= 2) break;
+    let label = '';
+    try {{
+      label = (await handle.innerText()).trim();
+    }} catch {{
+      continue;
+    }}
+    if (!label || ACTION_LABEL.test(label)) continue;
+    try {{
+      await handle.click({{ timeout: 1500 }});
+    }} catch {{
+      continue;
+    }}
+    await page.waitForTimeout(400);
+    const here = await page.evaluate(() => window.location.pathname + window.location.hash);
+    if (here && !known.includes(here) && !found.includes(here)) found.push(here);
+    await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
+    await page.waitForTimeout(400);
+  }}
+  return found;
+}}
+
 async function main() {{
   const browser = await chromium.launch();
   const page = await browser.newPage({{ viewport: {{ width: 1280, height: 900 }} }});
@@ -173,7 +216,11 @@ async function main() {{
   );
 
   if (routes.length < 2) {{
-    console.log('STATE CONTINUITY CHECK SKIPPED: the app has fewer than two navigable screens.');
+    for (const route of await discoverClickRoutes(page, routes)) routes.push(route);
+  }}
+
+  if (routes.length < 2) {{
+    console.log('STATE CONTINUITY CHECK SKIPPED: no second screen found, by link or by click.');
     await browser.close();
     process.exit(0);
   }}

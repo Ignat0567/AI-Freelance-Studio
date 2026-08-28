@@ -162,3 +162,42 @@ def test_the_gate_rebuilds_before_it_previews():
         # A rebuild that fails has to say so: an unexplained non-zero exit sends the repair
         # looking at the browser findings it can no longer even reach.
         assert "BUILD FAILED" in command
+
+
+# --- screens that are not links --------------------------------------------------------
+
+
+def test_a_screen_reachable_only_by_clicking_is_still_a_screen():
+    """All three delivered reading journals were skipped as having "fewer than two navigable
+    screens" while having exactly two routes: `/` from the nav links, and `/book/:id`,
+    reachable only by clicking a book card (`onClick={() => navigate(...)}`, not an anchor).
+    That is the app whose whole subject is data it must not lose.
+
+    Verified by running the shipped script in a real browser against a fixture with the same
+    shape -- nav links that all point at `/`, cards that navigate by script: the previous
+    script printed SKIPPED, this one reports the component-local notes field, and passes once
+    the same field is persisted."""
+    assert "discoverClickRoutes" in _CHECK_SCRIPT
+    assert "window.location.pathname + window.location.hash" in _CHECK_SCRIPT
+
+
+def test_clicking_for_screens_happens_only_when_the_check_would_otherwise_skip():
+    """Its cost and its clicking are confined to the case that is otherwise vacuous."""
+    guard = _CHECK_SCRIPT.split("const routes = await page.evaluate", 1)[1]
+    guard = guard[: guard.index("const failures")]
+
+    assert guard.index("routes.length < 2") < guard.index("discoverClickRoutes")
+
+
+def test_the_discovery_pass_does_not_click_buttons_that_do_things():
+    """A discovery pass that presses "Delete" is worse than a skipped gate. Action labels are
+    excluded, and the page is reloaded after every click so nothing a click did survives into
+    the checks themselves."""
+    discovery = _CHECK_SCRIPT.split("async function discoverClickRoutes", 1)[1]
+    discovery = discovery[: discovery.index("async function main")]
+
+    assert "ACTION_LABEL.test(label)" in discovery
+    for word in ("delete", "remove", "save", "submit", "clear"):
+        assert word in _CHECK_SCRIPT.split("const ACTION_LABEL", 1)[1].split("\n", 1)[0]
+    assert "await page.goto(TARGET_URL" in discovery
+    assert "handles.slice(0, 16)" in discovery  # bounded: this runs inside a 240s gate
