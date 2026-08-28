@@ -136,3 +136,54 @@ def test_the_readme_tells_the_client_how_to_run_the_project_not_how_it_was_teste
 
     assert "Open `index.html` in any browser." in readme
     assert "npm test" not in readme
+
+
+def test_every_generated_file_appears_in_the_map_exactly_once(tmp_path):
+    """Measured on a delivered reading journal: 29 source files walked, 18 in the map. Every
+    page, the app entry, the state context and the theme hook were missing from the client's
+    architecture diagram, while two components were counted twice."""
+    for rel in (
+        "src/App.jsx", "src/main.jsx", "index.html",
+        "src/pages/BookDetail.jsx", "src/hooks/useTheme.jsx", "src/context/BooksContext.jsx",
+        "src/components/DataTable.jsx", "src/styles/theme.css", "src/data/mockBooks.js",
+        "src/App.test.jsx", "vite.config.js",
+    ):
+        _write(tmp_path / rel, "// x")
+
+    module_map = build_module_map(tmp_path)
+    listed = [path for paths in module_map.values() for path in paths]
+
+    assert len(listed) == len(set(listed)) == 11
+
+
+def test_a_form_component_is_not_filed_under_the_database(tmp_path):
+    """`AddBookForm.jsx` was filed under "repositories/data" because "ad(db)ookform" contains
+    the substring "db". Keywords match whole words in a path segment now."""
+    _write(tmp_path / "src" / "components" / "AddBookForm.jsx", "// x")
+
+    module_map = build_module_map(tmp_path)
+
+    assert module_map.get("repositories/data") is None
+    assert "src/components/AddBookForm.jsx" in module_map["components"]
+
+
+def test_the_directory_a_file_lives_in_beats_its_own_name(tmp_path):
+    """`components/DataTable.jsx` is a component, not data; `styles/components.css` is a
+    stylesheet, not a component."""
+    _write(tmp_path / "src" / "components" / "DataTable.jsx", "// x")
+    _write(tmp_path / "src" / "styles" / "components.css", "/* x */")
+
+    module_map = build_module_map(tmp_path)
+
+    assert "src/components/DataTable.jsx" in module_map["components"]
+    assert "src/styles/components.css" in module_map["styles"]
+
+
+def test_the_entry_point_is_named_rather_than_left_unfiled(tmp_path):
+    _write(tmp_path / "src" / "App.jsx", "// x")
+    _write(tmp_path / "notes.js", "// x")
+
+    module_map = build_module_map(tmp_path)
+
+    assert "src/App.jsx" in module_map["entry points"]
+    assert "notes.js" in module_map["other files"]
