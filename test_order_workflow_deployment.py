@@ -110,8 +110,34 @@ def test_successful_deploy_reports_the_served_status_and_run_command(tmp_path, m
 
     assert outcome.succeeded is True
     assert outcome.served_status == 200
-    assert outcome.run_command.startswith("docker run --rm -p")
-    assert "demo:latest" in outcome.run_command
+    # Build first, then run: the image this module built lives only in the daemon that built
+    # it, and was never pushed. On the client's machine `docker run <tag>` finds nothing,
+    # tries Docker Hub, and fails -- while the Dockerfile it needs is in the folder.
+    assert "docker build -t demo ." in outcome.run_command
+    assert "docker run --rm -p 3000:3000 demo" in outcome.run_command
+    assert "docker run --rm -p 3000:3000 demo:latest" not in outcome.run_command
+
+
+def test_the_client_command_is_named_after_the_order_not_the_execution_id(tmp_path, monkeypatch):
+    project = _vite_project(tmp_path)
+    monkeypatch.setattr("order_workflow.deployment._probe", lambda _url: (200, "<html>ok</html>"))
+
+    outcome = build_and_verify_container(
+        project,
+        image_tag="freelancerstudio/execution-26462dbb-385b:latest",
+        app_name="Reading Journal",
+        docker_client_factory=lambda: FakeDockerClient(),
+    )
+
+    assert "docker build -t reading-journal ." in outcome.run_command
+    # And with no usable title, something typable rather than nothing.
+    fallback = build_and_verify_container(
+        project,
+        image_tag="freelancerstudio/execution-26462dbb-385b:latest",
+        app_name="   ",
+        docker_client_factory=lambda: FakeDockerClient(),
+    )
+    assert "docker build -t execution-26462dbb-385b ." in fallback.run_command
 
 
 def test_a_container_that_never_answers_is_a_failure_not_an_exception(tmp_path, monkeypatch):

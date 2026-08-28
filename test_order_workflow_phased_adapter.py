@@ -911,3 +911,56 @@ def test_a_visual_gate_repair_reaches_the_delivered_report_and_evidence(tmp_path
 
     evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
     assert "Palette: 4/4 approved colours painted (100%)." in evidence
+
+
+# --- what the delivered documents say the delivery is -------------------------
+
+
+def test_the_readme_is_titled_with_the_order_not_the_workspace_folder(tmp_path):
+    """Every README in the archive opens with
+    `# Reading-Journal-order_8b9f37c8-...-execution_26462dbb-...` -- the internal folder
+    name, two UUIDs, as the first line a client reads."""
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path)
+
+    adapter.execute(
+        ExecutionRequest(brief=brief, handoff=handoff, execution_id="execution_test0001", title="Reading Journal"),
+        FakeEventSink(),
+        CancellationToken(),
+    )
+
+    project_dir = [item for item in Path(tmp_path).iterdir() if item.is_dir()][0]
+    readme = (project_dir / "README.md").read_text(encoding="utf-8")
+    assert readme.splitlines()[0] == "# Reading Journal"
+    assert "execution_test0001" not in readme.splitlines()[0]
+
+
+def test_an_order_with_no_title_still_gets_a_heading(tmp_path):
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path)
+
+    adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    project_dir = [item for item in Path(tmp_path).iterdir() if item.is_dir()][0]
+    readme = (project_dir / "README.md").read_text(encoding="utf-8")
+    assert readme.splitlines()[0].startswith("# ")
+
+
+def test_a_delivery_with_no_backend_does_not_claim_a_server_and_a_database(tmp_path):
+    """The web-app brief recommends React + Vite / FastAPI / SQLite before the run starts.
+    The backend-decision phase then concludes no backend is needed -- as it did in every
+    archived web_app run -- and the delivery is a static bundle in a `serve` container. The
+    README named a server and a database the folder does not contain."""
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path)
+
+    adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    project_dir = [item for item in Path(tmp_path).iterdir() if item.is_dir()][0]
+    readme = (project_dir / "README.md").read_text(encoding="utf-8")
+    stack = readme.split("## Tech Stack", 1)[1].split("##", 1)[0]
+    assert "FastAPI" not in stack
+    assert "SQLite" not in stack
+    assert "Backend: none" in stack
+    # The half that was true stays: the frontend is what got built.
+    assert brief.recommended_stack.frontend in stack

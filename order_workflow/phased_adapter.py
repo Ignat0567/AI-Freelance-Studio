@@ -456,7 +456,17 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         )
 
         if not decision.needs_backend:
-            return self._finalize_success(request, event_sink, workspace, note="No backend was required; the UI shell and core feature are the complete deliverable.")
+            return self._finalize_success(
+                request,
+                event_sink,
+                workspace,
+                note="No backend was required; the UI shell and core feature are the complete deliverable.",
+                delivered_stack=(
+                    f"Frontend: {request.brief.recommended_stack.frontend}\n"
+                    "Backend: none -- no server was built for this project\n"
+                    "Storage: in the browser -- no server or database is part of this delivery"
+                ),
+            )
 
         return self._run_backend_bridge(request, event_sink, cancellation, workspace, ui_shell.context, core_feature.context, decision)
 
@@ -853,7 +863,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # The tag has to be a valid Docker reference: lowercase, no underscores at the start.
         tag = f"freelancerstudio/{request.execution_id.replace('_', '-').casefold()}:latest"
         try:
-            outcome = self._deploy_runner(workspace.project_path, image_tag=tag)
+            outcome = self._deploy_runner(workspace.project_path, image_tag=tag, app_name=request.title)
         except Exception as exc:
             _logger.warning("Container deploy stage failed for %s", request.execution_id, exc_info=True)
             # Capped to ShortText's 240 limit: this string ends up in ExecutionResult.warnings,
@@ -869,7 +879,16 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         )
         return outcome
 
-    def _finalize_success(self, request: ExecutionRequest, event_sink: ExecutionEventSink, workspace, *, note: str, run_instruction: str | None = None) -> ExecutionResult:
+    def _finalize_success(
+        self,
+        request: ExecutionRequest,
+        event_sink: ExecutionEventSink,
+        workspace,
+        *,
+        note: str,
+        run_instruction: str | None = None,
+        delivered_stack: str | None = None,
+    ) -> ExecutionResult:
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
         deployment = self._deploy(request, event_sink, workspace)
@@ -909,14 +928,21 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 
         module_map = build_module_map(workspace.project_path)
-        tech_stack = (
+        # What was delivered, not what was recommended before the run started. The web-app
+        # branch of the brief proposes React + Vite / FastAPI / SQLite; the backend-decision
+        # phase then frequently concludes no backend is needed, and the delivery is a static
+        # bundle in a `serve` container. Every web_app README in the archive names a server
+        # and a database the folder does not contain.
+        tech_stack = delivered_stack or (
             f"Frontend: {request.brief.recommended_stack.frontend}\n"
             f"Backend: {request.brief.recommended_stack.backend}\n"
             f"Storage: {request.brief.recommended_stack.storage}"
         )
         overview = build_overview_paragraph(request.brief.goal, request.brief.target_users)
         readme_text = build_readme(
-            project_name=workspace.project_reference,
+            # The order's title, not the workspace folder: that name carries two UUIDs, and
+            # it was the heading of every README ever delivered.
+            project_name=request.title.strip() or workspace.project_reference,
             goal=request.brief.goal,
             tech_stack=tech_stack,
             features=request.handoff.requirements,
@@ -924,7 +950,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             module_map=module_map,
             overview=overview,
         )
-        architecture_text = build_architecture_mermaid(module_map, workspace.project_reference)
+        architecture_text = build_architecture_mermaid(module_map, request.title.strip() or workspace.project_reference)
         (workspace.project_path / "README.md").write_text(readme_text, encoding="utf-8")
         (workspace.project_path / "ARCHITECTURE.md").write_text(architecture_text, encoding="utf-8")
 

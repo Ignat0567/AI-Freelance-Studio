@@ -18,6 +18,7 @@ daemon is busy, out of disk, or offline.
 from __future__ import annotations
 
 import os
+import re
 import socket
 import urllib.error
 import urllib.request
@@ -57,6 +58,38 @@ CMD ["serve", "-s", "dist", "-l", "{port}"]
 # overwriting the ones just installed for Linux -- the same platform-mismatch class of bug
 # that already bit the Docker QA runner (native binaries built for the host OS).
 _DOCKERIGNORE = "node_modules\ndist\n.git\n*.log\n"
+
+
+def _client_image_name(app_name: str, image_tag: str) -> str:
+    """A tag the client can type. Docker allows lowercase letters, digits and `._-`, and
+    the name has to start with one of the first two."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (app_name or "").casefold()).strip("-")[:40]
+    if slug and slug[0].isalnum():
+        return slug
+    fallback = image_tag.rsplit("/", 1)[-1].split(":", 1)[0]
+    return fallback or "app"
+
+
+def client_run_instruction(app_name: str, image_tag: str) -> str:
+    """How the *client* starts this delivery, on their machine.
+
+    Not `docker run <image_tag>`, which is what this module ran and what both delivered
+    documents printed until 2026-08-28. That image exists in one place -- the Docker daemon
+    that built it, here -- and was never pushed anywhere. On the client's machine the command
+    finds no such image, tries to pull it from Docker Hub, and fails. What they do have is
+    the Dockerfile in the folder, which is what these two lines use.
+    """
+    name = _client_image_name(app_name, image_tag)
+    return "\n".join(
+        (
+            "```",
+            f"docker build -t {name} .",
+            f"docker run --rm -p {_CONTAINER_PORT}:{_CONTAINER_PORT} {name}",
+            "```",
+            "",
+            f"Then open http://localhost:{_CONTAINER_PORT} in a browser.",
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +135,7 @@ def build_and_verify_container(
     workspace_path: Path,
     *,
     image_tag: str,
+    app_name: str = "",
     docker_client_factory: Callable[[], object] | None = None,
     build_timeout_seconds: int = _DEFAULT_BUILD_TIMEOUT_SECONDS,
 ) -> DeploymentOutcome:
@@ -170,7 +204,7 @@ def build_and_verify_container(
                 if served
                 else f"Container did not serve the app (status={status})."
             ),
-            run_command=f"docker run --rm -p {_CONTAINER_PORT}:{_CONTAINER_PORT} {image_tag}",
+            run_command=client_run_instruction(app_name, image_tag),
             served_status=status,
             body_excerpt=body[:500],
             logs_tail=logs[-_LOG_TAIL_CHARS:],
@@ -186,7 +220,8 @@ def build_and_verify_container(
         )
     finally:
         # Always stopped: a pipeline stage that leaks running containers is a resource bug.
-        # The image stays, and run_command tells the operator how to start it again.
+        # The image stays here for the operator; the client's own copy is built from the
+        # delivered Dockerfile, which is what run_command tells them to do.
         if container is not None:
             try:
                 container.remove(force=True)

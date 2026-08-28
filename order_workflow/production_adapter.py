@@ -295,7 +295,8 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             )
             overview = build_overview_paragraph(request.brief.goal, request.brief.target_users)
             readme_text = build_readme(
-                project_name=workspace.project_reference,
+                # The order's title, not the workspace folder name with its two UUIDs.
+                project_name=request.title.strip() or workspace.project_reference,
                 goal=request.brief.goal,
                 tech_stack=tech_stack,
                 features=request.handoff.requirements,
@@ -305,7 +306,7 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 module_map=module_map,
                 overview=overview,
             )
-            architecture_text = build_architecture_mermaid(module_map, workspace.project_reference)
+            architecture_text = build_architecture_mermaid(module_map, request.title.strip() or workspace.project_reference)
             (workspace.project_path / "README.md").write_text(readme_text, encoding="utf-8")
             (workspace.project_path / "ARCHITECTURE.md").write_text(architecture_text, encoding="utf-8")
             doc_artifacts = (
