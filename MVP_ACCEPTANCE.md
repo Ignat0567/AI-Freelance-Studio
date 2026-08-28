@@ -157,6 +157,29 @@ So: **the MVP criterion is not met.** Two of its three parts are -- criterion 1 
 unattended sequence, criterion 2 across every product kind the pipeline builds. The third,
 somebody other than the author ordering or paying for a delivery, has not been started.
 
+## Where it stands (2026-08-28)
+
+**3 of 3, one unattended sequence, on `1869941`** -- 48 minutes, $13.16, one repair across the
+three orders (b02 350s/0, b06 1353s/1 on the visual gate, b03 1121s/0). The cheapest and
+fastest sequence recorded, and the first on a build where the delivered documents describe
+the delivery: the order's title at the head of each README, the tech stack that was actually
+built, `docker build` from the delivered Dockerfile instead of an image that only exists on
+this machine, and `qa_evidence.md` without terminal escape codes or a section printed twice.
+
+Nine defects were fixed the same day from what earlier runs recorded, and this run then paid
+for itself twice over:
+
+* The repair prompt it produced was five-sevenths one defect ("PAGES" and "STATUS" overlap,
+  reported once per shelf), and the one repair it spent went on a contradiction the pipeline
+  authored itself -- a style pack that said "dark is default" against a gate that measures the
+  approved light ground.
+* The state-continuity gate ran on both web apps for the first time (the reading journal's
+  second screen has no URL at all) and then reported `Checked 0 control(s) ... PASSED`. Four
+  defects behind that pass, all found by running the shipped check against the delivered build
+  itself; a check that examines nothing now says so instead of passing.
+
+Criterion 3 is still untouched.
+
 ## Where it stands (2026-08-27, second run of the day)
 
 **1 of 3**, $9.19. `b02` succeeded in 336 s with no repairs; `b06` failed after two repairs;
@@ -404,6 +427,9 @@ The criterion may not be relaxed to fit what happened to get built. Any edit get
 line here saying what changed and why -- so that moving the goalposts, if it happens, is at
 least visible.
 
+- 2026-08-28 — criterion unchanged; a 3-of-3 sequence recorded above, on the day's fixes,
+  together with the two things that run exposed: a repair prompt that was mostly one defect
+  repeated, and a state gate that passed having checked nothing.
 - 2026-08-17 — created.
 - 2026-08-17 — baseline table replaced with the machine-computed figures over eight archived
   runs (was three of five, counted by hand). The criterion itself is unchanged.
