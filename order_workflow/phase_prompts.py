@@ -47,6 +47,14 @@ def _visual_gate_rules(brief: ProjectBrief) -> list[str]:
             f"- Under `prefers-color-scheme: dark` the ground must actually repaint to the approved dark "
             f"theme (background {dark.background}, surface {dark.surface}, text {dark.text}, "
             f"accent {dark.accent}) -- not stay light.",
+            # A theme control is a reasonable thing to build and the model builds one often.
+            # When it does, its state has to drive the same tokens the media query drives, or
+            # the two disagree and half the page switches: the reading journal of 2026-08-27
+            # was reported for near-white text on a white surface for exactly that reason.
+            "- If you add a light/dark control, set `data-theme` to \"light\" or \"dark\" on the "
+            "`<html>` element and let the approved tokens do the rest -- they already define every "
+            "colour for that attribute as well as for the system preference. Do not write a second "
+            "set of colours for the toggle, and do not toggle a class the tokens know nothing about.",
         ]
     return rules
 

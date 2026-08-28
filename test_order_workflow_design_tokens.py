@@ -162,10 +162,28 @@ def test_both_themes_carry_their_own_on_accent_value():
     css = build_design_tokens_css(_concept(light=ThemePalette(background="#ffffff", surface="#f4f6fb", text="#172033", accent="#1f3a93"),
                                            dark=ThemePalette(background="#0e1420", surface="#161d2b", text="#e8edf7", accent="#75a1ff")))
 
-    assert css.count("--color-on-accent") == 2
-    light_block, dark_block = css.split("@media (prefers-color-scheme: dark)")
-    assert "#ffffff" in light_block.split("--color-on-accent")[1].split(";")[0]
-    assert "#ffffff" not in dark_block.split("--color-on-accent")[1].split(";")[0]
+    # Four states now: the default, the system preference, and the app's own two choices.
+    # What matters is not how many there are but that each one carries its own value.
+    def block(header: str) -> str:
+        return css.split(header, 1)[1].split("}", 1)[0]
+
+    assert "#ffffff" in block(":root {")
+    assert "#ffffff" in block(':root[data-theme="light"] {')
+    assert "#ffffff" not in block(':root:not([data-theme="light"]) {').split("--color-on-accent")[1]
+    assert "#ffffff" not in block(':root[data-theme="dark"] {').split("--color-on-accent")[1]
+
+
+def test_an_app_with_its_own_theme_control_is_not_fighting_the_media_query():
+    """The reading journal of 2026-08-27 shipped a theme toggle, and the visual gate found
+    near-white text on a white surface: half the page followed the system preference and half
+    followed the toggle. Tokens now answer to both, with the app's own choice winning."""
+    css = build_design_tokens_css(_concept())
+
+    assert ':root:not([data-theme="light"])' in css
+    assert ':root[data-theme="dark"]' in css
+    assert ':root[data-theme="light"]' in css
+    # The system block has to come before the explicit ones, or the toggle cannot win.
+    assert css.index("@media (prefers-color-scheme: dark)") < css.index(':root[data-theme="dark"]')
 
 
 def test_the_prompt_names_the_on_accent_variable():
