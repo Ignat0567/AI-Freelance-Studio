@@ -1008,7 +1008,9 @@ def test_features_do_not_repeat_the_overview_paragraph(tmp_path):
 
     project_dir = [item for item in Path(tmp_path).iterdir() if item.is_dir()][0]
     readme = (project_dir / "README.md").read_text(encoding="utf-8")
-    features = readme.split("## Features", 1)[1].split("##", 1)[0]
 
-    assert "…" not in features
-    assert goal_as_requirement not in features
+    assert "…" not in readme
+    assert goal_as_requirement not in readme
+    # Nothing distinct left to list, so the heading goes too rather than standing empty.
+    assert "## Features" not in readme
+    assert "## Overview" in readme and "## Tech Stack" in readme
