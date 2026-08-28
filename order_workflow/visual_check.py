@@ -341,17 +341,26 @@ const PAGE_PROBE = () => {{
   const pastViewport = outermost(pastViewportNodes).map(({{ what, overhang }}) => ({{ what, overhang }}));
 
   const overlaps = [];
+  // One pair of labels, one finding. A table header whose cells are wrapped in divs reports
+  // the same collision from every combination of the wrappers: on 2026-08-28 "PAGES" and
+  // "STATUS" overlapping was five of the seven findings in one repair prompt -- three at
+  // 1280px and two at 375px -- for one defect. Ancestor pairs were already skipped; these
+  // are siblings that describe themselves identically.
+  const overlapKeys = new Set();
   for (let i = 0; i < textBoxes.length && overlaps.length < 6; i += 1) {{
     for (let j = i + 1; j < textBoxes.length && overlaps.length < 6; j += 1) {{
       const a = textBoxes[i];
       const b = textBoxes[j];
       if (a.node.contains(b.node) || b.node.contains(a.node)) continue;
+      const key = [a.label, b.label].sort().join(' || ');
+      if (overlapKeys.has(key)) continue;
       const width = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
       const height = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
       if (width <= 1 || height <= 1) continue;
       const smaller = Math.min(a.rect.width * a.rect.height, b.rect.width * b.rect.height);
       // A quarter of the smaller box: brushing borders are normal, half-covered text is not.
       if (smaller > 0 && (width * height) / smaller > 0.25) {{
+        overlapKeys.add(key);
         overlaps.push({{ a: a.label, b: b.label, percent: Math.round(((width * height) / smaller) * 100) }});
       }}
     }}

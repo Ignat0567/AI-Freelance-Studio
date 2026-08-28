@@ -198,3 +198,31 @@ def test_unrecognised_audience_fails_closed_to_needing_a_backend():
 
     assert decision.needs_backend is True
     assert decision.confident is False
+
+
+def test_the_theme_attribute_is_written_only_when_a_person_picks_one():
+    """2026-08-28, b06: the delivered journal read matchMedia once in useState and wrote
+    data-theme at mount. That pinned the page to the preference of that instant -- the visual
+    gate switched the browser to dark afterwards and recorded "page does not repaint"."""
+    from test_order_workflow_preflight import _approved_contract
+
+    from order_workflow.phase_prompts import build_ui_shell_prompt
+
+    brief, handoff = _approved_contract()
+    prompt = build_ui_shell_prompt(brief, handoff)
+
+    assert "Do not set it at startup" in prompt
+    assert "prefers-color-scheme" in prompt
+
+
+def test_no_style_pack_declares_a_default_theme_the_gate_will_reject():
+    """The approved light palette is the ground the visual gate measures. A pack telling the
+    build "dark is default" contradicts that, and one did: the b06 build of 2026-08-28 painted
+    #08080b, was sent back to repaint it, and spent a repair call on the disagreement."""
+    from order_workflow import style_library
+
+    packs = [pack for pack in vars(style_library).values() if type(pack).__name__ == "StylePack"]
+    assert packs
+    for pack in packs:
+        assert "dark is default" not in pack.spec.casefold(), pack.slug
+        assert "default (dark" not in pack.spec.casefold(), pack.slug

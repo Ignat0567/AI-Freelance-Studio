@@ -42,7 +42,12 @@ LIQUID_GLASS = StylePack(
         "**Accent color:** one primary accent (pick a single saturated hue appropriate to the brand, e.g. `#6ea8fe` soft blue), used for "
         "eyebrow dots, links, primary buttons, badges, glow accents — implement as a single theme variable. An optional secondary accent "
         "(a violet or teal a few degrees around the color wheel) may appear only in gradients/blobs alongside the primary.\n\n"
-        "**Two themes, toggle at runtime (dark is default):**\n"
+        # Read "(dark is default)" until 2026-08-28, which contradicted the pipeline's own
+        # contract: the approved light palette is the ground the visual gate measures. A build
+        # following this sentence painted #08080b, was sent back to repaint it, and cost a
+        # repair call. Both themes are still specified below; which is the default is not this
+        # pack's to decide.
+        "**Two themes, both available at runtime:**\n"
         "Dark: page background near-black (`#08080b`); text primary `#f5f5f7`, secondary `rgba(245,245,247,0.68)`, tertiary "
         "`rgba(245,245,247,0.5)`; glass fill `rgba(255,255,255,0.055)` (cards) / `rgba(255,255,255,0.09)` (nav); glass border "
         "`rgba(255,255,255,0.14)` normal / `0.22` strong; glass shadow `0 20px 50px rgba(0,0,0,0.55)` plus an inset top hairline "

@@ -394,3 +394,17 @@ def test_a_container_and_its_children_are_one_finding_not_four():
     # crosses out of the page -- a DOM node cannot be serialised.
     assert "const clipped = outermost(clippedNodes)" in script
     assert "const pastViewport = outermost(pastViewportNodes)" in script
+
+
+def test_one_collision_repeated_by_a_component_is_one_finding():
+    """2026-08-28, b06: "PAGES" and "STATUS" overlapping was five of the seven findings in one
+    repair prompt -- three at 1280px and two at 375px -- because the shelf header is rendered
+    once per shelf. Three instances of one component are one fix.
+
+    Verified in a real DOM: three copies of a colliding header reported three times before
+    this and once now, while a page with no collision still reports none."""
+    script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    overlaps = script[script.index("const overlaps = [];"):script.index("return {")]
+    assert "overlapKeys" in overlaps
+    assert "[a.label, b.label].sort().join" in overlaps

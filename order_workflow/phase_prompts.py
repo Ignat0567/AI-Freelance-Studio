@@ -57,6 +57,14 @@ def _visual_gate_rules(brief: ProjectBrief) -> list[str]:
             "`<html>` element and let the approved tokens do the rest -- they already define every "
             "colour for that attribute as well as for the system preference. Do not write a second "
             "set of colours for the toggle, and do not toggle a class the tokens know nothing about.",
+            # And only when a person chooses. Measured 2026-08-28: the delivered journal read
+            # matchMedia once in useState and wrote data-theme at mount, which pinned the page
+            # to the preference of that instant -- the gate switched the browser to dark
+            # afterwards and the ground never repainted.
+            "- Write `data-theme` only when the person picks a theme. Do not set it at startup "
+            "from `prefers-color-scheme`: while the attribute is absent the tokens follow the "
+            "system on their own, and writing it at mount freezes the page against any later "
+            "change. A control that offers \"system\" removes the attribute again.",
         ]
     return rules
 
