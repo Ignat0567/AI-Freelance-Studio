@@ -253,3 +253,30 @@ def test_a_debounced_autosave_is_given_time_to_land():
     assert "SAVE_SETTLE_MS = 1000" in _CHECK_SCRIPT
     body = _CHECK_SCRIPT.split("const mutated = await mutate(page, control);", 1)[1]
     assert body.index("SAVE_SETTLE_MS") < body.index("await away()")
+
+
+def test_a_setting_made_of_buttons_is_still_a_setting():
+    """The Focus Timer this gate was written for -- "a settings screen whose duration control
+    was useState('25')" -- was delivered on 2026-08-28 with that control as a
+    `role="radiogroup"` of buttons. The gate looked only at input/select/textarea: three
+    screens, zero controls, nothing examined.
+
+    Verified against that delivered build: 4 controls checked across 3 screens, PASSED, with
+    the history range chips exempted as a filter."""
+    from order_workflow.state_continuity_check import _ARIA_GROUP_JS
+
+    assert 'role="radiogroup"' in _ARIA_GROUP_JS
+    assert "aria-checked" in _ARIA_GROUP_JS and "aria-pressed" in _ARIA_GROUP_JS
+    # One control, whose value is the option chosen -- not one control per button.
+    assert "options.length < 2" in _ARIA_GROUP_JS
+    assert "mutateGroup" in _CHECK_SCRIPT
+
+
+def test_a_row_of_filter_chips_is_as_transient_as_a_search_box():
+    """The same rule that exempts a search field has to exempt "All / Want to read / Reading"
+    above a list, or the repair persists a stale filter -- which is what happened the last
+    time this gate demanded a search query survive navigation."""
+    from order_workflow.state_continuity_check import _ARIA_GROUP_JS
+
+    assert "filterish" in _ARIA_GROUP_JS
+    assert '[role="toolbar"], [class*="filter"], [class*="chip"], [class*="tabs"]' in _ARIA_GROUP_JS

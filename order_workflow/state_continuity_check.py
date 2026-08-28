@@ -70,6 +70,54 @@ const isTransient = (node, label) => {
 };"""
 
 
+# A setting expressed as a row of buttons rather than as an <input>. The Focus Timer this gate
+# was written for -- "a settings screen whose duration control was useState('25')" -- was
+# delivered on 2026-08-28 with that control as `role="radiogroup"` over `role="radio"`
+# buttons, and the gate looked only at input/select/textarea: three screens, zero controls,
+# nothing examined. The group is one control whose value is the option currently chosen.
+_ARIA_GROUP_JS = """
+const readGroups = () => {
+  const groups = Array.from(document.querySelectorAll('[role="radiogroup"], [role="tablist"], [role="group"]'));
+  return groups
+    .map((group, order) => {
+      const options = Array.from(
+        group.querySelectorAll('[role="radio"], [role="tab"], [aria-pressed], [aria-checked]'),
+      ).filter((option) => {
+        const rect = option.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && !option.disabled;
+      });
+      if (options.length < 2) return null;
+      const chosen = options.find((option) =>
+        option.getAttribute('aria-checked') === 'true'
+        || option.getAttribute('aria-selected') === 'true'
+        || option.getAttribute('aria-pressed') === 'true',
+      );
+      const labelledBy = group.getAttribute('aria-labelledby');
+      const labelNode = labelledBy ? document.getElementById(labelledBy) : null;
+      const label = (
+        group.getAttribute('aria-label')
+        || (labelNode ? labelNode.innerText : '')
+        || `option group ${order + 1}`
+      ).trim();
+      // A filter is a filter whether it is a text box or a row of chips: the same rule that
+      // exempts a search field exempts "All / Want to read / Reading" above a list.
+      const filterish = /(search|filter|find|query|sort|range|view|shelf|status|tab)/i.test(label)
+        || group.closest('[role="toolbar"], [class*="filter"], [class*="chip"], [class*="tabs"]') !== null;
+      return {
+        index: -1,
+        key: `group::${label}`,
+        label: label.slice(0, 60),
+        transient: filterish,
+        tag: 'group',
+        type: 'group',
+        value: chosen ? (chosen.innerText || '').trim().slice(0, 40) : '',
+      };
+    })
+    .filter(Boolean);
+};
+"""
+
+
 _CHECK_SCRIPT = f"""import {{ chromium }} from 'playwright';
 
 const TARGET_URL = {_PREVIEW_URL!r};
@@ -80,6 +128,7 @@ const TARGET_URL = {_PREVIEW_URL!r};
 async function readControls(page) {{
   return page.evaluate(() => {{
     {_TRANSIENT_INPUT_JS}
+    {_ARIA_GROUP_JS}
     const nodes = Array.from(document.querySelectorAll('input:not([type=hidden]), select, textarea'));
     // Numbered before filtering, so `index` is the position Playwright's own query will
     // return: numbering after the filter made the two disagree the moment a screen held a
@@ -107,8 +156,40 @@ async function readControls(page) {{
           type: node.type || '',
           value: node.type === 'checkbox' || node.type === 'radio' ? String(node.checked) : String(node.value ?? ''),
         }};
-      }});
+      }})
+      .concat(readGroups());
   }});
+}}
+
+// Choosing a different option in a row of buttons. Same shape as selectOption() on a <select>
+// -- pick anything but what is chosen now -- and the same question afterwards: did the choice
+// survive leaving the screen.
+async function mutateGroup(page, control) {{
+  const groups = await page.$$('[role="radiogroup"], [role="tablist"], [role="group"]');
+  for (const group of groups) {{
+    const label = await group.evaluate((node) => {{
+      const by = node.getAttribute('aria-labelledby');
+      const labelNode = by ? document.getElementById(by) : null;
+      return (node.getAttribute('aria-label') || (labelNode ? labelNode.innerText : '') || '').trim();
+    }}).catch(() => '');
+    if (`group::${{label}}` !== control.key) continue;
+    const options = await group.$$('[role="radio"], [role="tab"], [aria-pressed], [aria-checked]');
+    for (const option of options) {{
+      const text = ((await option.innerText().catch(() => '')) || '').trim().slice(0, 40);
+      if (!text || text === control.value) continue;
+      try {{
+        await option.click({{ timeout: 1500 }});
+      }} catch {{
+        return null;
+      }}
+      await page.waitForTimeout(150);
+      const after = await readControls(page);
+      const updated = after.find((item) => item.key === control.key);
+      return updated && updated.value !== control.value ? updated : null;
+    }}
+    return null;
+  }}
+  return null;
 }}
 
 // A control is identified by what it is (tag, type, label), never by where it sat in the
@@ -117,10 +198,11 @@ async function readControls(page) {{
 // reported a value it had typed into one field as having been lost by a different one, and
 // named a draft it had just exempted.
 async function mutate(page, control) {{
-  const handles = await page.$$('input:not([type=hidden]), select, textarea');
   const current = await readControls(page);
   const match = current.find((item) => item.key === control.key);
   if (!match) return null;
+  if (control.tag === 'group') return mutateGroup(page, control);
+  const handles = await page.$$('input:not([type=hidden]), select, textarea');
   const handle = handles[match.index];
   if (!handle) return null;
   try {{
