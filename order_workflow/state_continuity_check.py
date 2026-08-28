@@ -81,13 +81,17 @@ async function readControls(page) {{
   return page.evaluate(() => {{
     {_TRANSIENT_INPUT_JS}
     const nodes = Array.from(document.querySelectorAll('input:not([type=hidden]), select, textarea'));
+    // Numbered before filtering, so `index` is the position Playwright's own query will
+    // return: numbering after the filter made the two disagree the moment a screen held a
+    // hidden or disabled field, and the mutation then landed on a different control.
     return nodes
-      .filter((node) => {{
+      .map((node, index) => ({{ node, index }}))
+      .filter(({{ node }}) => {{
         const rect = node.getBoundingClientRect();
         const style = getComputedStyle(node);
         return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && !node.disabled && !node.readOnly;
       }})
-      .map((node, index) => {{
+      .map(({{ node, index }}) => {{
         const label =
           node.getAttribute('aria-label')
           || (node.labels && node.labels[0] ? node.labels[0].innerText.trim() : '')
@@ -107,9 +111,17 @@ async function readControls(page) {{
   }});
 }}
 
+// A control is identified by what it is (tag, type, label), never by where it sat in the
+// list. Mutating one control can add or remove another -- moving a book to "Reading" grows a
+// "Page stopped at" field -- and on 2026-08-28 that shifted the positions mid-loop: the gate
+// reported a value it had typed into one field as having been lost by a different one, and
+// named a draft it had just exempted.
 async function mutate(page, control) {{
   const handles = await page.$$('input:not([type=hidden]), select, textarea');
-  const handle = handles[control.index];
+  const current = await readControls(page);
+  const match = current.find((item) => item.key === control.key);
+  if (!match) return null;
+  const handle = handles[match.index];
   if (!handle) return null;
   try {{
     if (control.type === 'checkbox' || control.type === 'radio') {{
@@ -131,7 +143,7 @@ async function mutate(page, control) {{
   }}
   await page.waitForTimeout(150);
   const after = await readControls(page);
-  const updated = after.find((item) => item.index === control.index);
+  const updated = after.find((item) => item.key === control.key);
   // Only a control that actually took the new value is worth re-checking later: one that
   // refused the edit is a different problem, and reporting it here would be misleading.
   return updated && updated.value !== control.value ? updated : null;
@@ -161,6 +173,17 @@ async function goTo(page, route) {{
 const ACTION_LABEL = /^\\s*(add|create|new|save|delete|remove|clear|reset|submit|cancel|sign|log ?(in|out)|buy|pay|export|import|upload|download|theme|dark|light)\\b/i;
 const BACK_LABEL = /^\\s*(back|return|home|close|all books|all items|workspace|library|shelves|←|<|\\u2039|\\u00ab)/i;
 const CANDIDATE = '[role="link"], [role="tab"], button, [class*="card"], [class*="item"], li, tr';
+// How long the app gets to render after a reload before it is asked a question. The first
+// load already waited 1200ms; the reloads inside discovery waited 400, and on 2026-08-28 that
+// was short enough that the book button discovery had just clicked was not on the page yet
+// when the check came back for it -- the run recorded "Checked 0 control(s)" and passed.
+const SETTLE_MS = 1200;
+// And how long a change gets to be saved before the screen is left. Autosave on a debounce is
+// a normal way to write this -- the reading journal delivered on 2026-08-28 commits notes
+// 600ms after the last keystroke, and a gate that typed and left inside 150ms recorded them
+// as lost. A person who types and immediately clicks away loses them too, but that is a race
+// worth half a second, not a repair call.
+const SAVE_SETTLE_MS = 1000;
 
 // The URL is not where a screen lives. React Router's <Link> compiles to <a href>, and the
 // first fix here followed the URL a click produced -- but the reading journal delivered on
@@ -189,10 +212,13 @@ function changedEnough(before, after) {{
   return (shorter - head - tail) / shorter > 0.2;
 }}
 
-async function clickLabelled(page, label) {{
+async function clickLabelled(page, label, attempt = 0) {{
   let handles = [];
   try {{
-    handles = await page.$$(CANDIDATE);
+    // Anchors included: the way back is often one ("Library", "All books"), and searching
+    // without them found the control during discovery and then could not press it again --
+    // every mutation on the second screen was made, left unverified and dropped.
+    handles = await page.$$(CANDIDATE + ', a[href]');
   }} catch {{
     return false;
   }}
@@ -211,6 +237,11 @@ async function clickLabelled(page, label) {{
     }}
     await page.waitForTimeout(500);
     return true;
+  }}
+  // Nothing matched. Once, that may only mean the app has not rendered it yet.
+  if (attempt === 0) {{
+    await page.waitForTimeout(SETTLE_MS);
+    return clickLabelled(page, label, 1);
   }}
   return false;
 }}
@@ -249,7 +280,7 @@ async function discoverClickScreens(page, home) {{
       // opened menu -- is undone before the next candidate is tried.
       if (arrived !== home) {{
         await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
-        await page.waitForTimeout(400);
+        await page.waitForTimeout(SETTLE_MS);
       }}
       continue;
     }}
@@ -282,7 +313,7 @@ async function discoverClickScreens(page, home) {{
     }}
     if (back) found.push({{ forward: label, back }});
     await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(SETTLE_MS);
   }}
   return found;
 }}
@@ -300,12 +331,13 @@ async function checkScreen(page, name, {{ away, back }}, failures, checked, skip
     }}
     const mutated = await mutate(page, control);
     if (!mutated) continue;
+    await page.waitForTimeout(SAVE_SETTLE_MS);
 
     if (!(await away())) continue;
     if (!(await back())) continue;
 
     const returned = await readControls(page);
-    const same = returned.find((item) => item.key === mutated.key) || returned.find((item) => item.index === mutated.index);
+    const same = returned.find((item) => item.key === mutated.key);
     checked.push(`${{name}} ${{mutated.label}}`);
     if (!same) {{
       failures.push(`On ${{name}}, the control "${{mutated.label}}" disappeared after navigating away and back.`);
@@ -385,7 +417,7 @@ async function main() {{
     screenCount = destinations.length + 1;
     const first = destinations[0];
     await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(SETTLE_MS);
     // The screen the app opens on, left by clicking into the destination and returned to by
     // the way back that discovery already proved lands here.
     await checkScreen(
@@ -413,7 +445,7 @@ async function main() {{
         skipped,
       );
       await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(SETTLE_MS);
     }}
   }}
 
@@ -429,6 +461,14 @@ async function main() {{
     console.error('STATE CONTINUITY CHECK FAILED:');
     for (const failure of failures.slice(0, 5)) console.error(`- ${{failure}}`);
     process.exit(1);
+  }}
+  // A pass has to mean something was examined. On 2026-08-28 both web apps of the acceptance
+  // sequence printed PASSED under "Checked 0 control(s)": the gate had found its screens,
+  // exempted every field on the first one as a draft, and never reached the second. That
+  // reads as evidence in qa_evidence.md and is not any.
+  if (checked.length === 0) {{
+    console.log('STATE CONTINUITY CHECK SKIPPED: no control was both required to survive navigation and editable.');
+    process.exit(0);
   }}
   console.log('STATE CONTINUITY CHECK PASSED');
   process.exit(0);

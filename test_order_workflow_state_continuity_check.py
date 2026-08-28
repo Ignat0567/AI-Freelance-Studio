@@ -225,3 +225,31 @@ def test_a_draft_field_without_a_form_around_it_is_still_a_draft():
 
     assert "(add|new|write|type|enter)" in _TRANSIENT_INPUT_JS
     assert '[class*="composer"]' in _TRANSIENT_INPUT_JS
+
+
+def test_a_pass_has_to_mean_something_was_examined():
+    """Both web apps of the 2026-08-28 acceptance sequence printed PASSED under "Checked 0
+    control(s)": the gate found its screens, exempted every field on the first one as a draft
+    and never reached the second. In qa_evidence.md that reads as evidence, and it is not."""
+    assert "if (checked.length === 0)" in _CHECK_SCRIPT
+    tail = _CHECK_SCRIPT.split("if (checked.length === 0)", 1)[1]
+    assert tail.index("SKIPPED") < tail.index("STATE CONTINUITY CHECK PASSED")
+
+
+def test_a_control_is_found_by_what_it_is_not_by_where_it_sat():
+    """Mutating one control can add or remove another -- moving a book to "Reading" grows a
+    "Page stopped at" field. Indexed lookups then crossed the wires: the gate reported a value
+    typed into one field as lost by a different one, and named a draft it had just exempted."""
+    assert "current.find((item) => item.key === control.key)" in _CHECK_SCRIPT
+    assert "after.find((item) => item.key === control.key)" in _CHECK_SCRIPT
+    # And the list is numbered before it is filtered, so the index still addresses the same
+    # node Playwright's own query returns.
+    assert ".map(({ node, index }) => ({ node, index }))" in _CHECK_SCRIPT or "({ node, index })" in _CHECK_SCRIPT
+
+
+def test_a_debounced_autosave_is_given_time_to_land():
+    """The delivered journal commits notes 600ms after the last keystroke. A gate that typed
+    and left inside 150ms recorded them as lost -- a race worth half a second, not a repair."""
+    assert "SAVE_SETTLE_MS = 1000" in _CHECK_SCRIPT
+    body = _CHECK_SCRIPT.split("const mutated = await mutate(page, control);", 1)[1]
+    assert body.index("SAVE_SETTLE_MS") < body.index("await away()")
