@@ -76,10 +76,10 @@ def build_readme(
         "",
         overview,
         "",
-        "## Features",
-        "",
-        *(f"- {feature}" for feature in features),
-        "",
+        # Omitted rather than left as an empty heading: when the order was written as one
+        # paragraph, its only "feature" is the goal itself, which the Overview above already
+        # says. A heading with nothing under it reads as a document that lost a section.
+        *(["## Features", "", *(f"- {feature}" for feature in features), ""] if features else []),
         "## Tech Stack",
         "",
         tech_stack,

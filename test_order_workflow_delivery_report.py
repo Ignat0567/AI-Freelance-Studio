@@ -57,14 +57,23 @@ def test_a_repaired_gate_is_named_by_what_it_is_not_by_its_internal_stage_id():
     assert "ui_shell" not in section
     assert "screens and navigation" in section.casefold()
     assert "2 repair attempts" in section
-    assert "fixed it" in section
+    assert "passed after" in section
+
+
+def test_a_check_is_not_told_it_did_not_pass_its_checks():
+    """Three of the six labels are the name of a check, so the delivered sentence read "The
+    design and accessibility check did not pass its checks at first"."""
+    section = _report(gate_log=[("ui_shell/visual", 1, True)]).split("## What we found and fixed")[1]
+
+    assert "The design and accessibility check passed after 1 repair attempt." in section
+    assert "its checks" not in section
 
 
 def test_singular_repair_is_not_pluralised():
     report = _report(gate_log=[("core_feature", 1, True)])
 
     section = report.split("## What we found and fixed")[1]
-    assert "1 repair attempt " in section
+    assert "1 repair attempt." in section
     assert "1 repair attempts" not in section
 
 

@@ -52,10 +52,13 @@ def _found_and_fixed_lines(gate_log: list[tuple[str, int, bool | None]]) -> list
     for stage, attempts, passed in repaired:
         plural = "attempt" if attempts == 1 else "attempts"
         if passed:
-            lines.append(f"- {_gate_label(stage).capitalize()} did not pass its checks at first; {attempts} repair {plural} fixed it.")
+            # Not "did not pass its checks": three of the six labels are themselves the
+            # name of a check, and the delivered sentence read "The design and accessibility
+            # check did not pass its checks at first".
+            lines.append(f"- {_gate_label(stage).capitalize()} passed after {attempts} repair {plural}.")
         else:
             lines.append(
-                f"- {_gate_label(stage).capitalize()} still does not pass its checks after {attempts} repair {plural}. "
+                f"- {_gate_label(stage).capitalize()} still does not pass after {attempts} repair {plural}. "
                 "See the execution log for the exact failure -- this needs a human look."
             )
     return lines
@@ -106,7 +109,7 @@ def resolve_run_instruction(run_command: str | None) -> str:
     return run_command or DEFAULT_RUN_INSTRUCTION
 
 
-def _requirements_worth_listing(goal: str, requirements: tuple[str, ...]) -> tuple[str, ...]:
+def requirements_worth_listing(goal: str, requirements: tuple[str, ...]) -> tuple[str, ...]:
     """Drop a bullet that only repeats the goal printed directly above it.
 
     An order written as one paragraph yields a single "core feature" that is the goal itself,
@@ -153,8 +156,8 @@ def build_delivery_report(
         "",
         goal.strip(),
         "",
-        *[f"- {item}" for item in _requirements_worth_listing(goal, requirements)],
-        "",
+        *([*[f"- {item}" for item in requirements_worth_listing(goal, requirements)], ""]
+          if requirements_worth_listing(goal, requirements) else []),
         note.strip(),
         "",
         "## What we found and fixed",

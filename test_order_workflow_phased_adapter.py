@@ -860,7 +860,7 @@ def test_delivery_report_reflects_what_this_run_actually_needed(tmp_path):
     report = workspace_root.read_text(encoding="utf-8")
     assert "## What was built" in report
     assert "## What we found and fixed" in report
-    assert "1 repair attempt " in report
+    assert "1 repair attempt." in report
     assert "## Proof it runs" in report
     assert "## How to run it" in report
 
@@ -907,7 +907,7 @@ def test_a_visual_gate_repair_reaches_the_delivered_report_and_evidence(tmp_path
     assert result.success is True
     report = next(tmp_path.rglob("delivery_report.md")).read_text(encoding="utf-8")
     assert "design and accessibility check" in report
-    assert "1 repair attempt " in report
+    assert "1 repair attempt." in report
 
     evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
     assert "Palette: 4/4 approved colours painted (100%)." in evidence
@@ -964,3 +964,51 @@ def test_a_delivery_with_no_backend_does_not_claim_a_server_and_a_database(tmp_p
     assert "Backend: none" in stack
     # The half that was true stays: the frontend is what got built.
     assert brief.recommended_stack.frontend in stack
+
+
+def test_the_delivered_list_names_the_source_the_client_paid_for(tmp_path):
+    """The reading journal's client read "Delivered: delivery_screenshot.png,
+    design-tokens.css, Dockerfile, index.html, package-lock.json, package.json and 2 more":
+    a screenshot and a lockfile by name, with the fourteen source files inside "2 more".
+    Directories were skipped entirely, because the list was files only."""
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path)
+
+    adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    project_dir = [item for item in Path(tmp_path).iterdir() if item.is_dir()][0]
+    (project_dir / "src").mkdir(exist_ok=True)
+    from order_workflow.phased_adapter import _delivered_files
+
+    class _Workspace:
+        project_path = project_dir
+
+    (project_dir / "src" / "App.jsx").write_text("export default () => null;", encoding="utf-8")
+    (project_dir / "node_modules").mkdir(exist_ok=True)
+    (project_dir / "node_modules" / "junk.js").write_text("//", encoding="utf-8")
+
+    listed = _delivered_files(_Workspace())
+
+    assert "src/ (1 file)" in listed
+    assert listed[0].endswith(")")  # directories first: they are the substance
+    assert not any(name.startswith("node_modules") for name in listed)
+
+
+def test_features_do_not_repeat_the_overview_paragraph(tmp_path):
+    """An order written as one paragraph yields a single "core feature" that is the goal,
+    cut to fit its field -- so the README's Features section repeated its own Overview,
+    ending mid-word in an ellipsis. The delivery report has dropped that bullet since
+    2026-08-27; the README kept printing it."""
+    brief, handoff = _contract()
+    goal_as_requirement = " ".join(brief.goal.split())[:200] + "…"
+    handoff = handoff.model_copy(update={"requirements": (goal_as_requirement,)})
+    adapter = _adapter(tmp_path)
+
+    adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    project_dir = [item for item in Path(tmp_path).iterdir() if item.is_dir()][0]
+    readme = (project_dir / "README.md").read_text(encoding="utf-8")
+    features = readme.split("## Features", 1)[1].split("##", 1)[0]
+
+    assert "…" not in features
+    assert goal_as_requirement not in features

@@ -14,7 +14,7 @@ from project_docs import build_architecture_mermaid, build_module_map, build_ove
 
 from .complexity import classify_phase_complexity, describe_phase_complexity, model_for_complexity
 from .deployment import DeploymentOutcome, build_and_verify_container
-from .delivery_report import build_delivery_report, build_qa_evidence, resolve_run_instruction
+from .delivery_report import build_delivery_report, build_qa_evidence, requirements_worth_listing, resolve_run_instruction
 from .design_tokens import write_design_tokens
 from .docker_qa_runner import run_qa_commands_in_docker, DockerUnavailableError
 from .executors import CancellationToken, ExecutionEventSink, ExecutionRequest
@@ -161,12 +161,19 @@ _NOT_DELIVERABLE = ("node_modules", ".git", "__pycache__", ".freelancerstudio")
 
 
 def _delivered_files(workspace) -> tuple[str, ...]:
-    """The files a client actually receives, top level only, in a readable order."""
+    """What a client actually receives, top level only, in a readable order.
+
+    Directories first, with how much is in each. Files only, alphabetically, listed the
+    project's own source out of the report entirely: the reading journal's client read
+    "Delivered: delivery_screenshot.png, design-tokens.css, Dockerfile, index.html,
+    package-lock.json, package.json and 2 more" -- a screenshot and a lockfile by name, and
+    the fourteen source files they had paid for hidden inside "2 more".
+    """
     try:
         entries = sorted(workspace.project_path.iterdir(), key=lambda item: item.name.casefold())
     except OSError:
         return ()
-    names = []
+    directories, files = [], []
     for child in entries:
         name = child.name
         if name.startswith(_NOT_DELIVERABLE) or name.startswith("."):
@@ -175,10 +182,13 @@ def _delivered_files(workspace) -> tuple[str, ...]:
             continue
         try:
             if child.is_file():
-                names.append(name)
+                files.append(name)
+            elif child.is_dir():
+                count = sum(1 for item in child.rglob("*") if item.is_file())
+                directories.append(f"{name}/ ({count} file{'s' if count != 1 else ''})")
         except OSError:
             continue
-    return tuple(names)
+    return tuple(directories + files)
 
 
 def _gate_output(outcome) -> str:
@@ -945,7 +955,10 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             project_name=request.title.strip() or workspace.project_reference,
             goal=request.brief.goal,
             tech_stack=tech_stack,
-            features=request.handoff.requirements,
+            # The same filter the delivery report applies to this list: an order written as
+            # one paragraph yields a single "core feature" that is the goal, cut to fit its
+            # field -- so Features repeated the Overview above it, ending mid-word.
+            features=requirements_worth_listing(request.brief.goal, request.handoff.requirements),
             run_instruction=run_text,
             module_map=module_map,
             overview=overview,
