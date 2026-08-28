@@ -46,7 +46,7 @@ def test_the_check_navigates_away_and_back_rather_than_reloading():
 
 def test_an_app_with_one_screen_is_skipped_not_failed():
     # With nothing to navigate between, the property is vacuous rather than violated.
-    assert "routes.length < 2" in _CHECK_SCRIPT
+    assert "destinations.length === 0" in _CHECK_SCRIPT
     assert "STATE CONTINUITY CHECK SKIPPED" in _CHECK_SCRIPT
 
 
@@ -177,27 +177,51 @@ def test_a_screen_reachable_only_by_clicking_is_still_a_screen():
     shape -- nav links that all point at `/`, cards that navigate by script: the previous
     script printed SKIPPED, this one reports the component-local notes field, and passes once
     the same field is persisted."""
-    assert "discoverClickRoutes" in _CHECK_SCRIPT
-    assert "window.location.pathname + window.location.hash" in _CHECK_SCRIPT
+    assert "discoverClickScreens" in _CHECK_SCRIPT
+    # A screen is what is rendered, not what the address bar says: the journal delivered on
+    # 2026-08-28 has no router at all, and swaps its page from component state.
+    assert "changedEnough" in _CHECK_SCRIPT
+    assert "screenText" in _CHECK_SCRIPT
 
 
 def test_clicking_for_screens_happens_only_when_the_check_would_otherwise_skip():
-    """Its cost and its clicking are confined to the case that is otherwise vacuous."""
-    guard = _CHECK_SCRIPT.split("const routes = await page.evaluate", 1)[1]
-    guard = guard[: guard.index("const failures")]
+    """Its cost and its clicking are confined to the case that is otherwise vacuous: with two
+    URLs to visit, the check never clicks anything looking for a third."""
+    main = _CHECK_SCRIPT.split("const failures = [];", 1)[1]
 
-    assert guard.index("routes.length < 2") < guard.index("discoverClickRoutes")
+    assert main.index("routes.length >= 2") < main.index("discoverClickScreens")
 
 
 def test_the_discovery_pass_does_not_click_buttons_that_do_things():
     """A discovery pass that presses "Delete" is worse than a skipped gate. Action labels are
     excluded, and the page is reloaded after every click so nothing a click did survives into
     the checks themselves."""
-    discovery = _CHECK_SCRIPT.split("async function discoverClickRoutes", 1)[1]
-    discovery = discovery[: discovery.index("async function main")]
+    discovery = _CHECK_SCRIPT.split("async function discoverClickScreens", 1)[1]
+    discovery = discovery[: discovery.index("async function checkScreen")]
 
     assert "ACTION_LABEL.test(label)" in discovery
     for word in ("delete", "remove", "save", "submit", "clear"):
         assert word in _CHECK_SCRIPT.split("const ACTION_LABEL", 1)[1].split("\n", 1)[0]
     assert "await page.goto(TARGET_URL" in discovery
-    assert "handles.slice(0, 16)" in discovery  # bounded: this runs inside a 240s gate
+    assert "handles.slice(0, 40)" in discovery  # bounded: this runs inside a 240s gate
+
+
+def test_a_way_back_is_required_before_a_screen_counts():
+    """"Away and back" needs both halves. A click that opens something with no way to return
+    is not a navigation the gate can test, and pretending otherwise would report every field
+    on the opening screen as lost."""
+    discovery = _CHECK_SCRIPT.split("async function discoverClickScreens", 1)[1]
+    discovery = discovery[: discovery.index("async function checkScreen")]
+
+    assert "if (back) found.push({ forward: label, back })" in discovery
+    assert "BACK_LABEL" in discovery
+
+
+def test_a_draft_field_without_a_form_around_it_is_still_a_draft():
+    """The first time the gate reached the book page of a delivered journal it demanded that
+    "Add a favourite quote" survive leaving the page -- the same demand the form rule was
+    written to drop, from a draft that simply has no <form> around it."""
+    from order_workflow.state_continuity_check import _TRANSIENT_INPUT_JS
+
+    assert "(add|new|write|type|enter)" in _TRANSIENT_INPUT_JS
+    assert '[class*="composer"]' in _TRANSIENT_INPUT_JS

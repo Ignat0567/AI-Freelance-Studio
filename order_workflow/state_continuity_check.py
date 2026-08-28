@@ -47,7 +47,15 @@ _TRANSIENT_INPUT_JS = """\n// A field whose value the app is *supposed* to drop 
 const isTransient = (node, label) => {
   const text = `${label} ${node.getAttribute('placeholder') || ''}`.toLowerCase();
   if (node.type === 'search' || /(search|filter|find|query)/.test(text)) return true;
-  const form = node.closest('form');
+  // The field says so itself: "Add a favourite quote", "New note", "Write a comment". Found
+  // on 2026-08-28, when the gate first reached the book page of a delivered journal and
+  // demanded that a half-typed quote survive leaving the page -- the same demand the form
+  // rule below was written to drop, from a draft that simply has no <form> around it.
+  if (/^\\s*(add|new|write|type|enter)\\b/.test(text)) return true;
+  // ...or the block it sits in has the button that empties it. A React add-form is often a
+  // plain <div>, so the <form> ancestor alone missed exactly the drafts this is about.
+  const form = node.closest('form')
+    || node.closest('[class*="form"], [class*="add"], [class*="new"], [class*="composer"]');
   if (!form) return false;
   // type=button is included on purpose: a React add-form usually avoids a page reload
   // with `<button type="button" onClick={add}>`, and excluding those left exactly the
@@ -151,36 +159,164 @@ async function goTo(page, route) {{
 // confined to the case that is otherwise vacuous. The page is reloaded after every click, so
 // whatever a click did to the app's state is discarded before the real checks begin.
 const ACTION_LABEL = /^\\s*(add|create|new|save|delete|remove|clear|reset|submit|cancel|sign|log ?(in|out)|buy|pay|export|import|upload|download|theme|dark|light)\\b/i;
+const BACK_LABEL = /^\\s*(back|return|home|close|all books|all items|workspace|library|shelves|←|<|\\u2039|\\u00ab)/i;
+const CANDIDATE = '[role="link"], [role="tab"], button, [class*="card"], [class*="item"], li, tr';
 
-async function discoverClickRoutes(page, known) {{
-  const found = [];
+// The URL is not where a screen lives. React Router's <Link> compiles to <a href>, and the
+// first fix here followed the URL a click produced -- but the reading journal delivered on
+// 2026-08-28 has no router at all: `useState<Route>` swaps the rendered page and the address
+// bar never changes. Four of the four archived journals were skipped as having "fewer than
+// two navigable screens" while having a workspace and a book page, the app whose whole
+// subject is data it must not lose.
+//
+// So a screen is what is rendered, and a destination is a click that changes it and a click
+// that comes back. Both halves are required: without a way back there is no "away and back"
+// to test, and the check says so rather than guessing.
+async function screenText(page) {{
+  return page.evaluate(() => (document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 4000));
+}}
+
+// Same screen with something toggled, or a different screen? Compared by how much of the text
+// is shared at both ends: a detail page keeps the header and the footer and replaces the
+// middle, while a theme switch or an opened menu leaves almost everything in place.
+function changedEnough(before, after) {{
+  if (before === after) return false;
+  const shorter = Math.min(before.length, after.length) || 1;
+  let head = 0;
+  while (head < shorter && before[head] === after[head]) head += 1;
+  let tail = 0;
+  while (tail < shorter - head && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail += 1;
+  return (shorter - head - tail) / shorter > 0.2;
+}}
+
+async function clickLabelled(page, label) {{
   let handles = [];
   try {{
-    handles = await page.$$('[role="link"], [role="tab"], button, [class*="card"], [class*="item"], li, tr');
+    handles = await page.$$(CANDIDATE);
   }} catch {{
-    return found;
+    return false;
   }}
-  for (const handle of handles.slice(0, 16)) {{
-    if (found.length >= 2) break;
-    let label = '';
+  for (const handle of handles) {{
+    let text = '';
     try {{
-      label = (await handle.innerText()).trim();
+      text = (await handle.innerText()).trim().slice(0, 80);
     }} catch {{
       continue;
     }}
-    if (!label || ACTION_LABEL.test(label)) continue;
+    if (text !== label) continue;
     try {{
       await handle.click({{ timeout: 1500 }});
     }} catch {{
+      return false;
+    }}
+    await page.waitForTimeout(500);
+    return true;
+  }}
+  return false;
+}}
+
+// Bounded on purpose: this runs inside a 240s gate. The cheap case is the common one -- a
+// click that changes nothing costs a click and a text read, and only a click that moved the
+// page pays for a reload. The delivered journal of 2026-08-28 needed candidate 18: the first
+// seventeen are the "Add book" button, four KPI cards, a chart, four filter chips and the
+// table's own header cells, and the book that opens a screen comes after all of them.
+async function discoverClickScreens(page, home) {{
+  const found = [];
+  let handles = [];
+  try {{
+    handles = await page.$$(CANDIDATE);
+  }} catch {{
+    return found;
+  }}
+  const labels = [];
+  for (const handle of handles.slice(0, 40)) {{
+    let label = '';
+    try {{
+      label = (await handle.innerText()).trim().slice(0, 80);
+    }} catch {{
       continue;
     }}
-    await page.waitForTimeout(400);
-    const here = await page.evaluate(() => window.location.pathname + window.location.hash);
-    if (here && !known.includes(here) && !found.includes(here)) found.push(here);
+    // Never clicked: a discovery pass that presses "Delete" is worse than a skipped gate.
+    if (!label || ACTION_LABEL.test(label) || BACK_LABEL.test(label)) continue;
+    if (!labels.includes(label)) labels.push(label);
+  }}
+  for (const label of labels) {{
+    if (found.length >= 1) break;
+    if (!(await clickLabelled(page, label))) continue;
+    const arrived = await screenText(page);
+    if (!changedEnough(home, arrived)) {{
+      // Nothing moved: no need to pay for a reload. Anything that did move -- a filter, an
+      // opened menu -- is undone before the next candidate is tried.
+      if (arrived !== home) {{
+        await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
+        await page.waitForTimeout(400);
+      }}
+      continue;
+    }}
+    // A way back, from this screen, that lands on the one we left.
+    let back = '';
+    let handlesHere = [];
+    try {{
+      handlesHere = await page.$$(CANDIDATE + ', a[href]');
+    }} catch {{
+      handlesHere = [];
+    }}
+    for (const handle of handlesHere.slice(0, 20)) {{
+      let text = '';
+      try {{
+        text = ((await handle.innerText()) || (await handle.getAttribute('aria-label')) || '').trim().slice(0, 80);
+      }} catch {{
+        continue;
+      }}
+      if (!text || !BACK_LABEL.test(text)) continue;
+      try {{
+        await handle.click({{ timeout: 1500 }});
+      }} catch {{
+        continue;
+      }}
+      await page.waitForTimeout(500);
+      if (!changedEnough(home, await screenText(page))) {{
+        back = text;
+        break;
+      }}
+    }}
+    if (back) found.push({{ forward: label, back }});
     await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
     await page.waitForTimeout(400);
   }}
   return found;
+}}
+
+// One screen's controls, changed, left behind, and come back to. `away` and `back` are given
+// by the caller because leaving means different things in the two apps this gate meets: a
+// URL to visit, or a control to press.
+async function checkScreen(page, name, {{ away, back }}, failures, checked, skipped) {{
+  const controls = await readControls(page);
+  if (!controls.length) return;
+  for (const control of controls.slice(0, 6)) {{
+    if (control.transient) {{
+      skipped.push(`${{name}} ${{control.label}}`);
+      continue;
+    }}
+    const mutated = await mutate(page, control);
+    if (!mutated) continue;
+
+    if (!(await away())) continue;
+    if (!(await back())) continue;
+
+    const returned = await readControls(page);
+    const same = returned.find((item) => item.key === mutated.key) || returned.find((item) => item.index === mutated.index);
+    checked.push(`${{name}} ${{mutated.label}}`);
+    if (!same) {{
+      failures.push(`On ${{name}}, the control "${{mutated.label}}" disappeared after navigating away and back.`);
+    }} else if (same.value !== mutated.value) {{
+      failures.push(
+        `On ${{name}}, "${{mutated.label}}" was set to "${{mutated.value}}" but reverted to "${{same.value}}" `
+        + `after navigating away and back. The value is component-local state that is lost on unmount -- `
+        + `lift it into shared state (or persist it) so the rest of the app sees it too.`
+      );
+    }}
+  }}
 }}
 
 async function main() {{
@@ -215,57 +351,75 @@ async function main() {{
       .filter((href, index, all) => all.indexOf(href) === index),
   );
 
-  if (routes.length < 2) {{
-    for (const route of await discoverClickRoutes(page, routes)) routes.push(route);
-  }}
-
-  if (routes.length < 2) {{
-    console.log('STATE CONTINUITY CHECK SKIPPED: no second screen found, by link or by click.');
-    await browser.close();
-    process.exit(0);
-  }}
-
   const failures = [];
   const checked = [];
   const skipped = [];
+  let screenCount = routes.length;
 
-  for (const route of routes) {{
-    await goTo(page, route);
-
-    const controls = await readControls(page);
-    if (!controls.length) continue;
-
-    const elsewhere = routes.find((other) => other !== route);
-    for (const control of controls.slice(0, 6)) {{
-      if (control.transient) {{
-        skipped.push(`${{route}} ${{control.label}}`);
-        continue;
-      }}
-      const mutated = await mutate(page, control);
-      if (!mutated) continue;
-
-      // Leave and come back the way a person would.
-      await goTo(page, elsewhere);
+  if (routes.length >= 2) {{
+    for (const route of routes) {{
       await goTo(page, route);
-
-      const back = await readControls(page);
-      const same = back.find((item) => item.key === mutated.key) || back.find((item) => item.index === mutated.index);
-      checked.push(`${{route}} ${{mutated.label}}`);
-      if (!same) {{
-        failures.push(`On ${{route}}, the control "${{mutated.label}}" disappeared after navigating away and back.`);
-      }} else if (same.value !== mutated.value) {{
-        failures.push(
-          `On ${{route}}, "${{mutated.label}}" was set to "${{mutated.value}}" but reverted to "${{same.value}}" `
-          + `after navigating away and back. The value is component-local state that is lost on unmount -- `
-          + `lift it into shared state (or persist it) so the rest of the app sees it too.`
-        );
-      }}
+      const elsewhere = routes.find((other) => other !== route);
+      await checkScreen(
+        page,
+        route,
+        {{
+          away: async () => {{ await goTo(page, elsewhere); return true; }},
+          back: async () => {{ await goTo(page, route); return true; }},
+        }},
+        failures,
+        checked,
+        skipped,
+      );
+    }}
+  }} else {{
+    // No second URL. That is not the same as no second screen: an app that swaps its page
+    // from component state has two of them and one address.
+    const home = await screenText(page);
+    const destinations = await discoverClickScreens(page, home);
+    if (destinations.length === 0) {{
+      console.log('STATE CONTINUITY CHECK SKIPPED: no second screen found, by link or by click.');
+      await browser.close();
+      process.exit(0);
+    }}
+    screenCount = destinations.length + 1;
+    const first = destinations[0];
+    await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
+    await page.waitForTimeout(400);
+    // The screen the app opens on, left by clicking into the destination and returned to by
+    // the way back that discovery already proved lands here.
+    await checkScreen(
+      page,
+      'the opening screen',
+      {{
+        away: () => clickLabelled(page, first.forward),
+        back: () => clickLabelled(page, first.back),
+      }},
+      failures,
+      checked,
+      skipped,
+    );
+    for (const destination of destinations) {{
+      if (!(await clickLabelled(page, destination.forward))) continue;
+      await checkScreen(
+        page,
+        `"${{destination.forward}}"`,
+        {{
+          away: () => clickLabelled(page, destination.back),
+          back: () => clickLabelled(page, destination.forward),
+        }},
+        failures,
+        checked,
+        skipped,
+      );
+      await page.goto(TARGET_URL, {{ waitUntil: 'load' }});
+      await page.waitForTimeout(400);
     }}
   }}
 
   await browser.close();
 
-  console.log(`Checked ${{checked.length}} control(s) across ${{routes.length}} screens for state continuity.`);
+  console.log(`Checked ${{checked.length}} control(s) across ${{screenCount}} screens for state continuity.`);
   // Printed rather than silent: a reader of qa_evidence.md has to be able to see what this
   // gate decided not to ask about, and to disagree with it.
   if (skipped.length > 0) {{
