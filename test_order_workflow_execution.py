@@ -369,7 +369,10 @@ def test_event_details_keep_a_gate_s_verbatim_output():
         message="QA failed; asking Codex to fix (attempt 1 of 2)",
         details=(finding,),
     )
-    emitted = next(event for event in service.snapshot(running.id).events if event.details)
+    # Selected by its own message, not as "the first event that has details": an earlier
+    # event carrying details of its own (a preflight blocker, say) made this test read the
+    # wrong record, and it failed inside the full suite while passing on its own.
+    emitted = next(event for event in service.snapshot(running.id).events if event.message.startswith("QA failed"))
 
     assert len(emitted.details[0]) > 240
     assert "needs 4.5:1" in emitted.details[0]
