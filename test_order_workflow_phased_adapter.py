@@ -1050,3 +1050,41 @@ def test_the_delivered_list_includes_the_documents_beside_it(tmp_path):
 
     for name in ("README.md", "ARCHITECTURE.md", "delivery_report.md"):
         assert name in listed, listed
+
+
+def test_a_phase_whose_repair_the_provider_refused_is_classified_as_provider(tmp_path):
+    """The end-to-end half of the same defect: the phase failure has to carry the repair
+    call's own code ahead of `qa_failed`, or the run is filed under the app's quality."""
+    from order_workflow.failure_cause import classify_failure_cause
+
+    brief, handoff = _contract()
+
+    class _RefusingOnRepair(FakePhaseOpenCodeClient):
+        """Builds once, then refuses -- which is what a session limit reached mid-phase does."""
+
+        seen = 0
+
+        def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
+            _RefusingOnRepair.seen += 1
+            if _RefusingOnRepair.seen == 1:
+                return super().execute_project_prompt(prompt, workspace_path, event_sink, cancellation, model=model, timeout=timeout)
+
+            class _Refused:
+                success = False
+                timed_out = False
+                errors = ("claude_code_process_failed",)
+                summary = "Claude Code execution failed: You've hit your session limit"
+                usage = None
+                rate_limit_message = None
+                context = None
+
+            return _Refused()
+
+    adapter = _adapter(tmp_path, opencode_client=_RefusingOnRepair(), qa_runner=_failing_qa)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is False
+    assert result.errors[0] == "claude_code_process_failed"
+    assert "qa_failed" in result.errors
+    assert classify_failure_cause(result.errors, outcome=result.outcome) == "provider"

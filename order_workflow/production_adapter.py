@@ -256,6 +256,9 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         qa_outcome = repair.qa_outcome
         qa_attempts = repair.attempts
         qa_status_message = repair.qa_status_message
+        # Same rule as the phased adapter: a repair the provider refused is not a verdict on
+        # the code, and the cause is read from the first code the run reports.
+        repair_error_code = repair.fix_error_code
         qa_passed = qa_outcome.passed if qa_outcome is not None else False
 
         summary = summarize_generated_workspace(workspace)
@@ -342,7 +345,7 @@ class LiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         elif not qa_passed:
             outcome_value = "qa_failed"
             final_stage_value = ExecutionStage.VERIFICATION
-            errors_value = ("qa_failed",)
+            errors_value = ((repair_error_code,) if repair_error_code else ()) + ("qa_failed",)
         else:
             outcome_value = result.outcome
             final_stage_value = ExecutionStage.COMPLETED

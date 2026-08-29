@@ -614,7 +614,12 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
                 ),
             )
         if repair.qa_outcome is None or not repair.qa_outcome.passed:
-            return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, "qa_failed", f"QA did not pass for the {stage.value} phase. {repair.qa_status_message}", outcome="qa_failed"))
+            # A gate that never got its answer is not a verdict on the code. When the repair
+            # call itself failed -- an expired login, a session limit -- that code goes first,
+            # because the run's cause is classified from the first code it recognises, and
+            # `qa_failed` would file the provider's outage under the app's quality.
+            codes = ((repair.fix_error_code,) if repair.fix_error_code else ()) + ("qa_failed",)
+            return _PhaseOutcome(context=None, failure=self._phase_failure(request, stage, codes, f"QA did not pass for the {stage.value} phase. {repair.qa_status_message}", outcome="qa_failed"))
 
         if run_functional_smoke_check:
             failure = self._run_functional_smoke_check(stage, workspace, event_sink, cancellation, request, model)
@@ -828,7 +833,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         self,
         request: ExecutionRequest,
         stage: ExecutionStage,
-        error_code: str,
+        error_code: str | tuple[str, ...],
         summary: str,
         *,
         outcome: str = "failed",
@@ -840,7 +845,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             outcome=outcome,
             summary=summary,
             test_summary=self._gate_tally.summary(at_least_one_failure=True),
-            errors=(error_code,),
+            errors=(error_code,) if isinstance(error_code, str) else tuple(error_code),
             final_stage=stage,
             # The whole run's spend, not just the call that failed: a phase that burned two
             # repairs before dying cost all of them, and the earlier ones are the larger part.

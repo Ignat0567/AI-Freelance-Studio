@@ -49,3 +49,11 @@ run_at,commit,bench_id,kind,product_type,outcome,completed,clean,failure_cause,f
 20260828T204239Z,f578b20,b06-reading-journal,realistic_app,web_app,failed,0,0,provider,ui_shell,3.8,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b06-reading-journal-20260828T204239Z.json
 20260828T204253Z,f578b20,b07-recipe-box,realistic_app,web_app,failed,0,0,provider,ui_shell,3.8,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b07-recipe-box-20260828T204253Z.json
 20260828T204306Z,f578b20,b08-invoice-log,realistic_app,web_app,failed,0,0,provider,ui_shell,3.8,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b08-invoice-log-20260828T204306Z.json
+20260829T103510Z,a0c2303,b01-profile-card,static_page,static_page,succeeded,1,1,,completed,153.5,0,,1,0,1,134.0,0,0.403,12880,0.089,static_page_build=sonnet,6,1,0,bench-b01-profile-card-20260829T103510Z.json
+20260829T103851Z,a0c2303,b02-pricing-page,static_page,static_page,succeeded,1,1,,completed,161.7,0,,1,0,1,143.0,0,0.456,15497,0.095,static_page_build=sonnet,6,1,0,bench-b02-pricing-page-20260829T103851Z.json
+20260829T104153Z,a0c2303,b03-focus-timer,small_app,web_app,succeeded,1,0,,completed,1807.8,2,core_feature/qa=1;ui_shell/visual=1,6,0,4,1624.0,0,9.104,115223,0.577,ui_shell=opus;core_feature=opus,6,1,1,bench-b03-focus-timer-20260829T104153Z.json
+20260829T111220Z,a0c2303,b04-tip-splitter,small_app,web_app,succeeded,1,0,,completed,1403.0,1,ui_shell/visual=1,6,0,3,1271.0,0,5.767,90367,0.473,ui_shell=sonnet;core_feature=sonnet,6,1,1,bench-b04-tip-splitter-20260829T111220Z.json
+20260829T113603Z,a0c2303,b05-habit-tracker,small_app,web_app,qa_failed,0,0,generated_code,ui_shell,1134.8,1,ui_shell/visual=1,2,1,2,1095.0,0,5.588,92568,0.67,ui_shell=sonnet,0,0,0,bench-b05-habit-tracker-20260829T113603Z.json
+20260829T115512Z,a0c2303,b06-reading-journal,realistic_app,web_app,failed,0,0,provider,ui_shell,3.8,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b06-reading-journal-20260829T115512Z.json
+20260829T115526Z,a0c2303,b07-recipe-box,realistic_app,web_app,failed,0,0,provider,ui_shell,3.8,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b07-recipe-box-20260829T115526Z.json
+20260829T115539Z,a0c2303,b08-invoice-log,realistic_app,web_app,failed,0,0,provider,ui_shell,4.1,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b08-invoice-log-20260829T115539Z.json

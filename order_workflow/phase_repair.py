@@ -23,6 +23,12 @@ class RepairLoopResult:
     # Callers turn a gate failure into a summary, and "the page does not match the design"
     # is a different statement from "we never got to re-check it".
     fix_timed_out: bool = False
+    # Why the last repair call failed, when it failed for a reason of its own. Carried out of
+    # the loop because the caller has to classify the run: b05 of 2026-08-29 lost its repair
+    # to "You've hit your session limit" and was recorded as `generated_code` -- the app
+    # blamed for the provider's outage, in the column that is supposed to measure the app.
+    fix_error_code: str = ""
+    fix_error_detail: str = ""
 
 
 def run_qa_repair_loop(
@@ -53,6 +59,8 @@ def run_qa_repair_loop(
     qa_outcome: QAOutcome | None = None
     attempts = 0
     fix_timed_out = False
+    fix_error_code = ""
+    fix_error_detail = ""
     usages: list = []
     # Only forwarded when a caller actually set one, so the many clients and test doubles
     # implementing execute_project_prompt without the parameter keep working unchanged.
@@ -73,6 +81,8 @@ def run_qa_repair_loop(
                 details=(qa_outcome.failure_summary()[:2000],),
             )
             fix_timed_out = False
+            fix_error_code = ""
+            fix_error_detail = ""
             try:
                 # The builder is given the budget as well: a repair that does not know its
                 # clock spends it re-deriving what the gate already measured.
@@ -95,6 +105,10 @@ def run_qa_repair_loop(
                 usages.append(fix_result.usage)
             if not fix_result.success:
                 fix_timed_out = bool(getattr(fix_result, "timed_out", False))
+                fix_errors = tuple(getattr(fix_result, "errors", ()) or ())
+                if not fix_timed_out:
+                    fix_error_code = fix_errors[0] if fix_errors else "opencode_execution_failed"
+                    fix_error_detail = (getattr(fix_result, "summary", "") or "").strip()
                 event_sink.emit(
                     stage=stage,
                     agent=agent,
@@ -121,7 +135,7 @@ def run_qa_repair_loop(
                 continue
             qa_outcome = qa_runner(qa_commands, qa_cwd)
         if cancellation.is_cancelled():
-            return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message="", cancelled=True, usages=tuple(usages), fix_timed_out=fix_timed_out)
+            return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message="", cancelled=True, usages=tuple(usages), fix_timed_out=fix_timed_out, fix_error_code=fix_error_code, fix_error_detail=fix_error_detail)
 
     qa_passed = qa_outcome.passed if qa_outcome is not None else False
     if qa_outcome is None:
@@ -134,6 +148,10 @@ def run_qa_repair_loop(
         qa_status_message = f"QA failed after {attempts} repair attempt(s)."
         if fix_timed_out:
             qa_status_message += " The last repair call was stopped by its time limit, so the finding was never re-checked."
+        elif fix_error_code:
+            # Said in the client-visible sentence too, not only in the class: "the page does
+            # not match the design" and "we never got to ask again" are different statements.
+            qa_status_message += f" The last repair call could not run ({fix_error_detail or fix_error_code}), so the finding was never re-checked."
     event_sink.emit(
         stage=stage,
         agent=agent,
@@ -147,4 +165,4 @@ def run_qa_repair_loop(
         # the 3px overflow its last repair was chasing had shrunk, moved or come back.
         details=((qa_outcome.failure_summary()[:2000],) if qa_outcome is not None and not qa_passed else ()),
     )
-    return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message=qa_status_message, cancelled=False, usages=tuple(usages), fix_timed_out=fix_timed_out)
+    return RepairLoopResult(qa_outcome=qa_outcome, attempts=attempts, qa_status_message=qa_status_message, cancelled=False, usages=tuple(usages), fix_timed_out=fix_timed_out, fix_error_code=fix_error_code, fix_error_detail=fix_error_detail)

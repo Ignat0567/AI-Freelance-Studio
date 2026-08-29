@@ -850,7 +850,11 @@ def test_qa_repair_loop_stops_early_when_the_repair_call_itself_fails(tmp_path):
 
     assert finished.status is ExecutionStatus.FAILED
     assert qa_runner.calls == 1  # loop stopped before re-checking QA, since the repair call itself failed
-    assert "QA failed after 1 repair attempt(s)." in finished.result.warnings
+    # ...and the warning says why the loop stopped, not only that QA failed: a repair call
+    # that could not run is not a verdict on the code (b05, 2026-08-29, a session limit).
+    warning = finished.result.warnings[0]
+    assert warning.startswith("QA failed after 1 repair attempt(s).")
+    assert "could not run" in warning
 
 
 def test_empty_qa_commands_is_blocked_by_readiness_before_execution_even_starts(tmp_path):

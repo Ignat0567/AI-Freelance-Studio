@@ -91,3 +91,45 @@ def test_a_loop_that_succeeds_does_not_attach_a_stale_failure(tmp_path):
     closing = sink.events[-1]
     assert "QA passed after 1 repair attempt(s)." in closing["message"]
     assert closing["details"] == ()
+
+
+def test_a_repair_the_provider_refused_is_not_the_app_s_fault(tmp_path):
+    """b05, 2026-08-29: the visual gate found one overflow, the repair call came back with
+    "You've hit your session limit", the loop stopped after one of its three attempts, and the
+    run was filed as `generated_code` -- the column that is supposed to measure the quality of
+    what the CLI writes. The provider's outage was recorded as the app's defect."""
+    from order_workflow.failure_cause import classify_failure_cause
+
+    class _RefusingClient:
+        def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
+            class _Result:
+                success = False
+                timed_out = False
+                errors = ("claude_code_process_failed",)
+                summary = "Claude Code execution failed: You've hit your session limit"
+                usage = None
+
+            return _Result()
+
+    sink = _RecordingSink()
+    result = run_qa_repair_loop(
+        opencode_client=_RefusingClient(),
+        opencode_succeeded=True,
+        workspace_path=tmp_path,
+        qa_commands=("visual",),
+        qa_cwd=tmp_path,
+        qa_runner=lambda commands, cwd: _failing("VISUAL CHECK FAILED"),
+        event_sink=sink,
+        cancellation=CancellationToken(),
+        stage=ExecutionStage.UI_SHELL,
+        agent="Elena",
+        max_attempts=3,
+        fix_prompt_builder=lambda outcome, budget_seconds=None: "fix it",
+    )
+
+    assert result.fix_error_code == "claude_code_process_failed"
+    assert "could not run" in result.qa_status_message
+    assert "session limit" in result.qa_status_message
+    # And the code the caller puts first is what the classifier reads.
+    assert classify_failure_cause((result.fix_error_code, "qa_failed")) == "provider"
+    assert classify_failure_cause(("qa_failed",)) == "generated_code"
