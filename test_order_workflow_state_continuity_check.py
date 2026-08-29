@@ -106,7 +106,7 @@ def test_what_the_gate_declined_to_ask_about_is_printed():
 
 def test_the_failure_message_names_the_control_and_both_values():
     # The repair loop gets this text verbatim; "state is broken" is not actionable.
-    assert 'was set to "${mutated.value}" but reverted to "${same.value}"' in _CHECK_SCRIPT
+    assert 'was set to "${item.was}" but reverted to "${item.now}"' in _CHECK_SCRIPT
     assert "lift it into shared state" in _CHECK_SCRIPT
 
 
@@ -280,3 +280,16 @@ def test_a_row_of_filter_chips_is_as_transient_as_a_search_box():
 
     assert "filterish" in _ARIA_GROUP_JS
     assert '[role="toolbar"], [class*="filter"], [class*="chip"], [class*="tabs"]' in _ARIA_GROUP_JS
+
+
+def test_one_control_in_a_shared_header_is_one_finding():
+    """b03, 2026-08-29: "Colour theme" is in the header of every screen, so the gate sent the
+    same sentence five times -- to a repair prompt that shows four findings. One control that
+    does not survive navigation is one fix, wherever it is rendered.
+
+    Verified in a real DOM: a fixture whose header theme group resets on every render reports
+    once, naming the other screen it also happens on."""
+    assert "const grouped = new Map()" in _CHECK_SCRIPT
+    assert "The same control does it on" in _CHECK_SCRIPT
+    # Grouped by what the control did, not by where it was seen.
+    assert "`${failure.control}|${failure.kind}|${failure.was || ''}|${failure.now || ''}`" in _CHECK_SCRIPT

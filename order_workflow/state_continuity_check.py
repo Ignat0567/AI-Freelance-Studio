@@ -421,14 +421,13 @@ async function checkScreen(page, name, {{ away, back }}, failures, checked, skip
     const returned = await readControls(page);
     const same = returned.find((item) => item.key === mutated.key);
     checked.push(`${{name}} ${{mutated.label}}`);
+    // Recorded as a shape rather than a sentence, so one control that sits in a shared
+    // header is one finding. b03 of 2026-08-29 sent five identical lines about "Colour
+    // theme" -- one per screen -- to a repair prompt that shows four.
     if (!same) {{
-      failures.push(`On ${{name}}, the control "${{mutated.label}}" disappeared after navigating away and back.`);
+      failures.push({{ scope: name, control: mutated.label, kind: 'gone' }});
     }} else if (same.value !== mutated.value) {{
-      failures.push(
-        `On ${{name}}, "${{mutated.label}}" was set to "${{mutated.value}}" but reverted to "${{same.value}}" `
-        + `after navigating away and back. The value is component-local state that is lost on unmount -- `
-        + `lift it into shared state (or persist it) so the rest of the app sees it too.`
-      );
+      failures.push({{ scope: name, control: mutated.label, kind: 'reverted', was: mutated.value, now: same.value }});
     }}
   }}
 }}
@@ -540,8 +539,27 @@ async function main() {{
     console.log(`Not required to survive navigation (draft or search inputs): ${{skipped.join(', ')}}.`);
   }}
   if (failures.length > 0) {{
+    const grouped = new Map();
+    for (const failure of failures) {{
+      const key = `${{failure.control}}|${{failure.kind}}|${{failure.was || ''}}|${{failure.now || ''}}`;
+      if (!grouped.has(key)) grouped.set(key, {{ ...failure, elsewhere: [] }});
+      else if (!grouped.get(key).elsewhere.includes(failure.scope)) grouped.get(key).elsewhere.push(failure.scope);
+    }}
     console.error('STATE CONTINUITY CHECK FAILED:');
-    for (const failure of failures.slice(0, 5)) console.error(`- ${{failure}}`);
+    for (const item of Array.from(grouped.values()).slice(0, 5)) {{
+      const also = item.elsewhere.length > 0
+        ? ` The same control does it on ${{item.elsewhere.length}} other screen(s): ${{item.elsewhere.slice(0, 3).join(', ')}}.`
+        : '';
+      if (item.kind === 'gone') {{
+        console.error(`- On ${{item.scope}}, the control "${{item.control}}" disappeared after navigating away and back.${{also}}`);
+      }} else {{
+        console.error(
+          `- On ${{item.scope}}, "${{item.control}}" was set to "${{item.was}}" but reverted to "${{item.now}}" `
+          + `after navigating away and back. The value is component-local state that is lost on unmount -- `
+          + `lift it into shared state (or persist it) so the rest of the app sees it too.${{also}}`
+        );
+      }}
+    }}
     process.exit(1);
   }}
   // A pass has to mean something was examined. On 2026-08-28 both web apps of the acceptance
