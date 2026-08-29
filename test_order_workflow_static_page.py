@@ -324,3 +324,50 @@ def test_a_failed_screenshot_cannot_fail_the_static_page_gate():
     after = _CHECK_SCRIPT[_CHECK_SCRIPT.index("page.screenshot("):]
     assert after.index("catch") < after.index("STATIC PAGE CHECK PASSED")
     assert "screenshot skipped: " in _CHECK_SCRIPT
+
+
+# --- the workspace the gate itself creates ---------------------------------------------
+
+
+def test_a_windows_npm_junction_cannot_crash_the_gate(tmp_path, monkeypatch):
+    """Live b02 of 2026-08-28: the page was built, its QA ran, a repair ran, and then the
+    execution died with
+
+        OSError: [WinError 1920] ... node_modules\.bin\playwright
+
+    npm on Windows writes `node_modules/.bin` entries as NTFS junction points, and `stat()`
+    raises on them instead of reporting a type. The gate installs Playwright into the
+    workspace itself, so it creates the very entry that killed it. The same defect cost a run
+    on 2026-08-10 in `scan_meaningful_generated_artifacts`, where it was guarded; this walk
+    was the copy that was missed.
+    """
+    from order_workflow.static_page_check import _delivered_files
+
+    (tmp_path / "index.html").write_text("<!doctype html><title>t</title>", encoding="utf-8")
+    junction = tmp_path / "node_modules" / ".bin"
+    junction.mkdir(parents=True)
+    (junction / "playwright").write_text("shim", encoding="utf-8")
+
+    real_is_file = Path.is_file
+
+    def exploding_is_file(self):
+        if ".bin" in self.parts:
+            raise OSError(1920, "the file cannot be accessed by the system")
+        return real_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", exploding_is_file)
+
+    assert _delivered_files(tmp_path) == [Path("index.html")]
+
+
+def test_an_entry_that_cannot_answer_is_not_a_file(tmp_path, monkeypatch):
+    from order_workflow.workspace import is_regular_file
+
+    target = tmp_path / "whatever"
+
+    def exploding(self):
+        raise OSError(1920, "the file cannot be accessed by the system")
+
+    monkeypatch.setattr(Path, "is_file", exploding)
+
+    assert is_regular_file(target) is False

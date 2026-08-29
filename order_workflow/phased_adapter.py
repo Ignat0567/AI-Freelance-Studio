@@ -49,7 +49,7 @@ from .state_continuity_check import run_state_continuity_check_in_docker
 from .readiness import LIVE_EXECUTION_OPT_IN_REQUIRED, ReadinessResult
 from .visual_check import SCREENSHOT_FILENAME, build_visual_check_runner, palette_from_concept
 from .website_generation import detect_cinematic_website_intent
-from .workspace import reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
+from .workspace import is_regular_file, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
 UI_SHELL_QA_COMMANDS: tuple[str, ...] = ("npm run build",)
 CORE_FEATURE_QA_COMMANDS: tuple[str, ...] = ("npm test",)
@@ -184,7 +184,7 @@ def _delivered_files(workspace) -> tuple[str, ...]:
             if child.is_file():
                 files.append(name)
             elif child.is_dir():
-                count = sum(1 for item in child.rglob("*") if item.is_file())
+                count = sum(1 for item in child.rglob("*") if is_regular_file(item))
                 directories.append(f"{name}/ ({count} file{'s' if count != 1 else ''})")
         except OSError:
             continue

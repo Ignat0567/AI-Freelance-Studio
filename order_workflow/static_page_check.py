@@ -43,6 +43,7 @@ from .docker_qa_runner import PLAYWRIGHT_IMAGE, PLAYWRIGHT_NPM_VERSION, run_qa_c
 from .phase_prompts import STATIC_PAGE_ALLOWED_HOSTS, STATIC_PAGE_FILENAME, STATIC_PAGE_MAX_BYTES
 from .qa_runner import QACommandResult, QAOutcome
 from .visual_check import SCREENSHOT_FILENAME
+from .workspace import is_regular_file
 
 _SERVER_FILENAME = "___freelancerstudio_static_server.mjs"
 _CHECK_FILENAME = "___freelancerstudio_static_check.mjs"
@@ -70,12 +71,15 @@ MIN_FPS = 10
 def _delivered_files(cwd: Path) -> list[Path]:
     files = []
     for path in sorted(cwd.rglob("*")):
-        if not path.is_file():
-            continue
         relative = path.relative_to(cwd)
+        # Name filters first: they answer without touching the filesystem, and the paths they
+        # exclude include the one that cannot be stat-ed -- node_modules/.bin, which this gate
+        # creates itself by installing Playwright into the workspace.
         if any(part in _IGNORED_NAMES for part in relative.parts):
             continue
         if any(relative.parts[-1].startswith(prefix) for prefix in _IGNORED_PREFIXES):
+            continue
+        if not is_regular_file(path):
             continue
         files.append(relative)
     return files

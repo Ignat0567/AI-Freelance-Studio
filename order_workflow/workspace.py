@@ -36,6 +36,25 @@ class ProjectWorkspace:
         return self.project_path.name
 
 
+def is_regular_file(path: Path) -> bool:
+    """`path.is_file()`, for a tree that npm has been let loose in.
+
+    npm on Windows sometimes creates `node_modules/.bin` entries as NTFS junction points
+    rather than symlinks. `is_symlink()` does not recognise them (wrong reparse tag) and
+    `stat()` raises OSError (WinError 1920) instead of reporting a type, so any walk that
+    asks "is this a file?" over a workspace crashes on one. It has cost two live runs: the
+    execution of 2026-08-10 after QA had already passed, and the static-page order of
+    2026-08-28 after the page was built and its repair had already run.
+
+    Nothing a client ordered lives inside `node_modules/.bin`, so an entry that cannot answer
+    is not one.
+    """
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def plan_project_workspace(root: str | Path, *, order_id: str, brief_id: str, title: str = "") -> ProjectWorkspace:
     root_path = Path(root).expanduser().resolve()
     project_name = _workspace_slug(order_id, brief_id, title)
@@ -114,14 +133,9 @@ def scan_meaningful_generated_artifacts(workspace: ProjectWorkspace, *, max_file
             continue
         try:
             is_dir = child.is_dir()
-            is_file = not is_dir and child.is_file()
         except OSError:
-            # npm on Windows sometimes creates node_modules/.bin entries as NTFS junction
-            # points rather than true symlinks -- child.is_symlink() above doesn't catch
-            # those (wrong reparse tag), and stat()-ing them raises OSError (WinError 1920)
-            # instead of just reporting a type. A generated project's real, meaningful
-            # files are never inside node_modules/.bin, so skipping is always correct here.
-            continue
+            continue  # see is_regular_file: a Windows npm junction cannot answer
+        is_file = not is_dir and is_regular_file(child)
         if is_dir:
             if name in MEANINGFUL_DIR_NAMES:
                 found.append(safe_relative + "/")
@@ -146,15 +160,7 @@ def summarize_generated_workspace(workspace: ProjectWorkspace, *, limit: int = 5
         if len(entries) >= limit:
             break
     for child in workspace.project_path.rglob("*"):
-        try:
-            is_file = child.is_file()
-        except OSError:
-            # Same Windows npm node_modules/.bin junction-point issue as
-            # scan_meaningful_generated_artifacts above -- stat() raises instead of just
-            # reporting a type. A generated project's real file count is never affected by
-            # skipping one of these.
-            continue
-        if is_file and child.name != ".freelancerstudio-project.json":
+        if is_regular_file(child) and child.name != ".freelancerstudio-project.json":
             files_created += 1
     return {"files_created": files_created, "top_level_entries": entries, "workspace_path": workspace.project_reference}
 
