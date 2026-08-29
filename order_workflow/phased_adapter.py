@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -160,7 +161,26 @@ def _save_backend_decision_checkpoint(workspace, decision: BackendDecision) -> N
 _NOT_DELIVERABLE = ("node_modules", ".git", "__pycache__", ".freelancerstudio")
 
 
-def _delivered_files(workspace) -> tuple[str, ...]:
+def _remove_toolchain_footprint(workspace) -> None:
+    """Delete the `node_modules` the gate installed into a single-file delivery.
+
+    The static-page contract is "one self-contained HTML file", and its delivery report says
+    "there is nothing to install and nothing to start" -- while the folder shipped tens of
+    thousands of files of Playwright that the gate itself put there to run the check. The same
+    directory is what raised WinError 1920 and killed the b02 order of 2026-08-28.
+
+    Never fatal: a folder that still holds it is untidy, not undelivered.
+    """
+    target = workspace.project_path / "node_modules"
+    if not target.exists():
+        return
+    try:
+        shutil.rmtree(target, ignore_errors=True)
+    except OSError:
+        _logger.warning("Could not remove the gate's node_modules from %s", workspace.project_path, exc_info=True)
+
+
+def _delivered_files(workspace, *, also: tuple[str, ...] = ()) -> tuple[str, ...]:
     """What a client actually receives, top level only, in a readable order.
 
     Directories first, with how much is in each. Files only, alphabetically, listed the
@@ -188,7 +208,9 @@ def _delivered_files(workspace) -> tuple[str, ...]:
                 directories.append(f"{name}/ ({count} file{'s' if count != 1 else ''})")
         except OSError:
             continue
-    return tuple(directories + files)
+    # `also` is for a file that will exist but does not yet -- the delivery report cannot
+    # find itself while it is being written, and its client should still see it named.
+    return tuple(directories + sorted([*files, *also], key=str.casefold))
 
 
 def _gate_output(outcome) -> str:
@@ -889,54 +911,11 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         )
         return outcome
 
-    def _finalize_success(
-        self,
-        request: ExecutionRequest,
-        event_sink: ExecutionEventSink,
-        workspace,
-        *,
-        note: str,
-        run_instruction: str | None = None,
-        delivered_stack: str | None = None,
-    ) -> ExecutionResult:
-        summary = summarize_generated_workspace(workspace)
-        meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
-        deployment = self._deploy(request, event_sink, workspace)
-        # Written by the visual gate during the ui_shell phase, if that gate ran at all.
-        # Recorded rather than generated here: this module has no browser, and the one moment
-        # the page was in a client-recognisable state has long passed by now.
-        screenshot = SCREENSHOT_FILENAME if (workspace.project_path / SCREENSHOT_FILENAME).is_file() else None
-        evidence = build_qa_evidence(self._gate_tally.evidence)
-        # Read back out of the checks' own output rather than threaded through every gate:
-        # the status belongs to whichever check fetched the page, and only one ever does.
-        served = re.search(r"Served over HTTP: (\d{3})", evidence or "")
-        served_http_status = int(served.group(1)) if served else None
-        evidence_file = None
-        if evidence:
-            evidence_file = "qa_evidence.md"
-            (workspace.project_path / evidence_file).write_text(evidence, encoding="utf-8")
-        # Resolved once: the delivery report and the README have to answer "how do I start
-        # it" with the same sentence, and they did not.
-        run_text = resolve_run_instruction((deployment.run_command if deployment is not None and deployment.run_command else None) or run_instruction)
-        delivery_report = build_delivery_report(
-            goal=request.brief.goal,
-            requirements=request.handoff.requirements,
-            note=note,
-            gate_log=self._gate_tally.gate_log,
-            files_created=summary["files_created"],
-            meaningful_artifact_count=len(meaningful_artifacts),
-            usage=self._gate_tally.total_usage(),
-            deployment_status=deployment.status_message if deployment is not None else None,
-            deployment_image=deployment.image_tag if deployment is not None else None,
-            run_command=run_text,
-            evidence_file=evidence_file,
-            served_http_status=served_http_status,
-            screenshot_file=screenshot,
-            delivered_files=_delivered_files(workspace),
-            built_by=RUNNING_BUILD,
-        )
-        (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
-
+    def _write_project_docs(self, request: ExecutionRequest, workspace, *, run_text: str, delivered_stack: str | None) -> None:
+        """README.md and ARCHITECTURE.md, written before the delivery report rather than
+        after it. The report lists what the folder holds, and the b01 delivery of 2026-08-28
+        listed three files: the two documents beside it did not exist yet when it looked.
+        """
         module_map = build_module_map(workspace.project_path)
         # What was delivered, not what was recommended before the run started. The web-app
         # branch of the brief proposes React + Vite / FastAPI / SQLite; the backend-decision
@@ -966,6 +945,61 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         architecture_text = build_architecture_mermaid(module_map, request.title.strip() or workspace.project_reference)
         (workspace.project_path / "README.md").write_text(readme_text, encoding="utf-8")
         (workspace.project_path / "ARCHITECTURE.md").write_text(architecture_text, encoding="utf-8")
+
+
+    def _finalize_success(
+        self,
+        request: ExecutionRequest,
+        event_sink: ExecutionEventSink,
+        workspace,
+        *,
+        note: str,
+        run_instruction: str | None = None,
+        delivered_stack: str | None = None,
+        single_file_delivery: bool = False,
+    ) -> ExecutionResult:
+        if single_file_delivery:
+            _remove_toolchain_footprint(workspace)
+        summary = summarize_generated_workspace(workspace)
+        meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
+        deployment = self._deploy(request, event_sink, workspace)
+        # Written by the visual gate during the ui_shell phase, if that gate ran at all.
+        # Recorded rather than generated here: this module has no browser, and the one moment
+        # the page was in a client-recognisable state has long passed by now.
+        screenshot = SCREENSHOT_FILENAME if (workspace.project_path / SCREENSHOT_FILENAME).is_file() else None
+        evidence = build_qa_evidence(self._gate_tally.evidence)
+        # Read back out of the checks' own output rather than threaded through every gate:
+        # the status belongs to whichever check fetched the page, and only one ever does.
+        served = re.search(r"Served over HTTP: (\d{3})", evidence or "")
+        served_http_status = int(served.group(1)) if served else None
+        evidence_file = None
+        if evidence:
+            evidence_file = "qa_evidence.md"
+            (workspace.project_path / evidence_file).write_text(evidence, encoding="utf-8")
+        # Resolved once: the delivery report and the README have to answer "how do I start
+        # it" with the same sentence, and they did not.
+        run_text = resolve_run_instruction((deployment.run_command if deployment is not None and deployment.run_command else None) or run_instruction)
+        self._write_project_docs(request, workspace, run_text=run_text, delivered_stack=delivered_stack)
+        delivery_report = build_delivery_report(
+            goal=request.brief.goal,
+            requirements=request.handoff.requirements,
+            note=note,
+            gate_log=self._gate_tally.gate_log,
+            files_created=summary["files_created"],
+            meaningful_artifact_count=len(meaningful_artifacts),
+            usage=self._gate_tally.total_usage(),
+            deployment_status=deployment.status_message if deployment is not None else None,
+            deployment_image=deployment.image_tag if deployment is not None else None,
+            run_command=run_text,
+            evidence_file=evidence_file,
+            served_http_status=served_http_status,
+            screenshot_file=screenshot,
+            # Named explicitly: this is the file the client is reading, and it does not
+            # exist yet when its own list is built.
+            delivered_files=_delivered_files(workspace, also=("delivery_report.md",)),
+            built_by=RUNNING_BUILD,
+        )
+        (workspace.project_path / "delivery_report.md").write_text(delivery_report, encoding="utf-8")
 
         artifacts = (
             event_sink.artifact(kind=ArtifactKind.PROJECT_SUMMARY, name="generated_project_summary.json", summary=f"Workspace contains {summary['files_created']} non-marker files.", reference="generated-project-summary-json"),
@@ -1159,6 +1193,8 @@ class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
             event_sink,
             workspace,
             note="Delivered as one self-contained HTML file. No build step, no backend, no framework.",
+            # ...which is only true if the check's own Playwright install goes with it.
+            single_file_delivery=True,
             # The generic instruction is a Vite project's, and this product type has no
             # package.json to install from: the first live delivery told a client to run
             # `npm install` on a single HTML file.

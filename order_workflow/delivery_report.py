@@ -238,8 +238,13 @@ def build_delivery_report(
     # and the pipeline's own markers all counted. A number a client can see is wrong is worse
     # than no number, and it undermines the measurements next to it.
     if delivered_files:
-        listed = ", ".join(f"`{name}`" for name in delivered_files[:6])
-        more = f" and {len(delivered_files) - 6} more" if len(delivered_files) > 6 else ""
+        # Twelve, not six: after the directories moved to the front of this list a six-entry
+        # cap pushed the README, the report itself and the architecture diagram into "and N
+        # more", which is the opposite of what a list of what-you-received is for. A delivery
+        # folder holds around ten entries once the toolchain is excluded.
+        shown = 12
+        listed = ", ".join(f"`{name}`" for name in delivered_files[:shown])
+        more = f" and {len(delivered_files) - shown} more" if len(delivered_files) > shown else ""
         lines.append(f"Delivered: {listed}{more}.")
     cost_line = _cost_line(usage)
     if cost_line:

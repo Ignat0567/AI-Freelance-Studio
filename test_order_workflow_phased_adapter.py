@@ -1014,3 +1014,39 @@ def test_features_do_not_repeat_the_overview_paragraph(tmp_path):
     # Nothing distinct left to list, so the heading goes too rather than standing empty.
     assert "## Features" not in readme
     assert "## Overview" in readme and "## Tech Stack" in readme
+
+
+def test_a_one_file_delivery_does_not_ship_the_gate_s_own_node_modules(tmp_path):
+    """The static-page report says "there is nothing to install and nothing to start", and the
+    b01 folder delivered on 2026-08-28 held a `node_modules` the check had installed to run
+    Playwright. It is also the directory whose junction killed the b02 order the same night."""
+    from order_workflow.phased_adapter import _remove_toolchain_footprint
+
+    project = tmp_path / "project"
+    (project / "node_modules" / ".bin").mkdir(parents=True)
+    (project / "node_modules" / ".bin" / "playwright").write_text("shim", encoding="utf-8")
+    (project / "index.html").write_text("<!doctype html>", encoding="utf-8")
+
+    class _Workspace:
+        project_path = project
+
+    _remove_toolchain_footprint(_Workspace())
+
+    assert not (project / "node_modules").exists()
+    assert (project / "index.html").is_file()
+
+
+def test_the_delivered_list_includes_the_documents_beside_it(tmp_path):
+    """b01, 2026-08-28: "Delivered: delivery_screenshot.png, index.html, qa_evidence.md" --
+    README.md, ARCHITECTURE.md and the report itself were written after the list was built."""
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path)
+
+    adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    project_dir = [item for item in Path(tmp_path).iterdir() if item.is_dir()][0]
+    report = (project_dir / "delivery_report.md").read_text(encoding="utf-8")
+    listed = report.split("Delivered:", 1)[1].split("\n", 1)[0]
+
+    for name in ("README.md", "ARCHITECTURE.md", "delivery_report.md"):
+        assert name in listed, listed

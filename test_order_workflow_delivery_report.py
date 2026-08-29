@@ -232,9 +232,24 @@ def test_the_report_lists_what_was_delivered_instead_of_counting_the_toolchain()
 
 
 def test_a_long_delivery_list_is_trimmed_rather_than_dumped():
-    report = _report(delivered_files=tuple(f"file{i}.md" for i in range(10)))
+    report = _report(delivered_files=tuple(f"file{i}.md" for i in range(20)))
 
-    assert "and 4 more" in report
+    assert "and 8 more" in report
+
+
+def test_a_normal_delivery_folder_is_listed_whole():
+    """Ten-ish entries is what a folder holds once the toolchain is excluded, and the three
+    documents a client reads sort late. At a six-entry cap the b01 report of 2026-08-28 named
+    a screenshot and hid the README."""
+    report = _report(delivered_files=(
+        "dist/ (3 files)", "src/ (23 files)", "ARCHITECTURE.md", "Dockerfile", "README.md",
+        "delivery_report.md", "delivery_screenshot.png", "design-tokens.css", "index.html",
+        "package.json", "qa_evidence.md",
+    ))
+
+    assert "more." not in report
+    for name in ("README.md", "delivery_report.md", "ARCHITECTURE.md"):
+        assert name in report
 
 
 def test_nothing_is_claimed_when_there_is_nothing_to_list():
