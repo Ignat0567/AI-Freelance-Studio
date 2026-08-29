@@ -345,14 +345,17 @@ def test_a_text_link_is_not_charged_a_repair_for_being_text_sized():
     16px apart are not -- while the same rows touching at 0px are."""
     script = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
 
-    rule = script[script.index("const smallTargets = [];"):script.index("const overlaps = [];")]
+    # The rule itself lives in browser_rules, shared with the static-page gate: its own copy
+    # of this went on reporting every text link for a day after this one was fixed.
+    from order_workflow.browser_rules import TAP_TARGET_RULE_JS
 
+    assert TAP_TARGET_RULE_JS.strip() in script
     # Inline: the parent holds text of its own around the link.
-    assert "parentOwnText" in rule
+    assert "parentOwnText" in TAP_TARGET_RULE_JS
     # Spacing: one diameter between centres for two undersized targets...
-    assert "< 24" in rule
+    assert "< 24" in TAP_TARGET_RULE_JS
     # ...and the radius to the nearest point of a full-size one.
-    assert "< 12" in rule
+    assert "< 12" in TAP_TARGET_RULE_JS
 
 
 def test_a_small_target_is_reported_with_what_it_collides_with():

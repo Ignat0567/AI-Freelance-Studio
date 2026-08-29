@@ -41,6 +41,7 @@ from pathlib import Path
 
 from .docker_qa_runner import PLAYWRIGHT_IMAGE, PLAYWRIGHT_NPM_VERSION, run_qa_commands_in_docker
 from .phase_prompts import STATIC_PAGE_ALLOWED_HOSTS, STATIC_PAGE_FILENAME, STATIC_PAGE_MAX_BYTES
+from .browser_rules import TAP_TARGET_MESSAGE_JS, TAP_TARGET_RULE_JS
 from .qa_runner import QACommandResult, QAOutcome
 from .visual_check import SCREENSHOT_FILENAME
 from .workspace import is_regular_file
@@ -155,6 +156,7 @@ _CHECK_SCRIPT = f"""import {{ chromium }} from 'playwright';
 const TARGET_URL = 'http://localhost:{_PORT}/{STATIC_PAGE_FILENAME}';
 const SCREENSHOT_PATH = {SCREENSHOT_FILENAME!r};
 const ALLOWED_HOSTS = {list(ALLOWED_ASSET_HOSTS)!r};
+{TAP_TARGET_MESSAGE_JS}
 const MIN_FPS = {MIN_FPS};
 const NAV_TIMEOUT_MS = 30000;
 
@@ -185,19 +187,14 @@ const INSTRUMENT = `
 `;
 
 function overflowAndTargets() {{
+  {TAP_TARGET_RULE_JS}
   const de = document.documentElement;
   const overflow = de.scrollWidth - de.clientWidth;
-  const smallTargets = [];
-  const selector = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="tab"]';
-  for (const node of document.querySelectorAll(selector)) {{
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    if (rect.width < 1 || style.visibility === 'hidden' || style.display === 'none') continue;
-    if (rect.width < 24 || rect.height < 24) {{
-      smallTargets.push({{ tag: node.tagName.toLowerCase(), w: Math.round(rect.width), h: Math.round(rect.height) }});
-    }}
-  }}
-  return {{ overflow, smallTargets: smallTargets.slice(0, 6) }};
+  // The same rule the visual gate applies, from the same source. Its own copy of this,
+  // written before WCAG 2.5.8's exceptions were, reported every text link on the page: the
+  // b02 order of 2026-08-28 spent a repair on "a 43x16px, a 32x16px, a 49x16px" -- three
+  // inline links in a sentence.
+  return {{ overflow, smallTargets: smallTapTargets().slice(0, 6) }};
 }}
 
 function unbackedTextOverScene() {{
@@ -342,9 +339,8 @@ async function main() {{
   }}
   if (desktop.overflow > 1) failures.push(`The page scrolls horizontally at 1280px (overflowing by ${{desktop.overflow}}px).`);
   if (tablet.overflow > 1) failures.push(`The page scrolls horizontally at 768px (overflowing by ${{tablet.overflow}}px). Make the layout fit a tablet.`);
-  if (tablet.smallTargets.length > 0) {{
-    const listed = tablet.smallTargets.map((t) => `${{t.tag}} ${{t.w}}x${{t.h}}px`).join(', ');
-    failures.push(`Tap targets under 24x24px at 768px: ${{listed}}. Enlarge them.`);
+  for (const t of tablet.smallTargets.slice(0, 3)) {{
+    failures.push(tapTargetFailure('768px', t));
   }}
   if (pageErrors.length > 0) failures.push(`Uncaught page error(s): ${{pageErrors.slice(0, 4).join(' | ')}}`);
   if (consoleErrors.length > 0) failures.push(`Console error(s): ${{consoleErrors.slice(0, 4).join(' | ')}}`);

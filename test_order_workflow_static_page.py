@@ -371,3 +371,19 @@ def test_an_entry_that_cannot_answer_is_not_a_file(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "is_file", exploding)
 
     assert is_regular_file(target) is False
+
+
+def test_the_tap_target_rule_is_the_one_the_visual_gate_uses():
+    """This gate carried its own copy, written before WCAG 2.5.8's exceptions were applied to
+    the other one. It cost b02 a repair on 2026-08-28: "Tap targets under 24x24px at 768px: a
+    43x16px, a 32x16px, a 49x16px" -- three inline links in a sentence, all of them fine."""
+    from order_workflow.browser_rules import TAP_TARGET_MESSAGE_JS, TAP_TARGET_RULE_JS
+    from order_workflow.static_page_check import _CHECK_SCRIPT
+    from order_workflow.visual_check import _build_script, ExpectedPalette
+
+    visual = _build_script(ExpectedPalette(background="#0b0f1a", colors=("#0b0f1a",)))
+
+    for script in (_CHECK_SCRIPT, visual):
+        assert TAP_TARGET_RULE_JS.strip() in script
+        assert TAP_TARGET_MESSAGE_JS.strip() in script
+        assert "Tap targets under 24x24px" not in script  # the nameless list both printed

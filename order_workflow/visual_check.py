@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable
 
 from .docker_qa_runner import PLAYWRIGHT_IMAGE, PLAYWRIGHT_NPM_VERSION, run_qa_commands_in_docker
+from .browser_rules import TAP_TARGET_MESSAGE_JS, TAP_TARGET_RULE_JS
 from .models import ElenaDesignConcept
 from .qa_runner import QAOutcome
 
@@ -102,6 +103,7 @@ def _build_script(palette: ExpectedPalette, screenshot_name: str = SCREENSHOT_FI
 const TARGET_URL = {_PREVIEW_URL!r};
 const EXPECTED = {palette.as_json()};
 const SCREENSHOT_PATH = {screenshot_name!r};
+{TAP_TARGET_MESSAGE_JS}
 const TOLERANCE = {COLOR_MATCH_TOLERANCE};
 const MIN_COVERAGE = {MIN_PALETTE_COVERAGE};
 const MIN_CONTRAST_NORMAL = {MIN_CONTRAST_NORMAL};
@@ -123,6 +125,7 @@ function distance(a, b) {{
 // -- this function body is serialised and evaluated in the browser context, where none of
 // the Node-scope constants above exist.
 const PAGE_PROBE = () => {{
+  {TAP_TARGET_RULE_JS}
   const MIN_CONTRAST_NORMAL = {MIN_CONTRAST_NORMAL};
   const MIN_CONTRAST_LARGE = {MIN_CONTRAST_LARGE};
   function parse(color) {{
@@ -156,7 +159,6 @@ const PAGE_PROBE = () => {{
 
   const painted = new Map();
   const contrastFailures = [];
-  const targets = [];
 
   const bodyBg = effectiveBackground(document.body);
 
@@ -202,11 +204,6 @@ const PAGE_PROBE = () => {{
       }}
     }}
 
-    // Collected whole, not filtered to the undersized ones: whether a small target is a
-    // defect depends on what is next to it, which cannot be known one node at a time.
-    if (node.matches('a[href], button, [role="button"], input:not([type="hidden"]), select')) {{
-      targets.push({{ node, rect }});
-    }}
   }}
 
   // --- layout defects -------------------------------------------------------
@@ -276,57 +273,6 @@ const PAGE_PROBE = () => {{
     }}
   }}
 
-  // WCAG 2.5.8 target size (minimum), including the two exceptions it is written with.
-  // Every recorded finding of this rule named an <a> 102-271px wide and 18-23px tall -- text
-  // links sized by their own type, not controls too small to hit -- and "Enlarge them" asks
-  // for the one thing that would break the sentence or the list they sit in.
-  //
-  //   Inline:  a link inside a run of text is sized by that text.
-  //   Spacing: an undersized target whose 24px circle reaches no other target is still
-  //            reachable without hitting something else, which is what the floor is for.
-  //
-  // What is left is the case the rule was written for: small controls crowded together.
-  const smallTargets = [];
-  for (const target of targets) {{
-    const rect = target.rect;
-    if (rect.width >= 24 && rect.height >= 24) continue;
-
-    const parent = target.node.parentElement;
-    const parentOwnText = parent
-      ? Array.from(parent.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join('')
-      : '';
-    if (parentOwnText.length > 1) continue;   // inline, in a sentence
-
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    let neighbour = null;
-    for (const other of targets) {{
-      if (other === target) continue;
-      if (other.node.contains(target.node) || target.node.contains(other.node)) continue;
-      const box = other.rect;
-      if (box.width < 24 || box.height < 24) {{
-        // Two circles: they intersect when their centres are closer than one diameter.
-        const dx = cx - (box.left + box.width / 2);
-        const dy = cy - (box.top + box.height / 2);
-        if (Math.sqrt(dx * dx + dy * dy) < 24) {{ neighbour = other; break; }}
-      }} else {{
-        // A circle and a full-size target: the nearest point of its box inside the radius.
-        const px = Math.max(box.left, Math.min(cx, box.right));
-        const py = Math.max(box.top, Math.min(cy, box.bottom));
-        if (Math.sqrt((cx - px) ** 2 + (cy - py) ** 2) < 12) {{ neighbour = other; break; }}
-      }}
-    }}
-    if (!neighbour) continue;
-
-    smallTargets.push({{
-      tag: target.node.tagName.toLowerCase(),
-      w: Math.round(rect.width),
-      h: Math.round(rect.height),
-      what: describe(target.node),
-      near: describe(neighbour.node),
-    }});
-  }}
-
   // One defect, one finding. A container that hangs past the viewport drags every child
   // with it, and each of them satisfies the same condition: on 2026-08-26 the reading
   // journal reported "Finished 2 Finished books, sorta", "Finished 2", "2" and "Finished
@@ -370,7 +316,7 @@ const PAGE_PROBE = () => {{
     bodyBg,
     painted: Array.from(painted.entries()).map(([k, area]) => ({{ rgb: k.split(',').map(Number), area }})),
     contrastFailures: contrastFailures.sort((a, b) => a.ratio - b.ratio).slice(0, 8),
-    smallTargets: smallTargets.slice(0, 6),
+    smallTargets: smallTapTargets().slice(0, 6),
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     clipped: clipped.slice(0, 4),
     pastViewport: pastViewport.slice(0, 4),
@@ -496,10 +442,7 @@ async function main() {{
     );
   }}
   for (const t of mobile.smallTargets.slice(0, 3)) {{
-    failures.push(
-      `At phone width, ${{t.what}} is a ${{t.w}}x${{t.h}}px tap target -- under 24x24px, and its ` +
-      `24px target circle overlaps ${{t.near}}. Enlarge it (padding counts) or space the two further apart.`
-    );
+    failures.push(tapTargetFailure('phone width', t));
   }}
 
   // --- 3b. layout ------------------------------------------------------------
