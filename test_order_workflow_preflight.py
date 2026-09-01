@@ -69,6 +69,19 @@ def _preflight(**overrides):
     return run_preflight(**kwargs)
 
 
+def test_ollama_coding_backend_skips_the_cloud_cli_login():
+    report = _preflight(
+        environ={"FREELANCERSTUDIO_CODING_BACKEND": "ollama"},
+        ollama_tags_probe=lambda: ("qwen2.5-coder:14b",),
+    )
+
+    assert report.ready is True
+    by_code = {check.code: check for check in report.checks}
+    assert by_code["coding_cli_credentials"].status == "skipped"
+    assert by_code["ollama_runtime"].status == "ok"
+    assert by_code["ollama_runtime"].message == "qwen2.5-coder:14b"
+
+
 def test_healthy_environment_is_ready_and_reports_every_check():
     report = _preflight()
 

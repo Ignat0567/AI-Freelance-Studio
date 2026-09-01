@@ -15,7 +15,7 @@ import pytest
 
 from order_workflow import AgentHandoff, ElenaDesignChoice, ProjectBrief, RecommendedStack
 from order_workflow.complexity import describe_phase_complexity
-from order_workflow.models import ProductType, SUPPORTED_PRODUCT_TYPES
+from order_workflow.models import ElenaDesignConcept, ProductType, SUPPORTED_PRODUCT_TYPES, ThemePalette
 from order_workflow.phase_prompts import (
     STATIC_PAGE_ALLOWED_HOSTS,
     STATIC_PAGE_FILENAME,
@@ -24,7 +24,10 @@ from order_workflow.phase_prompts import (
 )
 from order_workflow.static_page_check import (
     ALLOWED_ASSET_HOSTS,
+    finish_static_page_background,
     inspect_static_page_files,
+    reconcile_static_page_workspace,
+    resolve_static_page_background,
     run_static_page_check_in_docker,
 )
 
@@ -387,3 +390,156 @@ def test_the_tap_target_rule_is_the_one_the_visual_gate_uses():
         assert TAP_TARGET_RULE_JS.strip() in script
         assert TAP_TARGET_MESSAGE_JS.strip() in script
         assert "Tap targets under 24x24px" not in script  # the nameless list both printed
+
+
+def test_reconcile_promotes_the_richest_html_and_drops_sibling_sources(tmp_path):
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><body><h1>Hello, World!</h1></body></html>",
+        encoding="utf-8",
+    )
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "index.html").write_text(
+        "<!doctype html><html><head><style>body{margin:0}</style></head>"
+        "<body><h1>Mini Card</h1><p>Local Studio test</p><button>Email</button></body></html>",
+        encoding="utf-8",
+    )
+    (src / "main.js").write_text("console.log('leftover');\n", encoding="utf-8")
+
+    removed = reconcile_static_page_workspace(tmp_path)
+
+    assert inspect_static_page_files(tmp_path) == []
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "Mini Card" in page
+    assert "Email" in page
+    assert not (src / "index.html").exists()
+    assert not (src / "main.js").exists()
+    assert any(item.replace("\\", "/").endswith("main.js") for item in removed)
+
+
+def test_reconcile_inlines_external_script_into_the_page(tmp_path):
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><body><h1>Mini Card</h1><button>Email</button>"
+        "<script src=\"main.js\"></script></body></html>",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.js").write_text("document.querySelector('button').onclick = () => {};\n", encoding="utf-8")
+
+    reconcile_static_page_workspace(tmp_path)
+
+    assert inspect_static_page_files(tmp_path) == []
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "document.querySelector('button')" in page
+    assert 'src="main.js"' not in page
+    assert not (tmp_path / "main.js").exists()
+
+
+def test_non_cinematic_prompt_does_not_require_webgl():
+    prompt = build_static_page_prompt(
+        _brief(
+            goal="A single HTML page showing the name Mini Card and a button labelled Email.",
+            core_features=("View Mini Card, read Local Studio test, and click Email",),
+            acceptance_criteria=("The name, sentence and button are visible.",),
+        ),
+        _handoff(
+            goal="Build the Mini Card page.",
+            context_summary="One self-contained HTML card.",
+            requirements=("Show Mini Card", "Show Local Studio test", "Email button"),
+        ),
+    )
+    lowered = prompt.lower()
+    assert "working webgl context" not in lowered
+    assert "issue draw calls" not in lowered
+    assert STATIC_PAGE_FILENAME in prompt
+
+
+def test_non_webgl_check_script_still_screenshots_and_skips_draw_calls(tmp_path):
+    _page(tmp_path)
+    captured = {}
+
+    def _fake_docker(*_args, **_kwargs):
+        captured["script"] = (tmp_path / "___freelancerstudio_static_check.mjs").read_text(encoding="utf-8")
+        raise RuntimeError("captured")
+
+    with pytest.raises(RuntimeError):
+        run_static_page_check_in_docker((), tmp_path, docker_client_factory=_fake_docker, require_webgl=False)
+
+    script = captured["script"]
+    assert "page.screenshot(" in script
+    assert "pageerror" in script
+    assert "Zero WebGL draw calls" not in script
+    assert "The page has no <canvas>" not in script
+
+
+def test_reconcile_inlines_background_image_and_drops_the_sibling(tmp_path):
+    (tmp_path / "elena_background.webp").write_bytes(b"RIFF....WEBPFAKE")
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><body><h1>Mini Card</h1><button>Email</button>"
+        '<img src="elena_background.webp" alt=""></body></html>',
+        encoding="utf-8",
+    )
+
+    reconcile_static_page_workspace(tmp_path)
+
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "data:image/webp;base64," in page
+    assert not (tmp_path / "elena_background.webp").exists()
+    assert inspect_static_page_files(tmp_path) == []
+
+
+def test_finish_static_page_background_adds_cover_css(tmp_path):
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><head></head><body><h1>Mini Card</h1><button>Email</button></body></html>",
+        encoding="utf-8",
+    )
+    (tmp_path / "elena_background.webp").write_bytes(b"RIFF....WEBPFAKE")
+
+    finish_static_page_background(tmp_path)
+    reconcile_static_page_workspace(tmp_path)
+
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "fs-elena-cover" in page
+    assert "data:image/webp;base64," in page
+    assert inspect_static_page_files(tmp_path) == []
+
+
+def test_resolve_static_page_background_from_env(tmp_path, monkeypatch):
+    plate = tmp_path / "shore.webp"
+    plate.write_bytes(b"x")
+    monkeypatch.setenv("FREELANCERSTUDIO_STATIC_PAGE_BACKGROUND", str(plate))
+
+    found = resolve_static_page_background("no path in the text")
+
+    assert found == plate.resolve()
+
+
+def test_elena_static_page_prompt_asks_to_animate_the_plate():
+    palette = ThemePalette(background="#16324a", surface="#fff8ec", text="#132033", accent="#1e6f8a")
+    concept = ElenaDesignConcept(
+        visual_direction="Living client plate: slow camera drift, breathing light, water glints; frosted card for copy.",
+        layout="Full-viewport animated background with a centered frosted content card.",
+        screens=("Single living page",),
+        components=("Animated background plate", "Frosted content card"),
+        light_theme=palette,
+        dark_theme=palette,
+    )
+    prompt = build_static_page_prompt(
+        _brief(
+            goal="A single HTML page showing the name Mini Card.",
+            core_features=("View Mini Card and click Email",),
+            acceptance_criteria=("The name, sentence and button are visible.",),
+            elena_design_choice=ElenaDesignChoice.SHOW_ELENA_CONCEPT,
+            elena_design_concept=concept,
+        ),
+        _handoff(
+            goal="Build the Mini Card page.",
+            context_summary="One self-contained HTML card over Elena's living plate.",
+            requirements=("Show Mini Card", "Show Local Studio test", "Email button"),
+            design_preview_summary=("If elena_background.webp is in the workspace, use it as a full-viewport living background.",),
+        ),
+    )
+    lowered = prompt.lower()
+    assert "elena" in lowered
+    assert "elena_background.webp" in lowered
+    assert "ken burns" in lowered
+    assert "working webgl context" not in lowered

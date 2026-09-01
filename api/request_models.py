@@ -139,6 +139,14 @@ class ClaudeCodeConnectionPayload(BaseModel):
     enabled: bool = True
 
 
+class GrokConnectionPayload(BaseModel):
+    connection_id: str = ""
+    name: str = "My Grok"
+    configured_model: str = "grok/grok-4.6"
+    executable_path: str = ""
+    enabled: bool = True
+
+
 class ProposalGeneratePayload(BaseModel):
     job_description: str
 

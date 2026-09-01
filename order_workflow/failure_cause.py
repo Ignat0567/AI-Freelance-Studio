@@ -33,6 +33,12 @@ _CAUSE_BY_CODE: dict[str, FailureCause] = {
     "claude_code_process_failed": "provider",
     "opencode_unavailable": "provider",
     "opencode_execution_failed": "provider",
+    "ollama_unavailable": "provider",
+    "ollama_execution_failed": "provider",
+    "ollama_execution_timeout": "budget",
+    "ollama_no_files": "generated_code",
+    "grok_cli_unavailable": "provider",
+    "grok_not_logged_in": "provider",
     "provider_rate_limited": "provider",
     "preflight_coding_cli_auth_expired": "provider",
     # Out of clock, not out of ability.

@@ -4,7 +4,7 @@ import { tr } from '../i18n.js';
 const PLATFORM_FIELDS = [
   {
     id: 'nvidia_key',
-    label: 'NVIDIA API Key (Recommended)',
+    label: 'NVIDIA API Key (Optional)',
     placeholder: 'nvapi-........................',
     url: null,
     urlLabel: null,

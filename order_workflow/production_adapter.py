@@ -31,8 +31,28 @@ from .workspace import plan_project_workspace, reserve_owned_project_workspace, 
 MAX_QA_REPAIR_ATTEMPTS = 2  # matches the legacy pipeline's own MAX_REVIEW_ITERATIONS precedent
 
 
-def live_opencode_execution_enabled(environ: dict[str, str] | None = None) -> bool:
-    return (environ or os.environ).get("FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION") == "1"
+def live_opencode_execution_enabled(environ: dict[str, str] | None = None, config: dict | None = None) -> bool:
+    """Live coding is opt-in. The env var still wins; otherwise Settings can enable it.
+
+    FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 enables (historical name; it now
+    covers Ollama/Grok live builds too). 0/false/no disables even if Settings is on.
+    An unset env var falls through to `_system.live_execution_enabled`.
+    """
+    env = environ if environ is not None else os.environ
+    raw = str(env.get("FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION", "")).strip()
+    if raw == "1":
+        return True
+    if raw.lower() in {"0", "false", "no"}:
+        return False
+    if isinstance(config, dict):
+        system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
+        if system.get("live_execution_enabled") is True:
+            return True
+    try:
+        from system_settings import SYSTEM_SETTINGS
+        return bool(SYSTEM_SETTINGS.get("live_execution_enabled"))
+    except Exception:
+        return False
 
 
 @dataclass(frozen=True, slots=True)

@@ -36,6 +36,11 @@ mechanical questions answered completely, taste left visibly alone.
 
 from __future__ import annotations
 
+import base64
+import mimetypes
+import os
+import re
+import shutil
 import time
 from pathlib import Path
 
@@ -67,6 +72,28 @@ _IGNORED_PREFIXES = ("___freelancerstudio", ".freelancerstudio-checkpoint", "exe
 # teens here. The floor exists to catch a page that does not animate at all, or one whose
 # per-frame work is so heavy it would stutter on real hardware too -- not to grade smoothness.
 MIN_FPS = 10
+
+_HTML_SUFFIXES = {".html", ".htm"}
+_SOURCE_SUFFIXES = {".js", ".mjs", ".css", ".ts", ".jsx", ".tsx"}
+_MEDIA_SUFFIXES = {".webp", ".png", ".jpg", ".jpeg", ".gif", ".avif"}
+_BUILD_CONFIG_NAMES = {"vite.config.js", "vite.config.ts", "webpack.config.js", "tsconfig.json", "index.js"}
+_STUB_MARKERS = ("hello, world", "hello world")
+ELENA_BACKGROUND_STEM = "elena_background"
+STATIC_PAGE_BACKGROUND_ENV = "FREELANCERSTUDIO_STATIC_PAGE_BACKGROUND"
+_WINDOWS_MEDIA = re.compile(
+    r'(?P<path>[A-Za-z]:\\(?:[^<>"|*?]+)\.(?:webp|png|jpe?g))',
+    re.IGNORECASE,
+)
+_SCRIPT_SRC = re.compile(
+    r"""<script\b[^>]*\bsrc\s*=\s*['"]([^'"]+)['"][^>]*>\s*</script>""",
+    re.IGNORECASE,
+)
+_IMG_SRC = re.compile(
+    r"""(<img\b[^>]*\bsrc\s*=\s*['"])([^'"]+)(['"][^>]*>)""",
+    re.IGNORECASE,
+)
+_CSS_URL = re.compile(r"""url\(\s*['"]?([^'")]+)['"]?\s*\)""", re.IGNORECASE)
+_REMOTE_SRC_PREFIXES = ("http://", "https://", "//", "data:", "blob:")
 
 
 def _delivered_files(cwd: Path) -> list[Path]:
@@ -123,6 +150,233 @@ def inspect_static_page_files(cwd: Path) -> list[str]:
     return failures
 
 
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _html_score(text: str) -> int:
+    lowered = text.lower()
+    score = len(text)
+    if any(marker in lowered for marker in _STUB_MARKERS):
+        score -= 50_000
+    if "<style" in lowered:
+        score += 400
+    if "<button" in lowered:
+        score += 400
+    if "<h1" in lowered or "<h2" in lowered:
+        score += 100
+    return score
+
+
+def _resolve_workspace_asset(cwd: Path, html_origin: Path, src: str) -> Path | None:
+    cleaned = src.strip().split("?", 1)[0].split("#", 1)[0].lstrip("./").replace("\\", "/")
+    if not cleaned or ":" in cleaned.split("/")[0]:
+        return None
+    parts = [part for part in cleaned.split("/") if part not in {"", "."}]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    candidates = [cwd.joinpath(*parts), html_origin.parent.joinpath(*parts)]
+    name = parts[-1]
+    if name:
+        for path in cwd.rglob(name):
+            relative = path.relative_to(cwd)
+            if any(part in _IGNORED_NAMES for part in relative.parts):
+                continue
+            if any(relative.parts[-1].startswith(prefix) for prefix in _IGNORED_PREFIXES):
+                continue
+            if is_regular_file(path):
+                candidates.append(path)
+    root = cwd.resolve()
+    for candidate in candidates:
+        try:
+            candidate.resolve().relative_to(root)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _inline_external_scripts(cwd: Path, html_origin: Path, html: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        src = match.group(1).strip()
+        if src.lower().startswith(_REMOTE_SRC_PREFIXES):
+            return match.group(0)
+        asset = _resolve_workspace_asset(cwd, html_origin, src)
+        if asset is None:
+            return match.group(0)
+        body = _read_text(asset)
+        return f"<script>\n{body}\n</script>"
+
+    return _SCRIPT_SRC.sub(replace, html)
+
+
+def _data_uri_for(path: Path) -> str:
+    suffix = path.suffix.lower()
+    mime = "image/webp" if suffix == ".webp" else (mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+
+
+def _inline_local_media(cwd: Path, html_origin: Path, html: str) -> str:
+    def img_replace(match: re.Match[str]) -> str:
+        src = match.group(2).strip()
+        if src.lower().startswith(_REMOTE_SRC_PREFIXES):
+            return match.group(0)
+        asset = _resolve_workspace_asset(cwd, html_origin, src)
+        if asset is None or asset.suffix.lower() not in _MEDIA_SUFFIXES:
+            return match.group(0)
+        return f"{match.group(1)}{_data_uri_for(asset)}{match.group(3)}"
+
+    def css_replace(match: re.Match[str]) -> str:
+        src = match.group(1).strip()
+        if src.lower().startswith(_REMOTE_SRC_PREFIXES):
+            return match.group(0)
+        asset = _resolve_workspace_asset(cwd, html_origin, src)
+        if asset is None or asset.suffix.lower() not in _MEDIA_SUFFIXES:
+            return match.group(0)
+        return f"url('{_data_uri_for(asset)}')"
+
+    return _CSS_URL.sub(css_replace, _IMG_SRC.sub(img_replace, html))
+
+
+def resolve_static_page_background(text: str = "", *, environ: dict[str, str] | None = None) -> Path | None:
+    env = environ if environ is not None else os.environ
+    candidates: list[Path] = []
+    raw = str(env.get(STATIC_PAGE_BACKGROUND_ENV) or "").strip().strip('"')
+    if raw:
+        candidates.append(Path(raw))
+    for match in _WINDOWS_MEDIA.finditer(text or ""):
+        candidates.append(Path(match.group("path")))
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def stage_static_page_background(cwd: Path, plate: Path) -> Path:
+    dest = Path(cwd) / f"{ELENA_BACKGROUND_STEM}{plate.suffix.lower() or '.webp'}"
+    shutil.copy2(plate, dest)
+    return dest
+
+
+def _inject_living_background(html: str, filename: str) -> str:
+    if filename in html or "data:image/" in html:
+        return html
+    scene = (
+        f'<div class="fs-elena-scene" aria-hidden="true"><img src="{filename}" alt=""></div>'
+        "<style>.fs-elena-scene{position:fixed;inset:0;overflow:hidden;z-index:0}"
+        ".fs-elena-scene img{position:absolute;inset:-8%;width:116%;height:116%;object-fit:cover;"
+        "animation:fs-elena-drift 32s ease-in-out infinite alternate}"
+        "@keyframes fs-elena-drift{from{transform:translate3d(-3%,-1%,0) scale(1.02)}"
+        "to{transform:translate3d(2%,2%,0) scale(1.1)}}"
+        "@media (prefers-reduced-motion:reduce){.fs-elena-scene img{animation:none}}"
+        "body{margin:0}.fs-elena-fg{position:relative;z-index:1}</style>"
+    )
+    lowered = html.lower()
+    body_at = lowered.find("<body")
+    if body_at == -1:
+        return scene + html
+    gt = html.find(">", body_at)
+    if gt == -1:
+        return scene + html
+    return html[: gt + 1] + scene + html[gt + 1 :]
+
+
+_ELENA_COVER_CSS = """/* fs-elena-cover */
+img.background, .fs-elena-scene img, img[src^="data:image"] {
+  position: fixed; inset: -8%; width: 116%; height: 116%; max-width: none;
+  object-fit: cover; z-index: 0; transform-origin: 50% 50%;
+}
+@keyframes kenburns {
+  from { transform: scale(1.02) translate3d(-2%, -1%, 0); }
+  to { transform: scale(1.1) translate3d(2%, 2%, 0); }
+}
+.content-card, .card, .fs-elena-fg { position: relative; z-index: 1; }
+html, body { margin: 0; min-height: 100%; overflow: hidden; }
+"""
+
+
+def _ensure_cover_css(html: str) -> str:
+    if "fs-elena-cover" in html:
+        return html
+    snippet = f"<style>{_ELENA_COVER_CSS}</style>"
+    close = html.lower().rfind("</head>")
+    if close == -1:
+        return snippet + html
+    return html[:close] + snippet + html[close:]
+
+
+def finish_static_page_background(cwd: Path, filename: str = f"{ELENA_BACKGROUND_STEM}.webp") -> None:
+    page = Path(cwd) / STATIC_PAGE_FILENAME
+    plate = Path(cwd) / filename
+    if not page.is_file():
+        return
+    html = _read_text(page)
+    if plate.is_file():
+        html = _inject_living_background(html, filename)
+    html = _ensure_cover_css(html)
+    page.write_text(html if html.endswith("\n") else html + "\n", encoding="utf-8")
+
+
+def _remove_empty_dirs(cwd: Path) -> None:
+    dirs = sorted((path for path in cwd.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True)
+    for path in dirs:
+        relative = path.relative_to(cwd)
+        if any(part in _IGNORED_NAMES for part in relative.parts):
+            continue
+        try:
+            path.rmdir()
+        except OSError:
+            continue
+
+
+def reconcile_static_page_workspace(cwd: Path) -> tuple[str, ...]:
+    """Promote the richest HTML to root index.html and delete sibling sources.
+
+    Coding backends used here can only write, never delete. A repair that emits
+    src/index.html plus src/main.js would otherwise fail inspect_static_page_files
+    on every later attempt.
+    """
+    root = Path(cwd)
+    files = _delivered_files(root)
+    html_relatives = [item for item in files if item.suffix.lower() in _HTML_SUFFIXES]
+    if not html_relatives:
+        return ()
+
+    scored = []
+    for relative in html_relatives:
+        path = root / relative
+        scored.append((_html_score(_read_text(path)), relative, path))
+    scored.sort(key=lambda item: (-item[0], 0 if item[1].as_posix() == STATIC_PAGE_FILENAME else 1))
+    _best_score, best_relative, best_path = scored[0]
+    html = _inline_local_media(root, best_path, _inline_external_scripts(root, best_path, _read_text(best_path)))
+    target = root / STATIC_PAGE_FILENAME
+    target.write_text(html if html.endswith("\n") else html + "\n", encoding="utf-8")
+
+    removed: list[str] = []
+    keep = {STATIC_PAGE_FILENAME}
+    for relative in _delivered_files(root):
+        name = relative.as_posix()
+        if name in keep:
+            continue
+        suffix = relative.suffix.lower()
+        if suffix in _HTML_SUFFIXES or suffix in _SOURCE_SUFFIXES or suffix in _MEDIA_SUFFIXES or relative.name in _BUILD_CONFIG_NAMES:
+            path = root / relative
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed.append(name)
+    _remove_empty_dirs(root)
+    return tuple(removed)
+
+
 _SERVER_SCRIPT = f"""import http from 'node:http';
 import {{ readFile }} from 'node:fs/promises';
 import {{ extname, join, normalize }} from 'node:path';
@@ -151,7 +405,29 @@ http.createServer(async (req, res) => {{
 """
 
 
-_CHECK_SCRIPT = f"""import {{ chromium }} from 'playwright';
+def _build_check_script(*, require_webgl: bool = True) -> str:
+    webgl_failures = ""
+    if require_webgl:
+        webgl_failures = """  if (!canvas) {
+    failures.push('The page has no <canvas> element, so nothing is being rendered.');
+  } else {
+    if (canvas.w < 2 || canvas.h < 2) failures.push(`The canvas is ${canvas.w}x${canvas.h}px -- it is not sized to be visible.`);
+    if (canvas.context === 'none') failures.push('The canvas has no working WebGL context (getContext returned null).');
+  }
+  if (first.drawCalls === 0) {
+    failures.push('Zero WebGL draw calls: a canvas exists but the scene never drew anything. Check that the renderer runs and the geometry is added to the scene.');
+  }
+  if (second.drawCalls <= first.drawCalls) {
+    failures.push('Draw calls stopped after the first frames -- the page rendered once and froze. Keep a requestAnimationFrame loop running so the scene stays alive.');
+  }
+  if (fps < MIN_FPS) {
+    failures.push(`The animation loop ran at ${fps.toFixed(1)} fps (needs at least ${MIN_FPS} even on software rendering). Reduce per-frame work: fewer draw calls, smaller geometry, cheaper materials.`);
+  }
+  if (unbacked.length > 0) {
+    failures.push(`Text sits directly over the 3D scene with no backing surface or text shadow: "${unbacked.join('", "')}". Contrast over a moving scene is not measurable -- put it on a frosted/solid panel or give it a text shadow.`);
+  }
+"""
+    return f"""import {{ chromium }} from 'playwright';
 
 const TARGET_URL = 'http://localhost:{_PORT}/{STATIC_PAGE_FILENAME}';
 const SCREENSHOT_PATH = {SCREENSHOT_FILENAME!r};
@@ -315,27 +591,10 @@ async function main() {{
   await browser.close();
 
   const failures = [];
-  if (!canvas) {{
-    failures.push('The page has no <canvas> element, so nothing is being rendered.');
-  }} else {{
-    if (canvas.w < 2 || canvas.h < 2) failures.push(`The canvas is ${{canvas.w}}x${{canvas.h}}px -- it is not sized to be visible.`);
-    if (canvas.context === 'none') failures.push('The canvas has no working WebGL context (getContext returned null).');
-  }}
-  if (first.drawCalls === 0) {{
-    failures.push('Zero WebGL draw calls: a canvas exists but the scene never drew anything. Check that the renderer runs and the geometry is added to the scene.');
-  }}
-  if (second.drawCalls <= first.drawCalls) {{
-    failures.push('Draw calls stopped after the first frames -- the page rendered once and froze. Keep a requestAnimationFrame loop running so the scene stays alive.');
-  }}
-  if (fps < MIN_FPS) {{
-    failures.push(`The animation loop ran at ${{fps.toFixed(1)}} fps (needs at least ${{MIN_FPS}} even on software rendering). Reduce per-frame work: fewer draw calls, smaller geometry, cheaper materials.`);
-  }}
+{webgl_failures}
   const foreign = hosts.filter((host) => !ALLOWED_HOSTS.includes(host));
   if (foreign.length > 0) {{
     failures.push(`Assets loaded from hosts that are not allowed: ${{foreign.join(', ')}}. Allowed: ${{ALLOWED_HOSTS.join(', ')}} -- everything else must be inline or a data: URI.`);
-  }}
-  if (unbacked.length > 0) {{
-    failures.push(`Text sits directly over the 3D scene with no backing surface or text shadow: "${{unbacked.join('", "')}}". Contrast over a moving scene is not measurable -- put it on a frosted/solid panel or give it a text shadow.`);
   }}
   if (desktop.overflow > 1) failures.push(`The page scrolls horizontally at 1280px (overflowing by ${{desktop.overflow}}px).`);
   if (tablet.overflow > 1) failures.push(`The page scrolls horizontally at 768px (overflowing by ${{tablet.overflow}}px). Make the layout fit a tablet.`);
@@ -365,6 +624,9 @@ main().catch((err) => {{
 """
 
 
+_CHECK_SCRIPT = _build_check_script(require_webgl=True)
+
+
 _SHELL_COMMAND = (
     f"npm install --no-save --no-package-lock --no-audit --no-fund playwright@{PLAYWRIGHT_NPM_VERSION} >/dev/null 2>&1 && "
     f"(node {_SERVER_FILENAME} >/tmp/freelancerstudio-static-server.log 2>&1 &) && "
@@ -382,6 +644,7 @@ def run_static_page_check_in_docker(
     *,
     timeout_seconds: int = DEFAULT_STATIC_PAGE_CHECK_TIMEOUT_SECONDS,
     docker_client_factory=None,
+    require_webgl: bool = True,
 ) -> QAOutcome:
     """`Callable[[tuple[str, ...], Path], QAOutcome]`, so it drops into run_qa_repair_loop
     exactly like the web-app gates do. `qa_commands` is a human-readable label only; what
@@ -411,7 +674,7 @@ def run_static_page_check_in_docker(
     check_path = cwd / _CHECK_FILENAME
     try:
         server_path.write_text(_SERVER_SCRIPT, encoding="utf-8")
-        check_path.write_text(_CHECK_SCRIPT, encoding="utf-8")
+        check_path.write_text(_build_check_script(require_webgl=require_webgl), encoding="utf-8")
         return run_qa_commands_in_docker(
             (_SHELL_COMMAND,),
             cwd,

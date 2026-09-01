@@ -9,6 +9,7 @@ import VideoGenerationPage from '../features/video-generation/VideoGenerationPag
 import PresentationGeneratorPage from '../features/presentation-generator/PresentationGeneratorPage.jsx';
 import TeamChatPage from '../features/collaboration/TeamChatPage.jsx';
 
+const CORE_NAV_IDS = new Set(['overview', 'create-project', 'projects', 'logs', 'settings']);
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'OV' },
   { id: 'create-project', label: 'Create Project', icon: 'CP' },
@@ -61,14 +62,29 @@ export default function StudioDashboard({
   const [activeView, setActiveView] = useState('overview');
   const [sandboxOpened, setSandboxOpened] = useState(false);
   const [recentOrders, setRecentOrders] = useState(null);
+  const [showExperimental, setShowExperimental] = useState(false);
   const agentEntries = getAgentEntries(agents);
 
   const eventRows = (logs || []).slice(0, 7);
 
   useEffect(() => {
+    fetch(`http://localhost:${activePort}/api/config/system`)
+      .then(r => r.json())
+      .then(data => setShowExperimental(Boolean(data.show_experimental)))
+      .catch(() => setShowExperimental(false));
+  }, [activePort]);
+
+  useEffect(() => {
     if (activeView !== 'overview') return;
     orderWorkflowApi.listOrders().then(data => setRecentOrders(data?.orders || [])).catch(() => setRecentOrders([]));
   }, [activeView]);
+
+  const visibleNavItems = navItems.filter(item => showExperimental || CORE_NAV_IDS.has(item.id));
+
+  useEffect(() => {
+    if (showExperimental || CORE_NAV_IDS.has(activeView) || activeView === 'info') return;
+    setActiveView('overview');
+  }, [showExperimental, activeView]);
 
   const openProject = (orderId) => {
     localStorage.setItem(ORDER_STORAGE_KEY, orderId);
@@ -95,7 +111,7 @@ export default function StudioDashboard({
           </div>
         </div>
         <nav className="fs-nav">
-          {navItems.map(item => (
+          {visibleNavItems.map(item => (
             <button
               key={item.id}
               type="button"
@@ -168,7 +184,7 @@ function OverviewHero({ onNewProject, orders, onOpenProject, onViewAllProjects }
         <div>
           <span className="fs-eyebrow">Workspace Overview</span>
           <h1>{hasOrders ? `${orders.length} project${orders.length === 1 ? '' : 's'} in this workspace` : 'Start a project to activate the studio'}</h1>
-          <p>{hasOrders ? 'Pick up where you left off, or start a new AI order.' : 'Create an AI order to generate a new project, or use Knowledge Base, Marketplace, AI Video, and AI Presentations from the sidebar.'}</p>
+          <p>{hasOrders ? 'Pick up where you left off, or start a new AI order.' : 'Create an AI order to generate a new project. Frozen tools stay hidden until you enable experimental features in Settings.'}</p>
         </div>
         <div className="fs-hero-actions">
           <button type="button" className="fs-primary" onClick={onNewProject}>Create Project</button>

@@ -6,6 +6,7 @@ import re
 from .execution_plan import build_prompt
 from .models import AgentHandoff, ProjectBrief
 from .phase_context import PhaseContext
+from .website_generation import _CINEMATIC_KEYWORDS, detect_cinematic_website_intent
 
 _FAIL_CLOSED_REASONING = "The brief names an audience this rule set does not recognise; defaulting to requiring a backend for safety."
 
@@ -335,6 +336,25 @@ STATIC_PAGE_ALLOWED_HOSTS: tuple[str, ...] = (
 STATIC_PAGE_MAX_BYTES = 1_000_000
 
 
+def static_page_requires_webgl(brief: ProjectBrief, handoff: AgentHandoff | None = None) -> bool:
+    """WebGL is the gate for cinematic/3D pages, not for a one-file card or landing copy.
+
+    detect_cinematic_website_intent only reads goal/frontend/visual_direction. A static-page
+    brief often puts the 3D signal in core_features ('orbiting 3D scene'), so the prompt and
+    the check have to look there too or a nature scene would be asked for WebGL by tests and
+    then not by the live gate -- or the other way around.
+    """
+    if detect_cinematic_website_intent(brief):
+        return True
+    parts = [brief.goal, brief.recommended_stack.frontend, *brief.core_features, *brief.acceptance_criteria]
+    if brief.elena_design_concept is not None:
+        parts.append(brief.elena_design_concept.visual_direction)
+    if handoff is not None:
+        parts.extend([handoff.goal, handoff.context_summary, *handoff.requirements, *handoff.acceptance_criteria])
+    haystack = " ".join(part for part in parts if part).lower()
+    return any(keyword in haystack for keyword in _CINEMATIC_KEYWORDS)
+
+
 def build_static_page_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additions: str = "") -> str:
     """One self-contained .html file -- a creative/interactive page, not a smaller web app.
 
@@ -352,6 +372,54 @@ def build_static_page_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, addi
     """
     addition_text = " ".join(additions.split()) if additions else ""
     requirements = handoff.requirements or brief.core_features
+    cinematic = static_page_requires_webgl(brief, handoff)
+    shared_rules = [
+        f"- Exactly one HTML file, named {STATIC_PAGE_FILENAME}. Do not create .js or .css files "
+        "next to it, and do not add a package.json or any build config. Overwrite that one file "
+        "if you need to change it; do not add src/ or a second HTML file.",
+        "- Libraries may be imported only from these hosts: "
+        + ", ".join(STATIC_PAGE_ALLOWED_HOSTS)
+        + ". Everything else must be inline or a data: URI. No other remote hosts, and no "
+        "external image files -- generate textures procedurally, draw them on a canvas, or "
+        "inline a tiny data: URI placeholder.",
+        f"- Keep the finished file under {STATIC_PAGE_MAX_BYTES // 1000} KB.",
+    ]
+    if cinematic:
+        shape_rules = [
+            "- The page must render into a <canvas> with a working WebGL context, and must actually "
+            "issue draw calls: a canvas that stays empty fails the gate that follows this phase.",
+            "- The animation loop must keep running after load (requestAnimationFrame), so the scene "
+            "is measurably still moving a second later, not a single static frame.",
+            "- No uncaught errors and no console errors, at any point during load or the first "
+            "seconds of interaction.",
+            "- No horizontal scrolling at 1280px or at 768px wide, and every interactive element "
+            "must be at least 24x24px at 768px.",
+            "- Any text sitting over the 3D scene must have its own backing surface -- a frosted or "
+            "solid panel, or at minimum a text shadow. Text painted directly onto a moving scene "
+            "has no measurable contrast, and the gate rejects it.",
+            "- Comment the code: what each section of the scene setup does, and why non-obvious "
+            "numbers were chosen.",
+        ]
+    else:
+        shape_rules = [
+            "- Do not add WebGL or Three.js unless the client asked for a 3D or cinematic scene.",
+            "- Put the client's copy and controls in real HTML elements (headings, paragraphs, buttons), "
+            "not as textures on a canvas.",
+            "- JavaScript must be valid: no top-level return, no broken syntax, no references to files "
+            "that do not exist.",
+            "- No uncaught errors and no console errors, at any point during load or the first "
+            "seconds of interaction.",
+            "- No horizontal scrolling at 1280px or at 768px wide, and every interactive element "
+            "must be at least 24x24px at 768px.",
+        ]
+        if brief.elena_design_concept is not None:
+            shape_rules.insert(
+                0,
+                "- Elena animates the client plate: if elena_background.webp is in the workspace, use "
+                "<img src=\"elena_background.webp\"> as a full-viewport background. Slow Ken Burns "
+                "(~30s), breathing sunlight, optional 2d-canvas water glints, frosted/solid panel for "
+                "all text, and freeze motion when prefers-reduced-motion is set.",
+            )
     lines = [
         f"Build ONE self-contained file, {STATIC_PAGE_FILENAME}, at the project root. This is NOT "
         "a React/Vite project and NOT an npm project: no build step, no bundler, no framework "
@@ -370,35 +438,38 @@ def build_static_page_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, addi
         "Visual direction: follow the client's own description above -- the colours, mood and "
         "typography they asked for are authoritative. Do not substitute a different palette.",
         "",
+        *(_elena_static_page_lines(brief, handoff)),
         "Strict rules for this phase (these take precedence over the client's additional notes above):"
         if addition_text
         else "Strict rules for this phase:",
-        f"- Exactly one HTML file, named {STATIC_PAGE_FILENAME}. Do not create .js or .css files "
-        "next to it, and do not add a package.json or any build config.",
-        "- Libraries may be imported only from these hosts: "
-        + ", ".join(STATIC_PAGE_ALLOWED_HOSTS)
-        + ". Everything else must be inline or a data: URI. No other remote hosts, and no "
-        "external image files -- generate textures procedurally, draw them on a canvas, or "
-        "inline a tiny data: URI placeholder.",
-        f"- Keep the finished file under {STATIC_PAGE_MAX_BYTES // 1000} KB.",
-        "- The page must render into a <canvas> with a working WebGL context, and must actually "
-        "issue draw calls: a canvas that stays empty fails the gate that follows this phase.",
-        "- The animation loop must keep running after load (requestAnimationFrame), so the scene "
-        "is measurably still moving a second later, not a single static frame.",
-        "- No uncaught errors and no console errors, at any point during load or the first "
-        "seconds of interaction.",
-        "- No horizontal scrolling at 1280px or at 768px wide, and every interactive element "
-        "must be at least 24x24px at 768px.",
-        "- Any text sitting over the 3D scene must have its own backing surface -- a frosted or "
-        "solid panel, or at minimum a text shadow. Text painted directly onto a moving scene "
-        "has no measurable contrast, and the gate rejects it.",
-        "- Comment the code: what each section of the scene setup does, and why non-obvious "
-        "numbers were chosen.",
+        *shared_rules,
+        *shape_rules,
         "",
         "Do not expose secrets in logs, reports, or generated files.",
         f"After {STATIC_PAGE_FILENAME} is complete, stop and exit. Do not keep rewriting it.",
     ]
     return "\n".join(lines)
+
+
+def _elena_static_page_lines(brief: ProjectBrief, handoff: AgentHandoff) -> list[str]:
+    lines: list[str] = []
+    concept = brief.elena_design_concept
+    if concept is not None:
+        lines.extend(
+            [
+                "Elena's approved visual concept (motion and backing; do not replace the client's copy):",
+                f"- Direction: {concept.visual_direction}",
+                f"- Layout: {concept.layout}",
+                *[f"- {note}" for note in concept.accessibility_notes],
+                "",
+            ]
+        )
+    preview_lines = tuple(handoff.design_preview_summary or ())
+    if preview_lines:
+        lines.append("Elena design-preview notes:")
+        lines.extend(f"- {item}" for item in preview_lines[:12])
+        lines.append("")
+    return lines
 
 
 def build_bot_prompt(brief: ProjectBrief, handoff: AgentHandoff) -> str:

@@ -11,7 +11,7 @@ from .models import StrictDomainModel
 from .production_adapter import live_opencode_execution_enabled
 
 
-LOCAL_NO_KEY_PROVIDERS = frozenset({"ollama", "opencode", "opencode_bridge", "claude_code"})
+LOCAL_NO_KEY_PROVIDERS = frozenset({"ollama", "opencode", "opencode_bridge", "claude_code", "grok", "grok_cli"})
 SUPPORTED_EXECUTION_PROVIDERS = frozenset({*secret_store.PROVIDER_ENV_NAMES, *LOCAL_NO_KEY_PROVIDERS})
 
 
@@ -97,7 +97,7 @@ class ExecutionConfigurationProvider:
             model=self.get_model_status(config),
             opencode=self.get_opencode_status(),
             workspace=self.get_workspace_status(),
-            live_opt_in=self.get_live_opt_in_status(),
+            live_opt_in=self.get_live_opt_in_status(config),
         )
 
     @property
@@ -155,10 +155,16 @@ class ExecutionConfigurationProvider:
             return WorkspaceStatus(code="workspace_not_writable", root=root.name or "generated_projects", available=True, writable=False, message="Generated projects workspace is not writable.")
         return WorkspaceStatus(code="workspace_ready", root=root.name or "generated_projects", available=True, writable=True, message=f"{root.name or 'generated_projects'} is writable.")
 
-    def get_live_opt_in_status(self) -> LiveOptInStatus:
-        if live_opencode_execution_enabled(self._environ):
+    def get_live_opt_in_status(self, config: dict | None = None) -> LiveOptInStatus:
+        loaded = config if config is not None else self._config_loader()
+        if live_opencode_execution_enabled(self._environ, loaded):
             return LiveOptInStatus(code="live_execution_opt_in_enabled", enabled=True, message="Live execution opt-in is enabled.")
-        return LiveOptInStatus(code="live_execution_opt_in_required", enabled=False, message="Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio.")
+        return LiveOptInStatus(
+            code="live_execution_opt_in_required",
+            enabled=False,
+            message="Enable Live coding execution in Settings, or set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1.",
+            action="Open Settings",
+        )
 
 
 def _selected_provider(config: dict | None, active_backend_probe: Callable[[], str] = None) -> str:
@@ -166,6 +172,8 @@ def _selected_provider(config: dict | None, active_backend_probe: Callable[[], s
         return ""
     system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
     global_ai = config.get("_global_ai", {}) if isinstance(config.get("_global_ai"), dict) else {}
+    if global_ai.get("connection_type") == "grok_subscription":
+        return "grok"
     if global_ai.get("connection_type") == "claude_subscription":
         # The claude-subscription connection template stores provider_id "anthropic" (the
         # vendor identity, shared with the plain API-key connection) even though it
@@ -192,7 +200,14 @@ def _selected_model(config: dict | None, active_backend_probe: Callable[[], str]
     bridge = _selected_opencode_bridge(config)
     if bridge:
         return str(bridge.get("configured_model") or "").strip()
-    return "claude/default" if (active_backend_probe or _active_cli_backend)() == "claude_code" else ""
+    backend = (active_backend_probe or _active_cli_backend)()
+    if backend == "claude_code":
+        return "claude/default"
+    if backend == "ollama":
+        return "qwen2.5-coder:14b"
+    if backend == "grok":
+        return "grok-4.6"
+    return ""
 
 
 def _active_cli_backend() -> str:

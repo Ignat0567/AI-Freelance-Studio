@@ -90,7 +90,7 @@ export default function OrderWorkflowPage({ active }) {
     setRecovering(true);
     loadOrder(orderId)
       .catch(() => {
-        setError('The backend restarted and this in-memory order is no longer available. Create a new order to continue.');
+        setError('This order could not be reloaded after the backend restarted. Create a new order to continue.');
         localStorage.removeItem(STORAGE_KEY);
       })
       .finally(() => mounted.current && setRecovering(false));
@@ -180,7 +180,7 @@ export default function OrderWorkflowPage({ active }) {
   const reviseDesignPreview = note => run(() => orderWorkflowApi.reviseDesignPreview(state.order.id, note));
   const canStartExecution = Boolean(state?.approval?.approved && state?.handoff_ready && !state?.execution && (!state?.design_preview_required || state?.design_preview?.approved));
   const startExecution = (mode = 'fake') => {
-    if (!canStartExecution) { setError('Approve the current brief and Elena design preview before starting simulated execution.'); return; }
+    if (!canStartExecution) { setError('Approve the current brief and Elena design preview before starting execution.'); return; }
     if (startInFlight.current) return;
     startInFlight.current = true;
     run(() => orderWorkflowApi.startExecution(state.order.id, mode, false)).finally(() => { startInFlight.current = false; });
@@ -191,8 +191,8 @@ export default function OrderWorkflowPage({ active }) {
     startExecution('production');
   };
   const startLive = () => {
-    if (!readiness?.can_run_live) { setError('Live execution is locked. Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio to enable it.'); return; }
-    if (!liveConfirm) { setError('Confirm live OpenCode execution before starting.'); return; }
+    if (!readiness?.can_run_live) { setError('Live execution is locked. Enable Live coding execution in Settings.'); return; }
+    if (!liveConfirm) { setError('Confirm the live build before starting.'); return; }
     run(() => orderWorkflowApi.startExecution(state.order.id, 'production', true));
   };
   const retryExecution = () => run(() => orderWorkflowApi.retryExecution(state.order.id));
@@ -213,7 +213,7 @@ export default function OrderWorkflowPage({ active }) {
     <section className="ow-page" aria-labelledby="ow-page-title">
       <div className="ow-hero">
         <div><span className="fs-eyebrow">MVP Core Workflow</span><h2 id="ow-page-title">Create Project</h2><p>{topStatus(state)}</p></div>
-        <div className="ow-mode"><strong>Simulation mode</strong><span>Fake executor only</span>{polling && <small>Polling execution...</small>}</div>
+        <div className="ow-mode"><strong>{state?.execution?.live ? 'Live build' : 'Order workflow'}</strong><span>{state?.execution?.live ? 'Grok spec + local Ollama' : 'Approve the brief, then start a live build'}</span>{polling && <small>Polling execution...</small>}</div>
       </div>
       <UsageSummaryBar usage={usageSummary} />
       {recovering && <div className="ow-callout" role="status">Reloading the last order from the local backend...</div>}
@@ -232,7 +232,7 @@ export default function OrderWorkflowPage({ active }) {
         />
       )}
       {step === 'execution' && <ExecutionDashboard state={state} readiness={readiness} pending={pending} canStart={canStartExecution} canDryRun={Boolean(readiness?.can_prepare_dry_run && canStartExecution)} canLive={Boolean(readiness?.can_run_live && canStartExecution)} liveConfirm={liveConfirm} setLiveConfirm={setLiveConfirm} onStart={() => startExecution('fake')} onDryRun={startDryRun} onLive={startLive} onCancel={() => run(() => orderWorkflowApi.cancelExecution(state.order.id))} onRefresh={() => loadOrder(state.order.id).catch(err => setError(cleanError(err)))} onRefreshReadiness={() => loadReadiness(state.order.id).catch(err => setError(cleanError(err)))} />}
-      {step === 'result' && <ExecutionResultPanel state={state} pending={pending} onRetry={retryExecution} onRevise={reviseExecution} onNewOrder={reset} onBackToBrief={() => setStep('brief')} />}
+      {step === 'result' && <ExecutionResultPanel state={state} pending={pending} onRetry={retryExecution} onRevise={reviseExecution} onNewOrder={reset} onBackToBrief={() => setStep('brief')} onOpenWorkspace={() => orderWorkflowApi.openWorkspace(state.order.id).catch(err => setError(cleanError(err, 'The project folder could not be opened.')))} />}
       {!state?.order && step !== 'new-order' && <div className="ow-callout warning">No current order is loaded. Use the new order screen to begin.</div>}
     </section>
   );

@@ -287,15 +287,17 @@ def test_ui_acceptance_path_is_wired_without_renderer_token_or_hidden_pdf_execut
     assert "orderWorkflowApi.approveDesignPreview" in page
     assert "orderWorkflowApi.approveBrief" in page
     assert "Run simulation" in execution
+    assert "Start live build" in execution
     assert "Prepare production dry-run" in execution
     assert "orderWorkflowApi.startExecution" in page
     assert "orderWorkflowApi.cancelExecution" in page
     assert "orderWorkflowApi.getOrder" in page
     assert "Simulation mode" in execution
     assert "Simulated artifact" in result
+    assert "Delivery folder" in result
     assert "test_summary" in result
     assert "studio_order_workflow_last_order_id_v1" in page
-    assert "The backend restarted and this in-memory order is no longer available" in page
+    assert "This order could not be reloaded after the backend restarted" in page
     assert "startInFlight" in page
     assert "clearInterval" in page
     assert "approval?.approved" in page and "handoff_ready" in page

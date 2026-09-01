@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import re
 import subprocess
 import threading
@@ -371,27 +372,42 @@ class ConfiguredClaudeCodeExecutionClient:
         )
 
 
+def _requested_coding_backend() -> str:
+    return os.environ.get("FREELANCERSTUDIO_CODING_BACKEND", "").strip().lower()
+
+
 def active_coding_backend() -> str:
-    """Single source of truth for which coding CLI's own subscription is actually logged
-    in right now: 'claude_code', 'opencode_bridge', or '' if neither is ready. Deliberately
-    reads live CLI auth state instead of any of Studio's stored provider config, since a
-    stored flag can go stale (a subscription can lapse, or the config file a script wrote
-    to isn't even the one the running app reads) without Studio knowing. Claude Code is
-    preferred when both happen to be ready; there is no product requirement yet for a
-    user-facing priority choice between two simultaneously-active subscriptions.
+    """Which coding worker can actually run right now.
+
+    Claude Code is no longer preferred: an expired subscription still looks
+    'installed' and used to win over a working local Ollama. Default order is
+    Ollama (local coder), then OpenCode, then Claude. FREELANCERSTUDIO_CODING_BACKEND
+    pins the choice when set to ollama / opencode_bridge / claude_code.
     """
-    if ConfiguredClaudeCodeExecutionClient().check_readiness().ready:
-        return "claude_code"
+    requested = _requested_coding_backend()
+    from .ollama_code_client import ConfiguredOllamaExecutionClient
     from .service import ConfiguredOpenCodeExecutionClient  # local import: avoids a service<->client import cycle
 
-    if ConfiguredOpenCodeExecutionClient().check_readiness().ready:
-        return "opencode_bridge"
+    ready = {
+        "ollama": ConfiguredOllamaExecutionClient(expand_prompt=False).check_readiness().ready,
+        "opencode_bridge": ConfiguredOpenCodeExecutionClient().check_readiness().ready,
+        "claude_code": ConfiguredClaudeCodeExecutionClient().check_readiness().ready,
+    }
+    if requested in ready:
+        return requested if ready[requested] else ""
+    for backend in ("ollama", "opencode_bridge", "claude_code"):
+        if ready[backend]:
+            return backend
     return ""
 
 
 def select_coding_execution_client() -> OpenCodeExecutionClient:
+    from .ollama_code_client import ConfiguredOllamaExecutionClient
     from .service import ConfiguredOpenCodeExecutionClient  # local import: avoids a service<->client import cycle
 
-    if active_coding_backend() == "claude_code":
+    backend = active_coding_backend()
+    if backend == "ollama":
+        return ConfiguredOllamaExecutionClient()
+    if backend == "claude_code":
         return ConfiguredClaudeCodeExecutionClient()
     return ConfiguredOpenCodeExecutionClient()

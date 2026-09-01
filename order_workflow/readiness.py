@@ -45,6 +45,16 @@ CLAUDE_CODE_UNAVAILABLE = readiness_blocker(
     "Claude Code CLI is not installed or not logged in.",
 )
 
+OLLAMA_UNAVAILABLE = readiness_blocker(
+    "ollama_unavailable",
+    "Ollama is not reachable, or no coding model is installed. Start Ollama and pull qwen2.5-coder:14b.",
+)
+
+GROK_CLI_UNAVAILABLE = readiness_blocker(
+    "grok_cli_unavailable",
+    "Grok CLI is not installed or not logged in. Run `grok login`.",
+)
+
 WORKSPACE_UNAVAILABLE = readiness_blocker(
     "workspace_unavailable",
     "A writable project workspace is not available.",
@@ -67,8 +77,8 @@ QA_TOOLS_UNAVAILABLE = readiness_blocker(
 
 LIVE_EXECUTION_OPT_IN_REQUIRED = readiness_blocker(
     "live_execution_opt_in_required",
-    "Live execution is locked. Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio to enable it.",
-    "Restart Studio",
+    "Live execution is locked. Enable Live coding execution in Settings.",
+    "Open Settings",
 )
 
 UNSAFE_WORKSPACE_PATH = readiness_blocker(

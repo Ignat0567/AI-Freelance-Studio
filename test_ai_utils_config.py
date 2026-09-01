@@ -145,6 +145,44 @@ def test_every_selectable_provider_has_its_own_endpoint():
     assert missing == [], f"providers reachable in Settings with no endpoint of their own: {missing}"
 
 
+def test_grok_provider_uses_cli_bridge_not_an_http_worker(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        "grok_bridge.ask_grok_cli",
+        lambda system_prompt, user_prompt, model="": captured.update(system=system_prompt, user=user_prompt, model=model) or "from-cli",
+    )
+    calls = _capture_worker_invocation(monkeypatch)
+
+    result = ai_utils.ask_studio_ai_with_history(
+        "grok", "grok-4.6", "You are Elena.", [{"role": "user", "content": "pick a palette"}]
+    )
+
+    assert result == "from-cli"
+    assert captured["user"] == "pick a palette"
+    assert captured["model"] == "grok-4.6"
+    assert calls == []
+
+
+def test_xai_provider_uses_grok_cli_not_paid_http_api(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        "grok_bridge.ask_grok_cli",
+        lambda system_prompt, user_prompt, model="": captured.update(system=system_prompt, user=user_prompt, model=model) or "from-cli",
+    )
+    calls = _capture_worker_invocation(monkeypatch)
+
+    result = ai_utils.ask_studio_ai_with_history(
+        "xai", "grok-4.6", "system", [{"role": "user", "content": "hi"}]
+    )
+
+    assert result == "from-cli"
+    assert captured["user"] == "hi"
+    assert captured["model"] == "grok-4.6"
+    assert calls == []
+
+
 def test_google_requests_go_to_google_and_never_to_another_vendor(monkeypatch):
     calls = _capture_worker_invocation(monkeypatch)
 

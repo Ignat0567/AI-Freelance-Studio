@@ -41,7 +41,7 @@ import claude_bridge
 from .deployment import container_deploy_enabled
 from .docker_qa_runner import docker_engine_available
 from .models import ExecutionBlocker, StrictDomainModel
-from .readiness import ReadinessResult, readiness_blocker
+from .readiness import OLLAMA_UNAVAILABLE, ReadinessResult, readiness_blocker
 
 # Playwright's image ships Node 22; the toolchains generated projects use (Vite 6-8) need
 # at least 20.19. Below 20 nothing builds, so that is the blocking floor.
@@ -227,6 +227,24 @@ def _default_free_bytes(path: Path) -> int:
     return shutil.disk_usage(str(path)).free
 
 
+def probe_ollama_runtime(
+    *,
+    tags_probe: Callable[[], tuple[str, ...]] | None = None,
+) -> tuple[PreflightStatus, str, ExecutionBlocker | None]:
+    from .ollama_code_client import list_ollama_models, select_ollama_coding_model
+
+    try:
+        models = tags_probe() if tags_probe is not None else list_ollama_models()
+    except Exception as exc:
+        return "unknown", f"could not be probed ({exc})", None
+    if not models:
+        return "blocked", "Ollama has no models or is not reachable", OLLAMA_UNAVAILABLE
+    selected = select_ollama_coding_model(models)
+    if not selected:
+        return "blocked", "no coding-capable Ollama model is installed", OLLAMA_UNAVAILABLE
+    return "ok", selected, None
+
+
 def run_preflight(
     *,
     workspace_root: Path | None = None,
@@ -237,6 +255,7 @@ def run_preflight(
     free_bytes_probe: Callable[[Path], int] | None = None,
     docker_probe: Callable[[], bool] | None = None,
     check_credentials: bool = True,
+    ollama_tags_probe: Callable[[], tuple[str, ...]] | None = None,
     # Injected so a test exercising the 401 path does not spend the real backoff waiting.
     sleeper: Callable[[float], None] = time.sleep,
 ) -> PreflightReport:
@@ -251,7 +270,11 @@ def run_preflight(
         if blocker is not None:
             blockers.append(blocker)
 
-    if check_credentials:
+    coding_backend = (env.get("FREELANCERSTUDIO_CODING_BACKEND", "") or "").strip().lower()
+    if coding_backend == "ollama":
+        record("ollama_runtime", "Ollama local coder", probe_ollama_runtime(tags_probe=ollama_tags_probe))
+        checks.append(PreflightCheck(code="coding_cli_credentials", label="Coding CLI login", status="skipped", message="using local Ollama instead of a cloud coding CLI"))
+    elif check_credentials:
         record(
             "coding_cli_credentials",
             "Coding CLI login",

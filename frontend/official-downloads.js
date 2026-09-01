@@ -11,6 +11,7 @@ const OFFICIAL_DOWNLOAD_URLS = Object.freeze({
     'android-platform-tools': 'https://developer.android.com/tools/releases/platform-tools',
     docker: 'https://www.docker.com/products/docker-desktop/',
     ollama: 'https://ollama.com/download/windows',
+    grok: 'https://grok.com/',
     expo: 'https://docs.expo.dev/get-started/set-up-your-environment/',
     ios_simulator: 'https://developer.apple.com/xcode/resources/'
 });
@@ -27,6 +28,9 @@ const ALLOWED_DOWNLOAD_ORIGINS = new Set([
     'https://developer.android.com',
     'https://www.docker.com',
     'https://ollama.com',
+    'https://grok.com',
+    'https://console.x.ai',
+    'https://docs.x.ai',
     'https://docs.expo.dev',
     'https://developer.apple.com'
 ]);

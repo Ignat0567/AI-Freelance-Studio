@@ -129,6 +129,32 @@ def test_bot_order_brief_has_bot_product_type_and_no_elena_concept():
     assert brief.recommended_stack.frontend != "React + Vite"
 
 
+def test_static_page_brief_includes_elena_living_plate_concept():
+    clarification, briefs, _handoffs = _services()
+    order = _order(
+        "A single HTML page showing the name Mini Card and a button labelled Email.",
+        title="Mini Card",
+        product_type="static_page",
+        id="order_mini_card",
+    )
+    started = clarification.begin(order)
+    current_order, session = started.order, started.session
+    if any(question.id == "core-features" for question in current_order.questions):
+        answered = clarification.apply_answers(
+            current_order,
+            session,
+            (ClarificationAnswer(question_id="core-features", value="View Mini Card, read Local Studio test, click Email"),),
+        )
+        current_order, session = answered.order, answered.session
+    completed = clarification.use_recommended_defaults(current_order, session)
+    brief = briefs.generate(completed.order, completed.session)
+
+    assert brief.product_type.value == "static_page"
+    assert brief.elena_design_choice is ElenaDesignChoice.SHOW_ELENA_CONCEPT
+    assert brief.elena_design_concept is not None
+    assert "living client plate" in brief.elena_design_concept.visual_direction.casefold()
+
+
 def test_complete_web_description_creates_fewer_questions():
     sparse = AlexClarificationService(clock=lambda: NOW).begin(_order("Build an app.", title="Small app"))
     complete = AlexClarificationService(clock=lambda: NOW).begin(

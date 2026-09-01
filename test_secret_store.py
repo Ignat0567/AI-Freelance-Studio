@@ -26,6 +26,13 @@ def test_env_secret_store_reads_provider_api_key(monkeypatch):
     assert secret_store.get_secret("openai_key", {"openai_key": "sk-legacy-secret"}) == "sk-env-secret"
 
 
+def test_env_secret_store_reads_xai_api_key(monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "xai-env-secret")
+
+    assert secret_store.EnvSecretStore().get("xai_key") == "xai-env-secret"
+    assert secret_store.env_name_for_secret("xai_key") == "XAI_API_KEY"
+
+
 def test_legacy_secret_warning_is_safe(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

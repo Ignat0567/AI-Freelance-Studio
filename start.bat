@@ -1,5 +1,9 @@
 @echo off
 cd /d "%~dp0"
-call .venv\Scripts\activate.bat
-python main.py
-pause
+if not exist frontend\node_modules (
+  echo Install frontend dependencies first: cd frontend ^& npm install
+  pause
+  exit /b 1
+)
+cd frontend
+call npm start

@@ -59,7 +59,8 @@ AI_PROVIDER_MODELS = {
     "mistral": ["mistral-large-latest"],
     "deepseek": ["deepseek-chat"],
     "together": ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"],
-    "ollama": ["codellama", "llama3.1", "mistral"],
+    "ollama": ["qwen2.5-coder:14b", "codellama", "llama3.1", "mistral"],
+    "xai": ["grok-4.6", "grok-4.5"],
 }
 
 
@@ -72,6 +73,10 @@ MODEL_CAPABILITY_OVERRIDES = {
     },
     "anthropic": {
         "claude-sonnet-4-20250514": {"text_input": True, "image_input": True, "structured_output": False, "streaming": True, "tool_use": True},
+    },
+    "xai": {
+        "grok-4.6": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
+        "grok-4.5": {"text_input": True, "image_input": True, "structured_output": True, "streaming": True, "tool_use": True},
     },
 }
 
@@ -210,7 +215,7 @@ def _filter_supported_generation(provider: str, model: str, params: dict[str, An
 
 
 def _provider_credential_exists(data: dict, provider: str) -> bool:
-    return provider == "ollama" or bool(_provider_api_key(provider, data))
+    return provider in {"ollama", "grok", "grok_cli"} or bool(_provider_api_key(provider, data))
 
 
 def _provider_connection_id(provider: str) -> str:
@@ -413,6 +418,11 @@ _CLI_SUBSCRIPTION_MODEL_CATALOG: dict[str, dict[str, str]] = {
         "gemini/pro": "Gemini Pro",
         "gemini/flash": "Gemini Flash",
     },
+    "grok_subscription": {
+        "grok/default": "Default (CLI-selected)",
+        "grok/grok-4.6": "Grok 4.6",
+        "grok/grok-4.5": "Grok 4.5",
+    },
 }
 
 
@@ -462,7 +472,7 @@ def _frontend_provider_connections(data: dict | None = None) -> list[dict[str, A
 def _default_global_ai_config(data: dict | None = None) -> dict[str, Any]:
     source = data if data is not None else load_studio_keys()
     system = _get_saved_system_settings(source)
-    provider = str(system.get("global_provider") or "nvidia").lower()
+    provider = str(system.get("global_provider") or "grok").lower()
     model = str(system.get("global_model") or (AI_PROVIDER_MODELS.get(provider, [""])[0] if AI_PROVIDER_MODELS.get(provider) else ""))
     return {
         "connection_id": _provider_connection_id(provider),
@@ -653,6 +663,10 @@ def _cleanup_connection_assignments(data: dict, connection_id: str) -> None:
 
 
 def _test_provider_key(provider: str, key: str) -> tuple[bool, str]:
+    if provider in {"grok", "grok_cli"}:
+        import grok_bridge
+        result = grok_bridge.test_grok_readiness()
+        return bool(result.get("ready")), str(result.get("message") or "Grok CLI is not ready")
     if provider == "ollama":
         try:
             with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as resp:
@@ -670,10 +684,20 @@ def _test_provider_key(provider: str, key: str) -> tuple[bool, str]:
         "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}),
         "google": (f"https://generativelanguage.googleapis.com/v1beta/models?key={key}", {}),
         "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}),
+        "xai": ("https://api.x.ai/v1/models", {"Authorization": f"Bearer {key}"}),
     }
     url, headers = endpoints.get(provider, ("", {}))
-    if not url:
-        return False, "Unsupported provider test"
+    endpoints = {
+        "openai": ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {key}"}),
+        "nvidia": ("https://integrate.api.nvidia.com/v1/models", {"Authorization": f"Bearer {key}"}),
+        "groq": ("https://api.groq.com/openai/v1/models", {"Authorization": f"Bearer {key}"}),
+        "mistral": ("https://api.mistral.ai/v1/models", {"Authorization": f"Bearer {key}"}),
+        "deepseek": ("https://api.deepseek.com/models", {"Authorization": f"Bearer {key}"}),
+        "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}),
+        "google": (f"https://generativelanguage.googleapis.com/v1beta/models?key={key}", {}),
+        "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}),
+        "xai": ("https://api.x.ai/v1/models", {"Authorization": f"Bearer {key}"}),
+    }
     try:
         req = urllib.request.Request(url, headers={**headers, "User-Agent": "FreelancerStudio"})
         with urllib.request.urlopen(req, timeout=10) as resp:

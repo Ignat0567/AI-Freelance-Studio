@@ -21,6 +21,7 @@ PROVIDERS_URLS = {
     # Gemini's OpenAI-compatibility layer, so the shared f"{base_url}/chat/completions"
     # request shape and Bearer auth used by _ai_worker.py both apply unchanged.
     "google": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "xai": "https://api.x.ai/v1",
 }
 
 # Sampling support is explicitly filtered per transport instead of sending
@@ -37,6 +38,7 @@ PROVIDER_CAPABILITIES = {
     # top_k is deliberately False: Gemini itself supports topK, but it is not an OpenAI
     # parameter and this provider is reached through the OpenAI-compatibility endpoint.
     "google": {"top_p": True, "top_k": False, "image_input": True},
+    "xai": {"top_p": True, "top_k": False, "image_input": True},
 }
 
 _AI_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_ai_worker.py")
@@ -157,6 +159,17 @@ def ask_studio_ai_with_history(
             return f"OpenCode bridge error: {response.get('error_category', 'request_failed')}"
         if provider_lower == "claude_code":
             return _ask_claude_code_cli(system_prompt, chat_history)
+        if provider_lower in {"grok", "grok_cli", "xai"}:
+            # Same grok.exe / grok.com subscription as PowerShell. Do not send these
+            # providers to api.x.ai — that is a separate paid API product.
+            last_user = ""
+            for message in reversed(chat_history):
+                if message.get("role") == "user":
+                    content = message.get("content", "")
+                    last_user = content if isinstance(content, str) else ""
+                    break
+            import grok_bridge
+            return grok_bridge.ask_grok_cli(system_prompt, last_user, model=model_name)
         base_url = _resolve_base_url(provider_lower)
         if not base_url:
             return f"AI provider '{provider}' has no configured endpoint. Select a supported provider in Settings."

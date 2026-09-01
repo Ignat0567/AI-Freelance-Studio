@@ -4,6 +4,7 @@ from pathlib import Path
 def test_settings_modal_exposes_universal_provider_connection_layer():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
 
+    assert "GrokConnectionSetup" in source
     assert "AI Connections" in source
     assert "/api/provider-layer" in source
     assert "ExecutionBrief to ProviderAdapter to AgentEvent" in source
@@ -27,6 +28,8 @@ def test_settings_modal_offers_every_registered_connection_type_as_a_template():
     source = Path("frontend/src/components/SettingsModal.jsx").read_text(encoding="utf-8")
 
     for template_key in (
+        "'grok-subscription'",
+        "'xai-api-key'",
         "'openrouter-api-key'",
         "'lm-studio-local'",
         "'llama-cpp-server'",
@@ -37,6 +40,8 @@ def test_settings_modal_offers_every_registered_connection_type_as_a_template():
         assert template_key in source
 
     for connection_type in (
+        "grok_subscription",
+        "xai_api_key",
         "openrouter_api_key",
         "lm_studio_local",
         "llama_cpp_server",

@@ -125,9 +125,13 @@ class DesignPreviewService:
             brief_version=brief.revision,
             status=DesignPreviewStatus.DRAFT,
             product_type=brief.product_type,
-            concept_name=spec["concept_name"],
+            concept_name=spec["concept_name"] if brief.product_type is not ProductType.STATIC_PAGE else "Living single-file page",
             layout_type=kind,
-            visual_direction=spec["visual_direction"],
+            visual_direction=(
+                brief.elena_design_concept.visual_direction
+                if brief.product_type is ProductType.STATIC_PAGE and brief.elena_design_concept is not None
+                else spec["visual_direction"]
+            ),
             style_name=style_pack.name,
             style_spec=style_pack.spec,
             screens=spec["screens"],
@@ -135,7 +139,7 @@ class DesignPreviewService:
             empty_states=spec["empty_states"],
             error_states=spec["error_states"],
             accessibility_notes=spec["accessibility_notes"],
-            implementation_notes=(*spec["implementation_notes"], *_non_goal_notes(brief)),
+            implementation_notes=(*spec["implementation_notes"], *_static_page_elena_notes(brief), *_non_goal_notes(brief)),
             revision_notes=notes,
         )
 
@@ -253,6 +257,8 @@ def _brief_text(brief: ProjectBrief) -> str:
 
 
 def _select_layout(brief: ProjectBrief) -> LayoutArchetype:
+    if brief.product_type is ProductType.STATIC_PAGE:
+        return LayoutArchetype.SINGLE_PAGE_LANDING
     text = _brief_text(brief)
     if _has(text, "pdf", "document", "citation", "source page", "grounded answer", "voice chat"):
         return LayoutArchetype.THREE_PANEL_WORKSPACE
@@ -349,6 +355,16 @@ def _preview_spec(kind: LayoutArchetype, brief: ProjectBrief) -> dict[str, objec
         "accessibility_notes": common_accessibility,
         "implementation_notes": (f"Use the {kind.value} layout archetype.", f"Include regions: {', '.join(regions)}."),
     }
+
+
+def _static_page_elena_notes(brief: ProjectBrief) -> tuple[str, ...]:
+    if brief.product_type is not ProductType.STATIC_PAGE:
+        return ()
+    return (
+        "If elena_background.webp is in the workspace, use it as a full-viewport living background.",
+        "Animate the plate with slow Ken Burns, breathing light, and water glints; freeze when reduced-motion is set.",
+        "Put all copy on a frosted or solid card so contrast does not depend on the moving plate.",
+    )
 
 
 def _non_goal_notes(brief: ProjectBrief) -> tuple[str, ...]:

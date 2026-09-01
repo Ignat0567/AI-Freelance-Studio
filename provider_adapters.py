@@ -299,6 +299,29 @@ class ClaudeSubscriptionAdapter(CLISubscriptionAdapter):
     }
 
 
+class GrokSubscriptionAdapter(CLISubscriptionAdapter):
+    cli_names = ["grok.exe", "grok"]
+    login_args = ["login"]
+    logout_args = ["logout"]
+    status_args = ["models"]
+    run_args_prefix = ["--permission-mode", "plan", "--no-subagents", "--disable-web-search", "--output-format", "json", "-p"]
+    default_models = ["grok/default", "grok/grok-4.6", "grok/grok-4.5"]
+    model_display_names = {
+        "grok/default": "Default (CLI-selected)",
+        "grok/grok-4.6": "Grok 4.6",
+        "grok/grok-4.5": "Grok 4.5",
+    }
+
+    def binary(self) -> str:
+        explicit = self.connection.executable_path
+        if explicit and Path(explicit).is_file():
+            return explicit
+        home_cli = Path.home() / ".grok" / "bin" / "grok.exe"
+        if home_cli.is_file():
+            return str(home_cli)
+        return super().binary()
+
+
 class GeminiGoogleAccountAdapter(CLISubscriptionAdapter):
     cli_names = ["gemini.cmd", "gemini.exe", "gemini"]
     login_args = ["auth", "login"]
@@ -540,6 +563,12 @@ class OpenAIAPIAdapter(APIAdapter):
                 events.append(_event(AgentEventType.USAGE, "Usage reported", execution_id, _usage(u.get("prompt_tokens"), u.get("completion_tokens"), None, u.get("total_tokens"))))
         events.append(_event(AgentEventType.COMPLETED, "OpenAI API execution completed", execution_id, {"finish_reason": finish_reason, "attempt": attempt}))
         return events
+
+
+class XAIAPIAdapter(OpenAIAPIAdapter):
+    base_url = "https://api.x.ai"
+    provider_name = "xai"
+    default_models = ["xai/grok-4.6", "xai/grok-4.5"]
 
 
 class OpenRouterAPIAdapter(OpenAIAPIAdapter):
@@ -849,8 +878,10 @@ def register_default_adapters() -> None:
     registrations = {
         ConnectionType.CODEX_CHATGPT_SUBSCRIPTION: CodexChatGPTSubscriptionAdapter,
         ConnectionType.CLAUDE_SUBSCRIPTION: ClaudeSubscriptionAdapter,
+        ConnectionType.GROK_SUBSCRIPTION: GrokSubscriptionAdapter,
         ConnectionType.GEMINI_GOOGLE_ACCOUNT: GeminiGoogleAccountAdapter,
         ConnectionType.OPENAI_API_KEY: OpenAIAPIAdapter,
+        ConnectionType.XAI_API_KEY: XAIAPIAdapter,
         ConnectionType.ANTHROPIC_API_KEY: AnthropicAPIAdapter,
         ConnectionType.GEMINI_API_KEY: GeminiAPIAdapter,
         ConnectionType.OPENROUTER_API_KEY: OpenRouterAPIAdapter,

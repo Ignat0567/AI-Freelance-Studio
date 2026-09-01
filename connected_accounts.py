@@ -12,6 +12,8 @@ PLATFORMS = {
     "openai": {"name": "OpenAI", "icon": "🤖", "auth_type": "api_key", "url": "https://platform.openai.com/api-keys"},
     "nvidia": {"name": "NVIDIA AI", "icon": "🟢", "auth_type": "api_key", "url": "https://build.nvidia.com"},
     "ollama": {"name": "Ollama", "icon": "🦙", "auth_type": "local", "url": "https://ollama.com"},
+    "xai": {"name": "Grok (xAI)", "icon": "✦", "auth_type": "api_key", "url": "https://console.x.ai"},
+    "grok": {"name": "Grok Subscription", "icon": "✦", "auth_type": "local", "url": "https://grok.com"},
 }
 
 ACCOUNT_METADATA_FIELDS = (

@@ -11,6 +11,8 @@ LEGACY_PROVIDER_TO_TYPE = {
     "anthropic": ConnectionType.ANTHROPIC_API_KEY.value,
     "google": ConnectionType.GEMINI_API_KEY.value,
     "ollama": ConnectionType.OLLAMA_LOCAL.value,
+    "xai": ConnectionType.XAI_API_KEY.value,
+    "grok": ConnectionType.GROK_SUBSCRIPTION.value,
 }
 
 
@@ -66,10 +68,10 @@ def migrate_provider_connections(config: dict[str, Any], credential_store: Provi
                 connection_id=connection_id,
                 provider_id=provider,
                 connection_type=LEGACY_PROVIDER_TO_TYPE[provider],
-                auth_method=AuthMethod.LOCAL.value if provider == "ollama" else AuthMethod.API_KEY.value,
-                display_name=f"{provider.upper()} {'local' if provider == 'ollama' else 'API'}",
+                auth_method=AuthMethod.DELEGATED_CLI_LOGIN.value if provider == "grok" else AuthMethod.LOCAL.value if provider == "ollama" else AuthMethod.API_KEY.value,
+                display_name="Grok Subscription" if provider == "grok" else f"{provider.upper()} {'local' if provider == 'ollama' else 'API'}",
                 model_id=model,
-                credential_reference="" if provider == "ollama" else ref,
+                credential_reference="" if provider in {"ollama", "grok"} else ref,
                 endpoint="http://127.0.0.1:11434" if provider == "ollama" else "",
                 metadata={"source": "legacy_system_provider"},
                 ).to_dict())

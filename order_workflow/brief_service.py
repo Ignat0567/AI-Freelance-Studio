@@ -296,17 +296,12 @@ def verify_brief_approval(brief: ProjectBrief) -> bool:
 
 
 def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType = ProductType.WEB_APP, described: str = "") -> ElenaDesignConcept | None:
-    if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT or product_type in {ProductType.BOT, ProductType.STATIC_PAGE}:
+    if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT or product_type is ProductType.BOT:
         # A bot has no screens/light-dark theme -- there is nothing for Elena's visual
         # design concept to describe. In practice, product_type BOT orders never reach
         # SHOW_ELENA_CONCEPT in the first place (see clarification.py's ui_required
         # signal), but this stays correct even if that ever changes.
         #
-        # A static page is excluded for the opposite reason: it is nothing but visual
-        # design, and the design is the client's. Its pipeline enforces no palette (see
-        # build_static_page_prompt), so a concept attached here would be a decoration no
-        # prompt and no gate ever reads -- visible in the UI, inert in the build, and
-        # contradicting the art direction the order actually asked for.
         return None
     # The palette comes from the style the order describes, not from a constant. It used to
     # be this exact pale blue for every web_app ever ordered -- which meant an order asking
@@ -320,6 +315,22 @@ def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType =
     # described palette has to go; the dark slot keeps it dark rather than flipping back.
     dark_by_default = wants_dark_ground(described)
     default_theme = style.dark_theme if dark_by_default else style.light_theme
+    if product_type is ProductType.STATIC_PAGE:
+        # Palette is still not a gate here (see build_static_page_prompt). Elena's job on a
+        # single-file page is motion: turn a still plate into a living background and keep
+        # the client's copy readable on a backing surface.
+        return ElenaDesignConcept(
+            visual_direction="Living client plate: slow camera drift, breathing light, water glints; frosted card for copy.",
+            layout="Full-viewport animated background with a centered frosted content card for title, sentence, and action.",
+            screens=("Single living page",),
+            components=("Animated background plate", "Frosted content card", "Primary action"),
+            light_theme=default_theme,
+            dark_theme=style.dark_theme,
+            accessibility_notes=(
+                "Keep all text on a frosted or solid panel so contrast does not depend on the moving plate.",
+                "Honor prefers-reduced-motion by freezing the plate and any sparkle loop.",
+            ),
+        )
     return ElenaDesignConcept(
         visual_direction=style.name,
         layout="A focused responsive workspace with clear intake, content, action, and status regions.",

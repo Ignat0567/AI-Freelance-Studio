@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from order_workflow.execution_config import ExecutionConfigurationProvider
+from order_workflow.workspace import delivery_files_in, find_workspace_for_order, reserve_owned_project_workspace
 
 
 pytestmark = pytest.mark.unit
@@ -39,6 +40,11 @@ def test_provider_missing_secret_present_and_local_no_key_modes(tmp_path):
     local = _provider({"_system": {"global_provider": "ollama", "global_model": "codellama"}}, workspace_root=tmp_path).snapshot()
     assert local.provider.code == "provider_configured"
     assert local.provider.secret_required is False
+
+    grok = _provider({"_system": {"global_provider": "grok", "global_model": "grok-4.6"}}, workspace_root=tmp_path).snapshot()
+    assert grok.provider.code == "provider_configured"
+    assert grok.provider.secret_required is False
+    assert grok.provider.provider == "grok"
 
 
 def test_global_ai_settings_are_visible_to_execution_readiness(tmp_path):
@@ -135,6 +141,13 @@ def test_opencode_workspace_and_live_opt_in_statuses(tmp_path):
     locked = _provider({}, workspace_root=tmp_path, environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "true"}).snapshot()
     assert locked.live_opt_in.code == "live_execution_opt_in_required"
 
+    from_settings = _provider(
+        {"_system": {"live_execution_enabled": True}},
+        workspace_root=tmp_path,
+        environ={},
+    ).snapshot()
+    assert from_settings.live_opt_in.code == "live_execution_opt_in_enabled"
+
     missing_root = _provider({}, workspace_root=tmp_path / "missing").snapshot()
     assert missing_root.workspace.code == "workspace_root_unavailable"
 
@@ -196,3 +209,18 @@ def test_an_existing_default_root_is_left_alone(tmp_path, monkeypatch):
 
     assert status.code == "workspace_ready"
     assert (root / "existing-project").is_dir()
+
+
+def test_find_workspace_for_order_returns_the_owned_folder(tmp_path):
+    workspace = reserve_owned_project_workspace(
+        tmp_path,
+        order_id="ord_findme01",
+        execution_id="exe_findme01",
+        brief_fingerprint="a" * 64,
+        title="Demo",
+    )
+    (workspace.project_path / "delivery_report.md").write_text("ok", encoding="utf-8")
+    found = find_workspace_for_order(tmp_path, "ord_findme01")
+    assert found == workspace.project_path
+    assert delivery_files_in(found)["delivery_report.md"] is True
+    assert find_workspace_for_order(tmp_path, "ord_missing") is None

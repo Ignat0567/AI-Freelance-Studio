@@ -33,9 +33,16 @@ from .phase_prompts import (
     build_static_page_prompt,
     build_ui_shell_prompt,
     decide_backend_need,
+    static_page_requires_webgl,
 )
 from .phase_repair import RepairLoopResult, run_qa_repair_loop
-from .static_page_check import run_static_page_check_in_docker
+from .static_page_check import (
+    finish_static_page_background,
+    reconcile_static_page_workspace,
+    resolve_static_page_background,
+    run_static_page_check_in_docker,
+    stage_static_page_background,
+)
 from .production_adapter import (
     LiveOpenCodeExecutionAdapter,
     OpenCodeExecutionClient,
@@ -1136,6 +1143,31 @@ class TelegramBotExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
         )
 
 
+class _StaticPageCodingClient:
+    """Write-only coding CLIs cannot delete leftover files; reconcile after every write."""
+
+    def __init__(self, inner: OpenCodeExecutionClient, *, after_write=None) -> None:
+        self._inner = inner
+        self._after_write = after_write
+
+    def check_readiness(self):
+        return self._inner.check_readiness()
+
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
+        result = self._inner.execute_project_prompt(
+            prompt,
+            workspace_path,
+            event_sink,
+            cancellation,
+            model=model,
+            timeout=timeout,
+        )
+        if self._after_write is not None:
+            self._after_write(Path(workspace_path))
+        reconcile_static_page_workspace(Path(workspace_path))
+        return result
+
+
 class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
     """ProductType.STATIC_PAGE: one self-contained .html file, built in a single pass.
 
@@ -1170,29 +1202,70 @@ class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
             return _cancelled_result(request)
         validate_owned_project_workspace(workspace, order_id=request.brief.order_id, execution_id=request.execution_id)
 
+        haystack = f"{request.brief.goal} {request.handoff.context_summary} {' '.join(request.handoff.requirements)} {' '.join(request.handoff.constraints)}"
+        plate = resolve_static_page_background(haystack, environ=self._environ if isinstance(self._environ, dict) else None)
+        if plate is None:
+            plate = resolve_static_page_background(haystack)
+        staged_name = ""
+        if plate is not None:
+            staged = stage_static_page_background(workspace.project_path, plate)
+            staged_name = staged.name
+            event_sink.emit(stage=ExecutionStage.STATIC_PAGE_BUILD, agent="Elena", progress=8, message=f"Elena staged the client plate {staged_name} as a living background.")
+
         complexity, reason = describe_phase_complexity(
             request.brief,
             focus_text=f"{request.brief.goal} {' '.join(request.handoff.requirements)}",
         )
-        build = self._run_phase(
-            stage=ExecutionStage.STATIC_PAGE_BUILD,
-            prompt=build_static_page_prompt(request.brief, request.handoff),
-            qa_commands=(
-                "Static page check: one self-contained file, allowed asset hosts only, a live "
-                "WebGL canvas that keeps drawing, no console errors, and a layout that fits 768px.",
-            ),
-            workspace=workspace,
-            event_sink=event_sink,
-            cancellation=cancellation,
-            request=request,
-            model=model_for_complexity(complexity),
-            model_reason=reason,
-            qa_runner=self._static_page_check_runner,
+        cinematic = static_page_requires_webgl(request.brief, request.handoff)
+        inner_runner = self._static_page_check_runner
+
+        def after_write(cwd: Path) -> None:
+            if plate is not None and staged_name:
+                stage_static_page_background(cwd, plate)
+                finish_static_page_background(cwd, staged_name)
+
+        def qa_runner(qa_commands: tuple[str, ...], cwd: Path) -> QAOutcome:
+            if plate is not None and staged_name:
+                stage_static_page_background(Path(cwd), plate)
+                finish_static_page_background(Path(cwd), staged_name)
+            reconcile_static_page_workspace(Path(cwd))
+            if inner_runner is run_static_page_check_in_docker:
+                return run_static_page_check_in_docker(qa_commands, cwd, require_webgl=cinematic)
+            return inner_runner(qa_commands, cwd)
+
+        qa_label = (
+            "Static page check: one self-contained file, allowed asset hosts only, a live "
+            "WebGL canvas that keeps drawing, no console errors, and a layout that fits 768px."
+            if cinematic
+            else "Static page check: one self-contained file, allowed asset hosts only, no console "
+            "errors, and a layout that fits 768px."
         )
+        original_client = self._opencode_client
+        self._opencode_client = _StaticPageCodingClient(original_client, after_write=after_write)
+        try:
+            build = self._run_phase(
+                stage=ExecutionStage.STATIC_PAGE_BUILD,
+                prompt=build_static_page_prompt(request.brief, request.handoff),
+                qa_commands=(qa_label,),
+                workspace=workspace,
+                event_sink=event_sink,
+                cancellation=cancellation,
+                request=request,
+                model=model_for_complexity(complexity),
+                model_reason=reason,
+                qa_runner=qa_runner,
+            )
+        finally:
+            self._opencode_client = original_client
         if not build.success:
             return build.failure
 
-        self._emit_milestone(event_sink, ExecutionStage.STATIC_PAGE_BUILD, "Single-file page complete: the scene renders, keeps animating, and fits a tablet.")
+        done = (
+            "Single-file page complete: the scene renders, keeps animating, and fits a tablet."
+            if cinematic
+            else "Single-file page complete: it opens, has no console errors, and fits a tablet."
+        )
+        self._emit_milestone(event_sink, ExecutionStage.STATIC_PAGE_BUILD, done)
         return self._finalize_success(
             request,
             event_sink,

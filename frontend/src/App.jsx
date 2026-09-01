@@ -47,7 +47,7 @@ function App() {
         fetch(`http://localhost:${activePort}/api/config/keys`)
             .then(r => r.json())
             .then(data => {
-                if (!data.has_nvidia && !data.has_anthropic && !data.has_openai) {
+                if (!data.has_nvidia && !data.has_anthropic && !data.has_openai && !data.has_xai && !data.has_grok) {
                     setIsKeyManagerOpen(true);
                 }
             })

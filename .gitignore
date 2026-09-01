@@ -71,6 +71,7 @@ frontend/installers/
 
 # Local backups
 local_backups/
+/local_assets/
 .opencode_backups/
 /backups/
 /project_file_backups/

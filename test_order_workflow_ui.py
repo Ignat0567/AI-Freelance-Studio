@@ -13,6 +13,8 @@ def test_create_project_entry_is_visible_in_dashboard():
     assert "Create Project" in source
     assert "create-project" in source
     assert "OrderWorkflowPage" in source
+    assert "CORE_NAV_IDS" in source
+    assert "show_experimental" in source
 
 
 def test_pdf_voice_assistant_demo_fill_is_form_only():
@@ -69,15 +71,15 @@ def test_brief_screen_renders_structured_sections_and_approval_gate():
     assert "Alex to Codex handoff is ready" in source
 
 
-def test_execution_dashboard_is_explicitly_fake_and_cancellable():
+def test_execution_dashboard_is_live_first_and_cancellable():
     source = _read("ExecutionDashboard.jsx")
-    assert "Simulation mode" in source
-    assert "Fake executor for MVP validation" in source
+    assert "Start live build" in source
     assert "Run simulation" in source
     assert "Prepare production dry-run" in source
     assert "Live execution locked" in source
-    assert "Start live OpenCode execution" in source
     assert "Cancel execution" in source
+    assert "Grok" in source
+    assert "Ollama" in source
     for agent in ["active_agent", "stage", "progress", "events", "blockers", "Execution Readiness"]:
         assert agent in source
 
@@ -89,6 +91,10 @@ def test_result_screen_shows_simulated_artifacts_and_verification_summary():
     assert "Repair attempts" in source
     assert "Create another order" in source
     assert "Revise brief" in source
+    assert "Delivery folder" in source
+    assert "Open folder" in source
+    assert "delivery_report.md" in source
+    assert "delivery_screenshot.png" in source
 
 
 def test_api_client_uses_relative_routes_and_no_renderer_token_storage():
@@ -106,6 +112,7 @@ def test_api_client_uses_relative_routes_and_no_renderer_token_storage():
         "/events",
         "/artifacts",
         "/result",
+        "/open-workspace",
     ]:
         assert route in api
     combined = api + page
@@ -118,7 +125,7 @@ def test_recovery_polling_duplicate_start_and_sanitized_errors_are_present():
     page = _read("OrderWorkflowPage.jsx")
     state = _read("orderWorkflowState.js")
     assert "studio_order_workflow_last_order_id_v1" in page
-    assert "The backend restarted and this in-memory order is no longer available" in page
+    assert "This order could not be reloaded after the backend restarted" in page
     assert "setInterval" in page
     assert "clearInterval" in page
     assert "startInFlight" in page
@@ -134,7 +141,7 @@ def test_frontend_execution_start_is_approval_gated():
     assert "canStartExecution" in page
     assert "approval?.approved" in page
     assert "handoff_ready" in page
-    assert "Approve the current brief and Elena design preview before starting simulated execution" in page
+    assert "Approve the current brief and Elena design preview before starting execution" in page
     assert "Approval required" in dashboard
     assert "disabled={pending || !canStart}" in dashboard
 
@@ -154,7 +161,7 @@ def test_execution_readiness_panel_guides_settings_without_live_execution():
         "Workspace",
         "Live execution opt-in",
         "production_live_ready",
-        "Live execution is not enabled",
+        "Live execution locked",
     ]:
         assert expected in dashboard
     assert "can_prepare_dry_run" in page

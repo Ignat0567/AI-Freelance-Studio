@@ -56,4 +56,5 @@ export const orderWorkflowApi = {
   getArtifacts: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/artifacts`),
   getResult: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/result`),
   getUsageSummary: () => requestJson('/api/orders/usage-summary'),
+  openWorkspace: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/open-workspace`, {}),
 };

@@ -57,6 +57,8 @@ _STATUS_BY_CODE = {
     "design_revision_note_required": 422,
     "invalid_execution_mode": 422,
     "live_execution_opt_in_required": 409,
+    "workspace_unavailable": 404,
+    "unsafe_workspace_path": 400,
     "handoff_blocked": 409,
     "execution_already_completed": 409,
     "execution_already_active": 409,
@@ -158,6 +160,11 @@ def get_usage_summary(request: Request):
 @router.get("/{order_id}")
 def get_order(order_id: str, request: Request):
     return _call(get_order_workflow_service(request).snapshot, order_id)
+
+
+@router.post("/{order_id}/open-workspace")
+def open_order_workspace(order_id: str, request: Request):
+    return _call(get_order_workflow_service(request).open_workspace, order_id)
 
 
 @router.get("/{order_id}/questions")

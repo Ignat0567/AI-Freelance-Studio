@@ -63,6 +63,7 @@ from api.request_models import (
     AISettingsPayload,
     AgentAIConfigPayload,
     ClaudeCodeConnectionPayload,
+    GrokConnectionPayload,
     GlobalAIConfigPayload,
     KeysUpdatePayload,
     OpenCodeConnectionPayload,
@@ -94,6 +95,7 @@ except ImportError:
     _HAS_OPENCODE = False
 
 from claude_bridge import get_claude_onboarding_dependencies as get_claude_code_onboarding_dependencies, test_claude_readiness as test_claude_code_readiness
+from grok_bridge import get_grok_onboarding_dependencies, test_grok_readiness, _discover_grok
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("FREELANCERSTUDIO_USER_DATA") or os.environ.get("FREELANCERSTUDIO_HOME") or BASE_DIR
@@ -331,6 +333,8 @@ def get_stored_keys():
     masked_keys["has_nvidia"] = bool(_provider_api_key("nvidia", keys))
     masked_keys["has_openai"] = bool(_provider_api_key("openai", keys))
     masked_keys["has_anthropic"] = bool(_provider_api_key("anthropic", keys))
+    masked_keys["has_xai"] = bool(_provider_api_key("xai", keys))
+    masked_keys["has_grok"] = bool(_discover_grok())
     masked_keys["has_freelancer"] = bool(keys.get("freelancer_client_id") and secret_store.get_secret("freelancer_client_secret", keys))
     masked_keys["has_upwork"] = bool(keys.get("upwork_client_id") and secret_store.get_secret("upwork_client_secret", keys))
     masked_keys["saved_keys"] = sorted(saved_keys)
@@ -808,6 +812,86 @@ def save_claude_code_connection(payload: ClaudeCodeConnectionPayload):
     return {"status": "saved", "connection": _sanitize_provider_connection(connection), "effective_execution_config": build_effective_execution_config(data).to_dict(), "message": "Claude Code authentication remains owned by the official CLI; only verified connection metadata was stored."}
 
 
+@app.post("/api/provider-connections/grok/detect")
+def detect_grok_connection(payload: GrokConnectionPayload):
+    dependencies = get_grok_onboarding_dependencies(payload.executable_path.strip())
+    grok_dependency = dependencies["components"]["grok"]
+    binary = grok_dependency["path"]
+    catalog = _CLI_SUBSCRIPTION_MODEL_CATALOG.get("grok_subscription", {})
+    return {
+        "status": "detected" if binary else "executable_not_found",
+        "executable_path": binary,
+        "version": grok_dependency["version"],
+        "available_models": [{"id": model_id, "display_name": label} for model_id, label in catalog.items()],
+        "dependencies": dependencies,
+        "authentication": "Authentication is owned by the official Grok CLI (`grok login`). Studio never stores the grok.com session.",
+    }
+
+
+@app.post("/api/provider-connections/grok/test")
+def test_transient_grok_connection(payload: GrokConnectionPayload):
+    result = test_grok_readiness(payload.executable_path.strip())
+    return {
+        **result,
+        "connection": {
+            "connection_id": payload.connection_id.strip() or "grok-subscription",
+            "name": payload.name.strip() or "My Grok",
+            "configured_model": payload.configured_model.strip() or "grok/grok-4.6",
+            "executable_path": result.get("executable_path", payload.executable_path),
+            "last_checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        },
+    }
+
+
+@app.post("/api/provider-connections/grok")
+def save_grok_connection(payload: GrokConnectionPayload):
+    selected_model = str(_normalize_model_for_connection(payload.configured_model.strip() or "grok/grok-4.6", payload.connection_id).get("model_id") or payload.configured_model.strip() or "grok/grok-4.6")
+    result = test_grok_readiness(payload.executable_path.strip())
+    if result.get("ready") is not True:
+        raise HTTPException(409, {"error_code": result.get("error_code", "readiness_failed"), "message": result.get("message", "Grok readiness check failed")})
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    connection = {
+        "connection_id": payload.connection_id.strip() or "grok-subscription",
+        "connection_type": "grok_subscription",
+        "name": payload.name.strip() or "My Grok",
+        "provider": "grok",
+        "enabled": bool(payload.enabled),
+        "executable_path": result["executable_path"],
+        "configured_provider": "grok",
+        "configured_model": selected_model,
+        "auth_type": "delegated_cli_login",
+        "auth_status": "authenticated",
+        "readiness_status": "ready",
+        "priority": 5,
+        "last_checked_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
+    data = load_studio_keys()
+    connections = _load_provider_connections(data)
+    existing = next((i for i, item in enumerate(connections) if item.get("connection_id") == connection["connection_id"]), None)
+    if existing is None:
+        connections.append(connection)
+    else:
+        connections[existing] = {**connections[existing], **connection}
+    _store_provider_connections(data, connections)
+    data["_global_ai"] = {
+        "connection_id": connection["connection_id"],
+        "connection_type": "grok_subscription",
+        "provider": "grok",
+        "model": selected_model,
+        "enabled": bool(payload.enabled),
+        "updated_at": now,
+    }
+    system = data.get("_system", {}) if isinstance(data.get("_system"), dict) else {}
+    system["global_provider"] = "grok"
+    system["global_model"] = selected_model
+    data["_system"] = system
+    SYSTEM_SETTINGS["global_provider"] = "grok"
+    SYSTEM_SETTINGS["global_model"] = selected_model
+    save_studio_keys(data)
+    return {"status": "saved", "connection": _sanitize_provider_connection(connection), "effective_execution_config": build_effective_execution_config(data).to_dict(), "message": "Grok authentication remains owned by the official CLI; only verified connection metadata was stored."}
 
 
 @app.get("/api/provider-connections/{connection_id}")

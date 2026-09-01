@@ -346,6 +346,8 @@ class SystemConfigPayload(StrictRequestModel):
     log_detail: Any | None = None
     vscode_path: Any | None = None
     pycharm_path: Any | None = None
+    live_execution_enabled: Any | None = None
+    show_experimental: Any | None = None
 
 
 @router.get("/api/system/build")

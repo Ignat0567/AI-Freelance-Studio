@@ -90,6 +90,36 @@ def reserve_owned_project_workspace(root: str | Path, *, order_id: str, executio
     return ProjectWorkspace(root=root_path, project_path=project_path)
 
 
+DELIVERY_FILE_NAMES = (
+    "delivery_report.md",
+    "delivery_screenshot.png",
+    "README.md",
+    "qa_evidence.md",
+)
+
+
+def find_workspace_for_order(root: str | Path, order_id: str) -> Path | None:
+    """Return the newest Studio-owned project folder for this order, if any."""
+    root_path = Path(root).expanduser().resolve()
+    if not root_path.is_dir():
+        return None
+    matches: list[Path] = []
+    for marker in root_path.glob("*/.freelancerstudio-project.json"):
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if payload.get("owner") == "AI Freelance Studio" and payload.get("order_id") == order_id:
+            matches.append(marker.parent)
+    if not matches:
+        return None
+    return max(matches, key=lambda path: path.stat().st_mtime)
+
+
+def delivery_files_in(workspace_path: Path) -> dict[str, bool]:
+    return {name: (workspace_path / name).is_file() for name in DELIVERY_FILE_NAMES}
+
+
 def validate_owned_project_workspace(workspace: ProjectWorkspace, *, order_id: str, execution_id: str) -> None:
     root_path = workspace.root.expanduser().resolve()
     project_path = workspace.project_path.expanduser().resolve()

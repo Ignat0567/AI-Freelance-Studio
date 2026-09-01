@@ -2,8 +2,8 @@ from typing import Any, Callable
 
 
 DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
-    "global_provider": "nvidia",
-    "global_model": "meta/llama-3.3-70b-instruct",
+    "global_provider": "grok",
+    "global_model": "grok-4.6",
     "theme": "dark",
     "accent_color": "#0ea5e9",
     "animation_speed": "normal",
@@ -16,6 +16,8 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "log_detail": "normal",
     "vscode_path": "code",
     "pycharm_path": "pycharm",
+    "live_execution_enabled": False,
+    "show_experimental": False,
 }
 
 ALLOWED_SYSTEM_KEYS = [
@@ -24,6 +26,7 @@ ALLOWED_SYSTEM_KEYS = [
     "language", "auto_save", "notifications_enabled",
     "default_budget", "polling_interval", "log_detail",
     "vscode_path", "pycharm_path",
+    "live_execution_enabled", "show_experimental",
 ]
 
 _load_studio_keys: Callable[[], dict] | None = None

@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 from uuid import uuid4
+import os
 
 import config_storage
 from opencode_provider import OpenCodeBridgeConnection
@@ -61,6 +62,7 @@ from .production_adapter import (
     OpenCodeExecutionResult,
     ProductionProjectExecutionAdapter,
 )
+from .workspace import delivery_files_in, find_workspace_for_order
 
 
 class OrderWorkflowError(ValueError):
@@ -319,9 +321,15 @@ class OrderWorkflowService:
 
     def _run_preflight(self) -> ReadinessResult:
         """Checked once per live start, not on every readiness poll -- see preflight.py."""
+        from .claude_code_client import active_coding_backend
+
+        environ = dict(self._preflight_environ or os.environ)
+        backend = active_coding_backend()
+        if backend and "FREELANCERSTUDIO_CODING_BACKEND" not in environ:
+            environ["FREELANCERSTUDIO_CODING_BACKEND"] = backend
         return run_preflight(
             workspace_root=self._configuration.workspace_root,
-            environ=self._preflight_environ,
+            environ=environ,
         ).readiness()
 
     def _persist(self) -> None:
@@ -413,6 +421,7 @@ class OrderWorkflowService:
             "handoff_ready": handoff is not None,
             "handoff": handoff.to_dict() if handoff else None,
             "execution": execution.to_dict() if execution else None,
+            "delivery": self._delivery_payload(order_id, execution),
             "next_action": next_action,
             "blockers": [item.to_dict() for item in blockers],
         }
@@ -879,6 +888,33 @@ class OrderWorkflowService:
         except ExecutionServiceError:
             return None
 
+    def _delivery_payload(self, order_id: str, execution: ProjectExecution | None) -> dict[str, Any] | None:
+        if execution is None:
+            return None
+        workspace = find_workspace_for_order(self._configuration.workspace_root, order_id)
+        if workspace is None:
+            return {"workspace_path": None, "files": {}}
+        return {
+            "workspace_path": str(workspace),
+            "files": delivery_files_in(workspace),
+        }
+
+    def open_workspace(self, order_id: str) -> dict[str, Any]:
+        self._order(order_id)
+        workspace = find_workspace_for_order(self._configuration.workspace_root, order_id)
+        if workspace is None or not workspace.is_dir():
+            raise OrderWorkflowError("workspace_unavailable", "No generated project folder was found for this order.")
+        root = self._configuration.workspace_root.resolve()
+        resolved = workspace.resolve()
+        if root not in resolved.parents and resolved != root:
+            raise OrderWorkflowError("unsafe_workspace_path", "The project folder is outside the Studio workspace.")
+        if os.name == "nt":
+            os.startfile(resolved)  # noqa: S606 — local Explorer, path already constrained
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", str(resolved)], close_fds=True)
+        return {"status": "opened", "workspace_path": str(resolved)}
+
     def _order(self, order_id: str) -> UserOrder:
         order = self._orders.get(order_id)
         if order is None:
@@ -996,7 +1032,7 @@ class OrderWorkflowService:
             readiness_check("simulation", "Simulation mode", "ready" if fake_ready else "blocked", "Simulation uses the fake executor and does not require live providers." if fake_ready else "Approve the brief, preview, and handoff before simulation."),
             readiness_check("qa_tools", "QA tools", "missing" if "qa_tools_unavailable" in codes else "ready", "Configure at least one QA command." if "qa_tools_unavailable" in codes else "QA planning requirements are satisfied."),
             readiness_check("production_dry_run", "Production dry-run", "ready" if production_ready else "blocked", "Can prepare a production execution package without live OpenCode." if production_ready else "Resolve production dry-run blockers before preparing a package."),
-            readiness_check("live_execution", "Live execution", "ready" if live_ready else "unavailable", "Live OpenCode execution can be started." if live_ready else "Live execution is locked. Set FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION=1 and restart Studio to enable it."),
+            readiness_check("live_execution", "Live execution", "ready" if live_ready else "unavailable", "Live coding execution can be started." if live_ready else "Live execution is locked. Enable Live coding execution in Settings."),
         )
 
     @staticmethod

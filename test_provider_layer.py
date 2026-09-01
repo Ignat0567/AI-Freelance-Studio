@@ -108,6 +108,8 @@ def test_default_registry_contains_required_connection_types():
         ConnectionType.CODEX_CHATGPT_SUBSCRIPTION,
         ConnectionType.OPENAI_API_KEY,
         ConnectionType.CLAUDE_SUBSCRIPTION,
+        ConnectionType.GROK_SUBSCRIPTION,
+        ConnectionType.XAI_API_KEY,
         ConnectionType.ANTHROPIC_API_KEY,
         ConnectionType.GEMINI_GOOGLE_ACCOUNT,
         ConnectionType.GEMINI_API_KEY,

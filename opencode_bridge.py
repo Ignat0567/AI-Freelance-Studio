@@ -67,6 +67,7 @@ _PROVIDER_MAP = {
     "together": "together",
     "mistral": "mistral",
     "google": "google",
+    "xai": "xai",
 }
 
 _MODEL_MAP = {
@@ -79,6 +80,7 @@ _MODEL_MAP = {
     "together": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
     "mistral": "mistral-large-latest",
     "google": "gemini-2.0-flash-001",
+    "xai": "grok-4.6",
 }
 
 _OPENCODE_MODEL_LIST_CACHE: dict[str, object] = {"binary": "", "models": [], "checked_at": 0.0}

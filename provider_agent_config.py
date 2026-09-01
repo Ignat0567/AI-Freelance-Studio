@@ -72,20 +72,22 @@ from system_settings import _get_saved_system_settings
 AGENT_MODELS = {
     "nvidia": "meta/llama-3.3-70b-instruct",
     "openai": "gpt-4",
-    "ollama": "dolphin-mistral:7b",
+    "ollama": "qwen2.5-coder:14b",
     "anthropic": "claude-sonnet-4-20250514",
+    "grok": "grok-4.6",
+    "xai": "grok-4.6",
 }
 
 
 DEFAULT_AGENTS = {
-    "alex": {"name": "Alex", "role": "project_manager", "emoji": "👔", "color": "#6366f1", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("alex")},
-    "maya": {"name": "Maya", "role": "analyst", "emoji": "🎯", "color": "#a855f7", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("maya")},
-    "elena": {"name": "Elena", "role": "designer", "emoji": "🎨", "color": "#ec4899", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("elena")},
-    "codex": {"name": "Codex", "role": "developer", "emoji": "💻", "color": "#0ea5e9", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("codex")},
-    "bugcatcher": {"name": "BugCatcher", "role": "tester", "emoji": "🐛", "color": "#10b981", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("bugcatcher")},
-    "sentinel": {"name": "Sentinel", "role": "security", "emoji": "🛡️", "color": "#ef4444", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("sentinel")},
-    "lupa": {"name": "Lupa", "role": "code_reviewer", "emoji": "🔍", "color": "#8b5cf6", "enabled": False, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("lupa")},
-    "goldie": {"name": "Goldie", "role": "sales", "emoji": "💰", "color": "#f59e0b", "enabled": True, "builtin": True, "status": "idle", "provider": "nvidia", "model": AGENT_MODELS["nvidia"], "use_global": True, **recommended_defaults_for("goldie")},
+    "alex": {"name": "Alex", "role": "project_manager", "emoji": "👔", "color": "#6366f1", "enabled": True, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("alex")},
+    "maya": {"name": "Maya", "role": "analyst", "emoji": "🎯", "color": "#a855f7", "enabled": True, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("maya")},
+    "elena": {"name": "Elena", "role": "designer", "emoji": "🎨", "color": "#ec4899", "enabled": True, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("elena")},
+    "codex": {"name": "Codex", "role": "developer", "emoji": "💻", "color": "#0ea5e9", "enabled": True, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("codex")},
+    "bugcatcher": {"name": "BugCatcher", "role": "tester", "emoji": "🐛", "color": "#10b981", "enabled": True, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("bugcatcher")},
+    "sentinel": {"name": "Sentinel", "role": "security", "emoji": "🛡️", "color": "#ef4444", "enabled": False, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("sentinel")},
+    "lupa": {"name": "Lupa", "role": "code_reviewer", "emoji": "🔍", "color": "#8b5cf6", "enabled": False, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("lupa")},
+    "goldie": {"name": "Goldie", "role": "sales", "emoji": "💰", "color": "#f59e0b", "enabled": True, "builtin": True, "status": "idle", "provider": "grok", "model": AGENT_MODELS["grok"], "use_global": True, **recommended_defaults_for("goldie")},
     "product_judge": {"name": "Product Judge", "role": "product_judge", "emoji": "⚖", "color": "#f97316", "enabled": True, "builtin": True, "status": "idle", "provider": "", "model": "", "use_global": False, **recommended_defaults_for("product_judge"), "top_k": None, "auto_select_independent": True},
 }
 
@@ -98,7 +100,9 @@ OPENCODE_MODEL_ALIASES = {
 _CODING_CAPABLE_CONNECTION_TYPES = {
     ConnectionType.CODEX_CHATGPT_SUBSCRIPTION.value,
     ConnectionType.CLAUDE_SUBSCRIPTION.value,
+    ConnectionType.GROK_SUBSCRIPTION.value,
     ConnectionType.OPENCODE_PROVIDER.value,
+    ConnectionType.OLLAMA_LOCAL.value,
 }
 
 

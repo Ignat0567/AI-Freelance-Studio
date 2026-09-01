@@ -78,6 +78,12 @@ def test_every_builtin_agent_has_role_contract():
         assert ROLE_CONTRACTS[agent_id]["required_fields"]
 
 
+def test_planners_elena_bugcatcher_and_codex_default_to_grok():
+    for agent_id in ("alex", "maya", "elena", "bugcatcher", "codex"):
+        assert main.DEFAULT_AGENTS[agent_id]["provider"] == "grok"
+        assert main.DEFAULT_AGENTS[agent_id]["model"] == "grok-4.6"
+
+
 def test_agent_output_cannot_directly_mark_accepted():
     output = _alex_output()
     output["completion_policy"] = {"accepted": True}
