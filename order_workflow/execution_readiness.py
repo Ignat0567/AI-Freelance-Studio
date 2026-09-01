@@ -6,7 +6,7 @@ from .brief_service import sanitize_public_text
 from .models import ExecutionBlocker, ExecutionMode, StrictDomainModel
 
 
-ReadinessStatus = Literal["ready", "blocked", "missing", "unavailable"]
+ReadinessStatus = Literal["ready", "blocked", "missing", "unavailable", "ok", "unknown", "skipped"]
 
 
 class ExecutionReadinessCheck(StrictDomainModel):

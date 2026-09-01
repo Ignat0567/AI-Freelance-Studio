@@ -298,6 +298,7 @@ def test_ui_acceptance_path_is_wired_without_renderer_token_or_hidden_pdf_execut
     assert "test_summary" in result
     assert "studio_order_workflow_last_order_id_v1" in page
     assert "This order could not be reloaded after the backend restarted" in page
+    assert "in-memory order is no longer available" not in page
     assert "startInFlight" in page
     assert "clearInterval" in page
     assert "approval?.approved" in page and "handoff_ready" in page

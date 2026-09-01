@@ -62,7 +62,7 @@ export default function ExecutionResultPanel({ state, pending, onRetry, onRevise
           <span>Built on top of the previously delivered project ({execution.revised_from}), not regenerated from scratch.</span>
         </div>
       )}
-      {result?.rate_limit_message && (
+      {result?.rate_limit_message && !/session limit|europe\/berlin/i.test(result.rate_limit_message) && (
         <div className="ow-callout warning" role="alert">
           <strong>Rate limited</strong>
           <span>{result.rate_limit_message}</span>
@@ -94,7 +94,7 @@ export default function ExecutionResultPanel({ state, pending, onRetry, onRevise
       <EventTimeline events={execution?.events || []} />
       {canRevise && <RevisionRequestForm pending={pending} onSubmit={onRevise} />}
       <div className="ow-actions">
-        {canRetry && <button type="button" className="fs-primary" onClick={onRetry} disabled={pending}>{pending ? 'Retrying...' : 'Retry execution'}</button>}
+        {canRetry && <button type="button" className="fs-primary" onClick={onRetry} disabled={pending}>{pending ? 'Retrying...' : 'Retry this workspace'}</button>}
         <button type="button" className="fs-secondary" onClick={onBackToBrief}>Revise brief</button>
         <button type="button" className="fs-primary" onClick={onNewOrder}>Create another order</button>
       </div>

@@ -15,28 +15,46 @@ function ExecutionReadinessPanel({ readiness }) {
         <h3 id="ow-readiness-title">Can Studio execute this order?</h3>
         <p>Live build writes a real project with Grok specs and local Ollama coding, then runs QA. Simulation is a fake executor for UI checks only. Production dry-run prepares a package without writing files.</p>
         <p>Checks: AI provider, Model, Workspace, QA tools, Live execution opt-in.</p>
+        <p>Environment checklist: Grok CLI (`grok login`), Ollama (`ollama serve` and `ollama pull qwen2.5-coder:14b`), Start Docker Desktop, Node 20+, disk, Live execution opt-in.</p>
       </div>
       <div className="ow-readiness-modes">
         <ReadinessPill label="Live execution" ready={liveReady} unavailable={!liveReady} />
         <ReadinessPill label="Production dry-run" ready={readiness?.production_dry_run_ready} />
         <ReadinessPill label="Simulation mode" ready={readiness?.simulation_ready} />
       </div>
-      <div className="ow-readiness-checks">{checks.map(check => <article key={check.code} className={check.status}><b>{check.label}</b><span>{formatLabel(check.status)} - {check.message}</span></article>)}</div>
+      <div className="ow-readiness-checks">{checks.map(check => (
+        <article key={check.code} className={check.status}>
+          <b>{check.label}</b>
+          <span>{formatLabel(check.status)} - {check.message}</span>
+          {check.action && check.status === 'blocked' && <em>Fix: {check.action}</em>}
+        </article>
+      ))}</div>
       {readiness?.blockers?.length > 0 && <div className="ow-callout warning"><strong>Action suggestions</strong>{readiness.blockers.map(item => <p key={item.code}>{item.message} <b>{item.action}</b></p>)}<p>Open Settings from the sidebar and enable Live coding execution, then confirm Grok CLI and Ollama are ready.</p></div>}
     </section>
   );
 }
 
-export default function ExecutionDashboard({ state, readiness, pending, canStart, canDryRun, canLive, liveConfirm, setLiveConfirm, onStart, onDryRun, onLive, onCancel, onRefresh, onRefreshReadiness }) {
+export default function ExecutionDashboard({ state, readiness, pending, canStart, canDryRun, canLive, liveConfirm, setLiveConfirm, onStart, onDryRun, onLive, onCancel, onRefresh, onRefreshReadiness, usageSummary }) {
   const execution = state?.execution;
   const progress = execution?.progress ?? STAGE_PROGRESS[execution?.stage] ?? 0;
   const live = Boolean(execution?.live);
+  const quota = usageSummary?.last_rate_limit;
+  const quotaActive = Boolean(quota?.message) && !quota?.stale;
+  const envBlocked = (readiness?.checks || []).some(check => check.status === 'blocked');
+  const optInBlocked = (readiness?.checks || []).some(check => check.code === 'live_opt_in' && check.status === 'blocked');
   return (
     <section className="fs-panel ow-card" aria-labelledby="ow-execution-title">
       <div className="fs-panel-title"><div><span>Execution Dashboard</span><strong id="ow-execution-title">{execution ? (live ? 'Live build' : 'Simulation mode') : 'Ready to build'}</strong></div></div>
       <ExecutionReadinessPanel readiness={readiness} />
+      {!execution && quotaActive && (
+        <div className="ow-callout warning" role="alert">
+          <strong>Provider quota</strong>
+          <span>{quota.message}</span>
+          <p>Do not start a new order. Wait for the reset, then use Retry this workspace on the result screen.</p>
+        </div>
+      )}
       {!execution && canLive && <div className="ow-callout"><strong>Live build</strong><span>Grok writes the coding spec. Local Ollama writes the project files. QA then has to pass. This spends Grok subscription time and CPU on this machine.</span></div>}
-      {!execution && !canLive && <div className="ow-callout warning"><strong>Live execution locked</strong><span>Enable Live coding execution in Settings before starting a real build. Simulation remains available for UI checks.</span></div>}
+      {!execution && !canLive && optInBlocked && !quotaActive && <div className="ow-callout warning"><strong>Live execution locked</strong><span>Enable Live coding execution in Settings before starting a real build. Simulation remains available for UI checks.</span></div>}
       {!execution && !canStart && <div className="ow-callout warning" role="alert"><strong>Approval required</strong><span>Approve the current brief and prepare the Alex to Codex handoff before starting execution.</span></div>}
       {execution && <>
         <div className="ow-status-grid"><div><span>Status</span><strong>{formatLabel(execution.status)}</strong></div><div><span>Stage</span><strong>{formatLabel(execution.stage)}</strong></div><div><span>Active agent</span><strong>{execution.active_agent || 'Queued'}</strong></div><div><span>Progress</span><strong>{progress}%</strong></div></div>
@@ -49,7 +67,7 @@ export default function ExecutionDashboard({ state, readiness, pending, canStart
       <div className="ow-actions">
         <button type="button" className="fs-secondary" onClick={onRefreshReadiness} disabled={pending || !state?.order}>Refresh readiness</button>
         <button type="button" className="fs-secondary" onClick={onRefresh} disabled={pending || !state?.order}>Refresh execution</button>
-        {!execution && <button type="button" className="fs-primary" onClick={onLive} disabled={pending || !canLive || !liveConfirm}>{pending ? 'Starting...' : 'Start live build'}</button>}
+        {!execution && <button type="button" className="fs-primary" onClick={onLive} disabled={pending || !canLive || !liveConfirm || quotaActive || envBlocked}>{pending ? 'Starting...' : 'Start live build'}</button>}
         {!canLive && !execution && <button type="button" className="fs-secondary" disabled>Live execution locked</button>}
         {!execution && <button type="button" className="fs-secondary" onClick={onStart} disabled={pending || !canStart}>Run simulation</button>}
         {!execution && <button type="button" className="fs-secondary" onClick={onDryRun} disabled={pending || !canDryRun}>Prepare production dry-run</button>}

@@ -52,6 +52,13 @@ def test_json_order_store_tolerates_corrupt_json(tmp_path):
     assert store.load() == {}
 
 
+def test_operator_api_persists_orders_to_json_not_memory():
+    source = Path("api/orders.py").read_text(encoding="utf-8")
+    assert "JsonOrderStore" in source
+    assert "orders_state.json" in source
+    assert "JsonExecutionStore" in source
+
+
 def test_in_memory_order_store_is_the_default_and_does_not_touch_disk(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     service = OrderWorkflowService()

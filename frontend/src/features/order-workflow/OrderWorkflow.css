@@ -46,11 +46,13 @@
 .ow-status-grid div { border: 1px solid var(--fs-border); border-radius: 16px; padding: 12px; background: rgba(255,255,255,.05); }
 .ow-status-grid span { display: block; color: var(--fs-muted); font-size: .82rem; }
 .ow-readiness { display: grid; gap: 12px; border: 1px solid var(--fs-border); border-radius: 22px; padding: 16px; background: rgba(255,255,255,.045); }
-.ow-readiness-modes, .ow-readiness-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ow-readiness-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ow-readiness-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .ow-readiness-modes div, .ow-readiness-checks article { border: 1px solid var(--fs-border); border-radius: 16px; padding: 11px; background: rgba(255,255,255,.05); }
-.ow-readiness .ready { border-color: rgba(82, 196, 148, .65); }
+.ow-readiness .ready, .ow-readiness .ok, .ow-readiness .skipped { border-color: rgba(82, 196, 148, .65); }
 .ow-readiness .blocked, .ow-readiness .missing { border-color: rgba(255, 182, 72, .7); }
-.ow-readiness .unavailable { opacity: .72; }
+.ow-readiness .unavailable, .ow-readiness .unknown { opacity: .72; }
+.ow-readiness-checks em { display: block; margin-top: 6px; color: var(--fs-text); font-style: normal; font-weight: 700; }
 .ow-readiness span { display: block; color: var(--fs-muted); }
 .ow-callout label { display: flex; gap: 8px; align-items: center; }
 .ow-proposal-text { white-space: pre-wrap; word-break: break-word; background: rgba(255,255,255,.05); border: 1px solid var(--fs-border); border-radius: 16px; padding: 14px; color: var(--fs-text); font-family: inherit; max-height: 420px; overflow-y: auto; }

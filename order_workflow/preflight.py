@@ -41,7 +41,7 @@ import claude_bridge
 from .deployment import container_deploy_enabled
 from .docker_qa_runner import docker_engine_available
 from .models import ExecutionBlocker, StrictDomainModel
-from .readiness import OLLAMA_UNAVAILABLE, ReadinessResult, readiness_blocker
+from .readiness import ReadinessResult, readiness_blocker
 
 # Playwright's image ships Node 22; the toolchains generated projects use (Vite 6-8) need
 # at least 20.19. Below 20 nothing builds, so that is the blocking floor.
@@ -52,6 +52,7 @@ MINIMUM_FREE_DISK_BYTES = 2 * 1024 * 1024 * 1024
 # Long enough for a cold CLI start on Windows, short enough that a stuck probe cannot
 # become the thing that delays the run it is protecting.
 AUTH_PROBE_TIMEOUT_SECONDS = 90
+PROVIDER_FAST_FAIL_SECONDS = 10
 
 PreflightStatus = Literal["ok", "blocked", "unknown", "skipped"]
 
@@ -63,6 +64,7 @@ class PreflightCheck(StrictDomainModel):
     label: str
     status: PreflightStatus
     message: str
+    action: str = ""
 
 
 class PreflightReport(StrictDomainModel):
@@ -86,7 +88,7 @@ CODING_CLI_AUTH_EXPIRED = readiness_blocker(
 DOCKER_UNAVAILABLE = readiness_blocker(
     "preflight_docker_unavailable",
     "Docker is not reachable, and QA runs inside it. Start Docker Desktop, or set FREELANCERSTUDIO_PHASED_QA_BACKEND=host to run QA on the bare host instead (less isolated).",
-    "Start Docker",
+    "Start Docker Desktop",
 )
 
 NODE_MISSING = readiness_blocker(
@@ -106,6 +108,48 @@ DISK_SPACE_LOW = readiness_blocker(
     "Less than 2 GB is free on the workspace drive. A build needs room for dependencies; free space before starting.",
     "Free disk space",
 )
+
+GROK_CLI_MISSING = readiness_blocker(
+    "preflight_grok_cli_unavailable",
+    "Grok CLI was not found. Install Grok Build TUI, then run `grok login` in a terminal.",
+    "grok login",
+)
+
+GROK_NOT_LOGGED_IN = readiness_blocker(
+    "preflight_grok_not_logged_in",
+    "Grok is installed but not logged in. Run `grok login` in a terminal, then refresh readiness.",
+    "grok login",
+)
+
+OLLAMA_NOT_REACHABLE = readiness_blocker(
+    "preflight_ollama_unavailable",
+    "Ollama is not reachable. Run `ollama serve`, then `ollama pull qwen2.5-coder:14b`.",
+    "ollama serve",
+)
+
+OLLAMA_MODEL_MISSING = readiness_blocker(
+    "preflight_ollama_model_missing",
+    "No coding-capable Ollama model is installed. Run `ollama pull qwen2.5-coder:14b`.",
+    "ollama pull qwen2.5-coder:14b",
+)
+
+PROVIDER_RECENTLY_FAILED = readiness_blocker(
+    "preflight_provider_recently_failed",
+    "The last live build died in under 10 seconds on the provider. Fix the login or local coder below, then retry this workspace.",
+    "Retry this workspace",
+)
+
+PROVIDER_QUOTA = readiness_blocker(
+    "provider_rate_limited",
+    "The last live build hit a provider quota. Wait for the reset, then retry this workspace.",
+    "Wait, then retry this workspace",
+)
+
+
+def looks_like_claude_session_limit(message: str) -> bool:
+    """Claude leftover copy must not be treated as a Grok/Ollama rate limit."""
+    lowered = (message or "").casefold()
+    return "you've hit your session limit" in lowered or "europe/berlin" in lowered
 
 
 def _probe_node_version(runner: Callable[[Sequence[str]], tuple[int, str]]) -> tuple[PreflightStatus, str, ExecutionBlocker | None]:
@@ -227,6 +271,34 @@ def _default_free_bytes(path: Path) -> int:
     return shutil.disk_usage(str(path)).free
 
 
+def probe_grok_cli(
+    *,
+    readiness_probe: Callable[[], dict] | None = None,
+) -> tuple[PreflightStatus, str, ExecutionBlocker | None]:
+    """Cheap `grok models` check: Grok authors the spec even when Ollama writes files."""
+    try:
+        if readiness_probe is not None:
+            payload = readiness_probe()
+        else:
+            import grok_bridge
+
+            payload = grok_bridge.test_grok_readiness()
+    except Exception as exc:
+        return "unknown", f"could not be probed ({exc})", None
+    if not isinstance(payload, dict):
+        return "unknown", "Grok CLI returned an unreadable status", None
+    if payload.get("ready"):
+        detail = str(payload.get("account") or payload.get("message") or "logged in").strip()
+        return "ok", detail, None
+    code = str(payload.get("error_code") or "")
+    message = str(payload.get("message") or "Grok CLI is not ready")
+    if code == "grok_cli_unavailable":
+        return "blocked", message, GROK_CLI_MISSING
+    if code == "grok_not_logged_in":
+        return "blocked", message, GROK_NOT_LOGGED_IN
+    return "unknown", message, None
+
+
 def probe_ollama_runtime(
     *,
     tags_probe: Callable[[], tuple[str, ...]] | None = None,
@@ -238,10 +310,10 @@ def probe_ollama_runtime(
     except Exception as exc:
         return "unknown", f"could not be probed ({exc})", None
     if not models:
-        return "blocked", "Ollama has no models or is not reachable", OLLAMA_UNAVAILABLE
+        return "blocked", OLLAMA_NOT_REACHABLE.message, OLLAMA_NOT_REACHABLE
     selected = select_ollama_coding_model(models)
     if not selected:
-        return "blocked", "no coding-capable Ollama model is installed", OLLAMA_UNAVAILABLE
+        return "blocked", OLLAMA_MODEL_MISSING.message, OLLAMA_MODEL_MISSING
     return "ok", selected, None
 
 
@@ -256,6 +328,7 @@ def run_preflight(
     docker_probe: Callable[[], bool] | None = None,
     check_credentials: bool = True,
     ollama_tags_probe: Callable[[], tuple[str, ...]] | None = None,
+    grok_probe: Callable[[], dict] | None = None,
     # Injected so a test exercising the 401 path does not spend the real backoff waiting.
     sleeper: Callable[[float], None] = time.sleep,
 ) -> PreflightReport:
@@ -266,14 +339,32 @@ def run_preflight(
 
     def record(code: str, label: str, outcome: tuple[PreflightStatus, str, ExecutionBlocker | None]) -> None:
         status, message, blocker = outcome
-        checks.append(PreflightCheck(code=code, label=label, status=status, message=message))
+        checks.append(
+            PreflightCheck(
+                code=code,
+                label=label,
+                status=status,
+                message=message,
+                action=blocker.action if blocker is not None else "",
+            )
+        )
         if blocker is not None:
             blockers.append(blocker)
 
+    record("grok_cli", "Grok CLI login", probe_grok_cli(readiness_probe=grok_probe))
+
     coding_backend = (env.get("FREELANCERSTUDIO_CODING_BACKEND", "") or "").strip().lower()
-    if coding_backend == "ollama":
+    uses_local_coder = coding_backend not in {"claude_code", "opencode_bridge"}
+    if uses_local_coder:
         record("ollama_runtime", "Ollama local coder", probe_ollama_runtime(tags_probe=ollama_tags_probe))
-        checks.append(PreflightCheck(code="coding_cli_credentials", label="Coding CLI login", status="skipped", message="using local Ollama instead of a cloud coding CLI"))
+        checks.append(
+            PreflightCheck(
+                code="coding_cli_credentials",
+                label="Coding CLI login",
+                status="skipped",
+                message="using local Ollama instead of a cloud coding CLI",
+            )
+        )
     elif check_credentials:
         record(
             "coding_cli_credentials",
@@ -292,7 +383,11 @@ def run_preflight(
     if docker_needed:
         probe = docker_probe or docker_engine_available
         reachable = probe()
-        record("docker_engine", "Docker engine", ("ok", "reachable", None) if reachable else ("blocked", "not reachable", DOCKER_UNAVAILABLE))
+        record(
+            "docker_engine",
+            "Docker engine",
+            ("ok", "reachable", None) if reachable else ("blocked", DOCKER_UNAVAILABLE.message, DOCKER_UNAVAILABLE),
+        )
     else:
         checks.append(PreflightCheck(code="docker_engine", label="Docker engine", status="skipped", message="QA runs on the host and container deploy is off"))
 

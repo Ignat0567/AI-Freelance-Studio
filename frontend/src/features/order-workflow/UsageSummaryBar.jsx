@@ -16,12 +16,12 @@ export default function UsageSummaryBar({ usage }) {
   if (!usage) return null;
   const totalTokens = (usage.total_input_tokens || 0) + (usage.total_output_tokens || 0);
   return (
-    <div className="ow-usage-bar" role="status" aria-label="Claude Code CLI usage this Studio instance has spent">
+    <div className="ow-usage-bar" role="status" aria-label="Coding-agent usage this Studio instance has spent">
       <div className="ow-usage-bar-stats">
         <span><b>{formatCost(usage.total_cost_usd)}</b> spent</span>
         <span><b>{formatTokens(totalTokens)}</b> tokens ({usage.executions_with_usage} execution{usage.executions_with_usage === 1 ? '' : 's'})</span>
       </div>
-      {usage.last_rate_limit && (
+      {usage.last_rate_limit && !usage.last_rate_limit.stale && (
         <div className="ow-usage-bar-limit">
           <strong>Rate limited:</strong> {usage.last_rate_limit.message}
         </div>

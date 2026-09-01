@@ -32,6 +32,7 @@ from order_workflow import (
 from order_workflow.preflight import (
     MINIMUM_FREE_DISK_BYTES,
     MINIMUM_NODE_MAJOR,
+    looks_like_claude_session_limit,
     probe_coding_cli_credentials,
     run_preflight,
 )
@@ -54,6 +55,10 @@ def _expired_cli(_command, _prompt, _timeout):
     return 1, json.dumps({"api_error_status": 401, "result": "OAuth token has expired"}), ""
 
 
+def _healthy_grok():
+    return {"ready": True, "account": "You are logged in with grok.com.", "error_code": ""}
+
+
 def _preflight(**overrides):
     kwargs = dict(
         workspace_root=Path.cwd(),
@@ -63,10 +68,17 @@ def _preflight(**overrides):
         version_runner=_ok_node,
         free_bytes_probe=_plenty_of_disk,
         docker_probe=lambda: True,
+        grok_probe=_healthy_grok,
+        ollama_tags_probe=lambda: ("qwen2.5-coder:14b",),
         sleeper=lambda _: None,
     )
     kwargs.update(overrides)
     return run_preflight(**kwargs)
+
+
+def test_claude_session_limit_copy_is_not_treated_as_a_grok_quota():
+    assert looks_like_claude_session_limit("You've hit your session limit · resets 2:30pm (Europe/Berlin)") is True
+    assert looks_like_claude_session_limit("Ollama timed out") is False
 
 
 def test_ollama_coding_backend_skips_the_cloud_cli_login():
@@ -82,22 +94,56 @@ def test_ollama_coding_backend_skips_the_cloud_cli_login():
     assert by_code["ollama_runtime"].message == "qwen2.5-coder:14b"
 
 
+def test_grok_not_logged_in_blocks_with_the_terminal_command():
+    report = _preflight(
+        grok_probe=lambda: {
+            "ready": False,
+            "error_code": "grok_not_logged_in",
+            "message": "Run `grok login` in a terminal, then select Test Connection again.",
+        }
+    )
+
+    assert report.ready is False
+    assert [blocker.code for blocker in report.blockers] == ["preflight_grok_not_logged_in"]
+    assert "grok login" in report.blockers[0].message
+    assert report.blockers[0].action == "grok login"
+    grok = next(check for check in report.checks if check.code == "grok_cli")
+    assert grok.action == "grok login"
+
+
+def test_missing_grok_cli_blocks():
+    report = _preflight(
+        grok_probe=lambda: {
+            "ready": False,
+            "error_code": "grok_cli_unavailable",
+            "message": "Grok CLI was not found. Install Grok Build TUI, then run `grok login`.",
+        }
+    )
+
+    assert report.ready is False
+    assert [blocker.code for blocker in report.blockers] == ["preflight_grok_cli_unavailable"]
+
+
 def test_healthy_environment_is_ready_and_reports_every_check():
     report = _preflight()
 
     assert report.ready is True
     assert report.blockers == ()
-    assert {check.code for check in report.checks} == {
+    by_code = {check.code: check for check in report.checks}
+    assert set(by_code) == {
+        "grok_cli",
+        "ollama_runtime",
         "coding_cli_credentials",
         "docker_engine",
         "node_runtime",
         "workspace_disk_space",
     }
-    assert all(check.status == "ok" for check in report.checks)
+    assert by_code["coding_cli_credentials"].status == "skipped"
+    assert all(check.status in {"ok", "skipped"} for check in report.checks)
 
 
 def test_expired_login_blocks_before_any_work_is_committed():
-    report = _preflight(cli_runner=_expired_cli)
+    report = _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"}, cli_runner=_expired_cli)
 
     assert report.ready is False
     assert [blocker.code for blocker in report.blockers] == ["preflight_coding_cli_auth_expired"]
@@ -115,7 +161,7 @@ def test_expired_login_blocks_before_any_work_is_committed():
     ],
 )
 def test_an_inconclusive_login_probe_does_not_block_the_run(runner):
-    report = _preflight(cli_runner=runner)
+    report = _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"}, cli_runner=runner)
 
     assert report.ready is True
     check = next(c for c in report.checks if c.code == "coding_cli_credentials")
@@ -186,6 +232,7 @@ def test_a_workspace_root_that_does_not_exist_yet_is_measured_on_its_nearest_par
 
 def test_every_blocker_is_collected_rather_than_only_the_first():
     report = _preflight(
+        environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"},
         cli_runner=_expired_cli,
         docker_probe=lambda: False,
         version_runner=lambda _c: (0, "v18.0.0\n"),
@@ -217,7 +264,7 @@ def test_credentials_can_be_skipped_without_a_provider_call():
 
 
 def test_report_converts_into_the_readiness_result_the_execution_service_consumes():
-    blocked = _preflight(cli_runner=_expired_cli).readiness()
+    blocked = _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"}, cli_runner=_expired_cli).readiness()
     healthy = _preflight().readiness()
 
     assert healthy.ready is True
@@ -246,7 +293,7 @@ def test_the_login_probe_runs_outside_any_project_workspace():
 
 
 def test_a_missing_coding_cli_is_left_to_the_adapters_own_readiness_check():
-    report = _preflight(binary_probe=lambda: None)
+    report = _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"}, binary_probe=lambda: None)
 
     assert report.ready is True
     check = next(c for c in report.checks if c.code == "coding_cli_credentials")
@@ -317,7 +364,7 @@ def test_a_live_start_blocked_by_preflight_never_reaches_the_adapter():
 
     def preflight():
         calls.append("checked")
-        return _preflight(cli_runner=_expired_cli).readiness()
+        return _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"}, cli_runner=_expired_cli).readiness()
 
     service = _execution_service(preflight)
     started = service.start(brief, handoff, live=True)
@@ -368,7 +415,7 @@ def test_a_dry_run_is_not_gated_either():
 
     def preflight():
         calls.append("checked")
-        return _preflight(cli_runner=_expired_cli).readiness()
+        return _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"}, cli_runner=_expired_cli).readiness()
 
     service = _execution_service(preflight)
     started = service.start(brief, handoff, live=False)
@@ -381,7 +428,10 @@ def test_retry_re_checks_the_environment_instead_of_trusting_the_first_start():
     """The point of a retry is usually that something in the environment changed. Trusting
     the original start's preflight would spend the whole build to rediscover a dead token."""
     brief, handoff = _approved_contract()
-    outcomes = [_preflight().readiness(), _preflight(cli_runner=_expired_cli).readiness()]
+    outcomes = [
+        _preflight().readiness(),
+        _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "claude_code"}, cli_runner=_expired_cli).readiness(),
+    ]
 
     class FailingAdapter(FakeProjectExecutionAdapter):
         def execute(self, request, event_sink, cancellation):
@@ -626,3 +676,204 @@ def test_the_retries_are_spread_out_rather_than_fired_back_to_back():
     assert status == "ok"
     assert "attempt 3" in message
     assert waits == [20.0, 60.0]
+
+
+def test_docker_blocker_names_docker_desktop():
+    report = _preflight(docker_probe=lambda: False)
+
+    docker = next(check for check in report.checks if check.code == "docker_engine")
+    assert docker.status == "blocked"
+    assert docker.action == "Start Docker Desktop"
+    assert report.blockers[0].action == "Start Docker Desktop"
+
+
+def test_ollama_not_running_names_the_serve_command():
+    report = _preflight(ollama_tags_probe=lambda: ())
+
+    ollama = next(check for check in report.checks if check.code == "ollama_runtime")
+    assert ollama.status == "blocked"
+    assert ollama.action == "ollama serve"
+    assert "ollama serve" in ollama.message
+    assert "ollama pull qwen2.5-coder:14b" in ollama.message
+
+
+def test_ollama_missing_model_names_the_pull_command(monkeypatch):
+    monkeypatch.setattr("order_workflow.ollama_code_client.select_ollama_coding_model", lambda installed=None, requested=None: "")
+    report = _preflight(ollama_tags_probe=lambda: ("tinyllama",))
+
+    ollama = next(check for check in report.checks if check.code == "ollama_runtime")
+    assert ollama.status == "blocked"
+    assert ollama.action == "ollama pull qwen2.5-coder:14b"
+
+
+def _failed_execution(*, duration=3.0, errors=("grok_not_logged_in",), rate_limit_message=None, summary="Provider failed."):
+    from order_workflow.models import ExecutionMode, ExecutionResult, ExecutionStatus, ProjectExecution
+
+    result = ExecutionResult(
+        success=False,
+        summary=summary,
+        outcome="failed",
+        errors=errors,
+        duration_seconds=duration,
+        rate_limit_message=rate_limit_message,
+        completed_at=NOW,
+    )
+    return ProjectExecution(
+        id="execution_abcd1234",
+        order_id="order_abcd1234",
+        brief_id="brief_abcd1234",
+        handoff_id="handoff_abcd1234",
+        mode=ExecutionMode.PRODUCTION,
+        live=True,
+        status=ExecutionStatus.FAILED,
+        result=result,
+        created_at=NOW,
+        updated_at=NOW,
+        started_at=NOW,
+        finished_at=NOW,
+    )
+
+
+class _SnapshotExecutions:
+    def __init__(self, snapshots=()):
+        self._snapshots = list(snapshots)
+        self._preflight = None
+
+    def list_snapshots(self):
+        return tuple(self._snapshots)
+
+    def check_readiness(self, *args, **kwargs):
+        from order_workflow.readiness import ReadinessResult
+
+        return ReadinessResult.ready_result()
+
+
+def _healthy_preflight_report(**_kwargs):
+    from order_workflow.preflight import PreflightCheck, PreflightReport
+
+    return PreflightReport(
+        ready=True,
+        checks=(PreflightCheck(code="grok_cli", label="Grok CLI login", status="ok", message="logged in"),),
+        blockers=(),
+    )
+
+
+def test_a_provider_fast_fail_blocks_the_next_live_start(monkeypatch):
+    from order_workflow.api_models import CreateOrderRequest
+    from order_workflow.service import OrderWorkflowService
+
+    monkeypatch.setattr("order_workflow.service.run_preflight", _healthy_preflight_report)
+    monkeypatch.setattr("order_workflow.claude_code_client.active_coding_backend", lambda: "ollama")
+    service = OrderWorkflowService(
+        execution_service=_SnapshotExecutions([_failed_execution()]),
+        preflight_enabled=True,
+    )
+    order_id = service.create_order(
+        CreateOrderRequest(title="Next order", description="D" * 40, product_type="web_app", preferred_language="en", constraints=(), attachments=())
+    )["order"]["id"]
+
+    gated = service._run_preflight()
+    readiness = service.execution_readiness(order_id)
+
+    assert gated.ready is False
+    assert [blocker.code for blocker in gated.blockers] == ["preflight_provider_recently_failed"]
+    assert readiness["can_run_live"] is False
+    assert any(item["code"] == "preflight_provider_recently_failed" for item in readiness["blockers"])
+    assert any(item["code"] == "provider_recent_fail" and item["status"] == "blocked" for item in readiness["checks"])
+
+
+def test_a_slow_generated_code_failure_does_not_trip_the_fast_fail_gate(monkeypatch):
+    from order_workflow.service import OrderWorkflowService
+
+    monkeypatch.setattr("order_workflow.service.run_preflight", _healthy_preflight_report)
+    service = OrderWorkflowService(
+        execution_service=_SnapshotExecutions([_failed_execution(duration=22 * 60, errors=("qa_failed",), summary="Visual gate failed.")]),
+        preflight_enabled=True,
+    )
+
+    assert service._run_preflight().ready is True
+    assert service._recent_provider_fast_fail() is None
+
+
+def test_claude_session_limit_is_stale_on_the_grok_path_and_does_not_block(monkeypatch):
+    from order_workflow.api_models import CreateOrderRequest
+    from order_workflow.service import OrderWorkflowService
+
+    monkeypatch.setattr("order_workflow.service.run_preflight", _healthy_preflight_report)
+    monkeypatch.setattr("order_workflow.claude_code_client.active_coding_backend", lambda: "ollama")
+    claude = _failed_execution(
+        duration=3.0,
+        errors=("provider_rate_limited",),
+        rate_limit_message="You've hit your session limit · resets 2:30pm (Europe/Berlin)",
+        summary="Claude session limit",
+    )
+    service = OrderWorkflowService(execution_service=_SnapshotExecutions([claude]), preflight_enabled=True)
+    order_id = service.create_order(
+        CreateOrderRequest(title="Grok order", description="D" * 40, product_type="web_app", preferred_language="en", constraints=(), attachments=())
+    )["order"]["id"]
+
+    usage = service.usage_summary()
+    readiness = service.execution_readiness(order_id)
+
+    assert usage["last_rate_limit"]["stale"] is True
+    assert usage["last_rate_limit"]["source"] == "claude"
+    assert service._run_preflight().ready is True
+    assert not any(item["code"] == "provider_quota" for item in readiness["checks"])
+
+
+def test_a_live_quota_message_blocks_start_and_is_shown_before_the_button(monkeypatch):
+    from order_workflow.api_models import CreateOrderRequest
+    from order_workflow.service import OrderWorkflowService
+
+    monkeypatch.setattr("order_workflow.service.run_preflight", _healthy_preflight_report)
+    monkeypatch.setattr("order_workflow.claude_code_client.active_coding_backend", lambda: "ollama")
+    limited = _failed_execution(
+        duration=30,
+        errors=("provider_rate_limited",),
+        rate_limit_message="rate limited, try again later",
+        summary="rate limited, try again later",
+    )
+    service = OrderWorkflowService(execution_service=_SnapshotExecutions([limited]), preflight_enabled=True)
+    order_id = service.create_order(
+        CreateOrderRequest(title="Quota order", description="D" * 40, product_type="web_app", preferred_language="en", constraints=(), attachments=())
+    )["order"]["id"]
+
+    gated = service._run_preflight()
+    readiness = service.execution_readiness(order_id)
+
+    assert gated.ready is False
+    assert [blocker.code for blocker in gated.blockers] == ["provider_rate_limited"]
+    quota = next(item for item in readiness["checks"] if item["code"] == "provider_quota")
+    assert quota["status"] == "blocked"
+    assert "rate limited, try again later" in quota["message"]
+    assert quota["action"] == "Wait, then retry this workspace"
+
+
+def test_execution_readiness_lists_preflight_checks_and_fix_commands(monkeypatch):
+    from order_workflow.api_models import CreateOrderRequest
+    from order_workflow.preflight import GROK_NOT_LOGGED_IN, PreflightCheck, PreflightReport
+    from order_workflow.service import OrderWorkflowService
+
+    def blocked_grok(**_kwargs):
+        return PreflightReport(
+            ready=False,
+            checks=(
+                PreflightCheck(code="grok_cli", label="Grok CLI login", status="blocked", message="Run grok login", action="grok login"),
+                PreflightCheck(code="ollama_runtime", label="Ollama local coder", status="ok", message="qwen2.5-coder:14b"),
+            ),
+            blockers=(GROK_NOT_LOGGED_IN,),
+        )
+
+    monkeypatch.setattr("order_workflow.service.run_preflight", blocked_grok)
+    service = OrderWorkflowService(preflight_enabled=True)
+    order_id = service.create_order(
+        CreateOrderRequest(title="Blocked order", description="D" * 40, product_type="web_app", preferred_language="en", constraints=(), attachments=())
+    )["order"]["id"]
+
+    readiness = service.execution_readiness(order_id)
+    grok = next(item for item in readiness["checks"] if item["code"] == "grok_cli")
+
+    assert grok["status"] == "blocked"
+    assert grok["action"] == "grok login"
+    assert readiness["can_run_live"] is False
+    assert any(item["code"] == "preflight_grok_not_logged_in" for item in readiness["blockers"])

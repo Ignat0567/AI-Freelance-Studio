@@ -7,6 +7,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 import os
+import time
 
 import config_storage
 from opencode_provider import OpenCodeBridgeConnection
@@ -48,7 +49,13 @@ from .models import (
     new_public_id,
     utc_now,
 )
-from .preflight import run_preflight
+from .preflight import (
+    PROVIDER_FAST_FAIL_SECONDS,
+    PROVIDER_QUOTA,
+    PROVIDER_RECENTLY_FAILED,
+    looks_like_claude_session_limit,
+    run_preflight,
+)
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
 from .claude_code_client import select_coding_execution_client
@@ -293,6 +300,8 @@ class OrderWorkflowService:
         self._handoffs = AgentHandoffService(id_factory=id_factory, clock=clock)
         self._configuration = configuration_provider or ExecutionConfigurationProvider()
         self._preflight_environ = environ
+        self._preflight_enabled = preflight_enabled
+        self._preflight_cache: tuple[float, Any] | None = None
         self._executions = execution_service or ProjectExecutionService(
             id_factory=id_factory,
             clock=clock,
@@ -319,18 +328,67 @@ class OrderWorkflowService:
         self._handoff_by_order: dict[str, AgentHandoff] = restored["handoff_by_order"]
         self._execution_by_order: dict[str, str] = restored["execution_by_order"]
 
-    def _run_preflight(self) -> ReadinessResult:
-        """Checked once per live start, not on every readiness poll -- see preflight.py."""
+    def _preflight_report(self):
         from .claude_code_client import active_coding_backend
 
+        now = time.monotonic()
+        if self._preflight_cache and now - self._preflight_cache[0] < 20:
+            return self._preflight_cache[1]
         environ = dict(self._preflight_environ or os.environ)
         backend = active_coding_backend()
         if backend and "FREELANCERSTUDIO_CODING_BACKEND" not in environ:
             environ["FREELANCERSTUDIO_CODING_BACKEND"] = backend
-        return run_preflight(
+        report = run_preflight(
             workspace_root=self._configuration.workspace_root,
             environ=environ,
-        ).readiness()
+        )
+        self._preflight_cache = (now, report)
+        return report
+
+    def _active_quota(self) -> dict[str, Any] | None:
+        limit = self.usage_summary().get("last_rate_limit")
+        if isinstance(limit, dict) and limit.get("message") and not limit.get("stale"):
+            return limit
+        return None
+
+    def _run_preflight(self) -> ReadinessResult:
+        """Checked once per live start, not on every readiness poll -- see preflight.py."""
+        report = self._preflight_report()
+        blockers = list(report.blockers)
+        trip = self._recent_provider_fast_fail()
+        if trip:
+            blockers.append(PROVIDER_RECENTLY_FAILED.model_copy(update={"message": trip["message"]}))
+        quota = self._active_quota()
+        if quota:
+            blockers.append(PROVIDER_QUOTA.model_copy(update={"message": str(quota["message"])}))
+        if blockers:
+            return ReadinessResult.blocked(*blockers)
+        return ReadinessResult.ready_result()
+
+    def _recent_provider_fast_fail(self) -> dict[str, Any] | None:
+        from .claude_code_client import active_coding_backend
+
+        snapshots = [item for item in self._executions.list_snapshots() if item.result is not None]
+        if not snapshots:
+            return None
+        snapshots.sort(key=lambda item: item.updated_at, reverse=True)
+        latest = snapshots[0]
+        result = latest.result
+        if result is None or result.success:
+            return None
+        duration = result.duration_seconds
+        if duration is None:
+            duration = (latest.updated_at - latest.created_at).total_seconds()
+        if result.failure_cause != "provider" or duration >= PROVIDER_FAST_FAIL_SECONDS:
+            return None
+        leftover = str(result.rate_limit_message or result.summary or "")
+        if looks_like_claude_session_limit(leftover) and active_coding_backend() in {"", "ollama", "opencode_bridge"}:
+            return None
+        return {
+            "order_id": latest.order_id,
+            "duration": duration,
+            "message": leftover or "Provider failed in under 10 seconds.",
+        }
 
     def _persist(self) -> None:
         with self._lock:
@@ -375,7 +433,7 @@ class OrderWorkflowService:
 
     def create_order(self, request: CreateOrderRequest) -> dict[str, Any]:
         if request.product_type not in {item.value for item in SUPPORTED_PRODUCT_TYPES}:
-            raise OrderWorkflowError("unsupported_product_type", "Only web_app and bot orders are supported.")
+            raise OrderWorkflowError("unsupported_product_type", "Only web_app, static_page, and bot orders are supported.")
         now = utc_now(self._clock)
         order = UserOrder(
             id=new_public_id("order", self._id_factory),
@@ -770,6 +828,12 @@ class OrderWorkflowService:
                     "at": result.completed_at.isoformat(),
                 }
 
+        if last_rate_limit and looks_like_claude_session_limit(str(last_rate_limit.get("message") or "")):
+            from .claude_code_client import active_coding_backend
+
+            if active_coding_backend() in {"", "ollama", "opencode_bridge"}:
+                last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
+
         return {
             "total_cost_usd": round(total_cost_usd, 6),
             "total_input_tokens": total_input_tokens,
@@ -822,6 +886,45 @@ class OrderWorkflowService:
             live_ready = False
         checks = (*self._configuration_checks(config), *tuple(checks))
         blockers.extend(self._configuration_blockers(config))
+        if self._preflight_enabled:
+            report = self._preflight_report()
+            status_map = {"ok": "ok", "blocked": "blocked", "unknown": "unknown", "skipped": "skipped"}
+            for check in report.checks:
+                checks = (
+                    *checks,
+                    readiness_check(
+                        check.code,
+                        check.label,
+                        status_map.get(check.status, "unknown"),
+                        check.message,
+                        check.action or None,
+                    ),
+                )
+            if not report.ready:
+                live_ready = False
+                blockers.extend(self._public_blocker(item) for item in report.blockers)
+            trip = self._recent_provider_fast_fail()
+            if trip:
+                live_ready = False
+                blockers.append(self._public_blocker(PROVIDER_RECENTLY_FAILED.model_copy(update={"message": trip["message"]})))
+                checks = (
+                    *checks,
+                    readiness_check(
+                        "provider_recent_fail",
+                        "Last live build",
+                        "blocked",
+                        trip["message"],
+                        PROVIDER_RECENTLY_FAILED.action,
+                    ),
+                )
+            quota = self._active_quota()
+            if quota:
+                live_ready = False
+                blockers.append(self._public_blocker(PROVIDER_QUOTA.model_copy(update={"message": str(quota["message"])})))
+                checks = (
+                    *checks,
+                    readiness_check("provider_quota", "Provider quota", "blocked", str(quota["message"]), PROVIDER_QUOTA.action),
+                )
         view = ExecutionReadinessView(
             ready=production_ready if mode is ExecutionMode.PRODUCTION else simulation_ready,
             mode=mode,

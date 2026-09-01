@@ -7,12 +7,12 @@ export default function OrderCreatePanel({ form, setForm, pending, onSubmit, onA
   return (
     <section className="fs-panel ow-card" aria-labelledby="ow-new-order-title">
       <div className="fs-panel-title"><div><span>Create Project</span><strong id="ow-new-order-title">Describe what you want the application to do</strong></div></div>
-      <p className="ow-note">MVP profile: <strong>small browser-based web applications, interactive single-file pages, and Telegram bots</strong>. After the brief is approved, start a live build from the execution step.</p>
+      <p className="ow-note">MVP profile: <strong>small browser-based web applications and interactive single-file pages</strong>. Telegram bots are coming later. After the brief is approved, start a live build from the execution step.</p>
       <form className="ow-form" onSubmit={onSubmit}>
         <label>Project title<input value={form.title} onChange={event => update('title', event.target.value)} required /></label>
-        <label>Describe {form.product_type === 'bot' ? 'the bot' : form.product_type === 'static_page' ? 'the page' : 'the application'}<textarea value={form.description} onChange={event => update('description', event.target.value)} required rows={7} /></label>
+        <label>Describe {form.product_type === 'static_page' ? 'the page' : 'the application'}<textarea value={form.description} onChange={event => update('description', event.target.value)} required rows={7} /></label>
         <div className="ow-grid two">
-          <label>Supported product type<select value={form.product_type} onChange={event => update('product_type', event.target.value)}><option value="web_app">Small web application</option><option value="bot">Telegram bot</option><option value="static_page">Interactive single-file page</option></select></label>
+          <label>Supported product type<select value={form.product_type} onChange={event => update('product_type', event.target.value)}><option value="web_app">Small web application</option><option value="static_page">Interactive single-file page</option><option value="bot" disabled>Telegram bot (coming later)</option></select></label>
           <label>Preferred language<select value={form.preferred_language} onChange={event => update('preferred_language', event.target.value)}><option value="en">English</option><option value="ru">Russian</option><option value="de">German</option></select></label>
         </div>
         <label>Optional constraints<textarea value={form.constraints} onChange={event => update('constraints', event.target.value)} rows={3} placeholder="One constraint per line" /></label>

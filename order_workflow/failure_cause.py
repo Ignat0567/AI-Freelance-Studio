@@ -41,6 +41,11 @@ _CAUSE_BY_CODE: dict[str, FailureCause] = {
     "grok_not_logged_in": "provider",
     "provider_rate_limited": "provider",
     "preflight_coding_cli_auth_expired": "provider",
+    "preflight_grok_cli_unavailable": "provider",
+    "preflight_grok_not_logged_in": "provider",
+    "preflight_ollama_unavailable": "provider",
+    "preflight_ollama_model_missing": "provider",
+    "preflight_provider_recently_failed": "provider",
     # Out of clock, not out of ability.
     "claude_code_execution_timeout": "budget",
     "coding_cli_timeout": "budget",

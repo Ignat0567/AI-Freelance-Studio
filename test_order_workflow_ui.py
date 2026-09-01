@@ -34,8 +34,10 @@ def test_new_order_screen_states_supported_profile_and_no_unsupported_options():
     # that offers a third option while promising two teaches the client not to read it.
     assert "small browser-based web applications" in profile
     assert "interactive single-file page" in profile
+    assert "coming later" in profile
     assert "telegram bot" in profile
     assert "Small web application" in source
+    assert 'option value="bot" disabled' in source
     assert "desktop" not in profile
     assert "mobile application" not in profile
 
@@ -95,6 +97,9 @@ def test_result_screen_shows_simulated_artifacts_and_verification_summary():
     assert "Open folder" in source
     assert "delivery_report.md" in source
     assert "delivery_screenshot.png" in source
+    assert "Retry this workspace" in source
+    assert "session limit" in source
+    assert "europe/berlin" in source.lower() or "europe\\/berlin" in source.lower()
 
 
 def test_api_client_uses_relative_routes_and_no_renderer_token_storage():
@@ -126,6 +131,7 @@ def test_recovery_polling_duplicate_start_and_sanitized_errors_are_present():
     state = _read("orderWorkflowState.js")
     assert "studio_order_workflow_last_order_id_v1" in page
     assert "This order could not be reloaded after the backend restarted" in page
+    assert "in-memory order is no longer available" not in page
     assert "setInterval" in page
     assert "clearInterval" in page
     assert "startInFlight" in page
@@ -162,6 +168,13 @@ def test_execution_readiness_panel_guides_settings_without_live_execution():
         "Live execution opt-in",
         "production_live_ready",
         "Live execution locked",
+        "grok login",
+        "ollama serve",
+        "ollama pull qwen2.5-coder:14b",
+        "Start Docker Desktop",
+        "Environment checklist",
+        "Provider quota",
+        "Retry this workspace",
     ]:
         assert expected in dashboard
     assert "can_prepare_dry_run" in page
