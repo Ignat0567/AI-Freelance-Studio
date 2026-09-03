@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 from time import sleep
 
@@ -491,6 +491,39 @@ def test_usage_summary_with_no_executions_is_all_zero():
     assert body["executions_with_usage"] == 0
     assert body["total_cost_usd"] == 0
     assert body["last_rate_limit"] is None
+
+
+def test_usage_summary_expires_a_rate_limit_record_a_day_old_even_with_claude_active(monkeypatch):
+    """Found 2026-09-03: a real session limit hit on 2026-08-21 was still blocking every
+    Claude Code live start 13 days later. The only staleness check clears the record when
+    a DIFFERENT backend is active -- Claude Code pinned as its own active backend could
+    never outlive its own oldest recorded miss, a self-lock nothing else could break."""
+    from order_workflow import claude_code_client
+
+    monkeypatch.setattr(claude_code_client, "active_coding_backend", lambda: "claude_code")
+    old_hit_at = NOW
+    a_day_later = NOW + timedelta(hours=25)
+    ids = SequenceIds()
+    execution = ProjectExecutionService(
+        id_factory=ids,
+        clock=lambda: old_hit_at,
+        fake_adapter=_UsageReportingAdapter(usage=None, rate_limit_message="You've hit your session limit · resets 1:10am (Europe/Berlin)"),
+        mode="fake",
+    )
+    service = OrderWorkflowService(id_factory=ids, clock=lambda: a_day_later, execution_service=execution)
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+
+    summary = client.get("/api/orders/usage-summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["last_rate_limit"]["message"] == "You've hit your session limit · resets 1:10am (Europe/Berlin)"
+    assert body["last_rate_limit"]["stale"] is True
 
 
 class _FakeRevisionAdapter:

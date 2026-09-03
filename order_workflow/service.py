@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -280,6 +280,12 @@ class ConfigurationBackedExecutionAdapter:
                 midbuild_clarification=midbuild_clarification_enabled(self._environ),
             )
         return ProductionProjectExecutionAdapter(provider_name=provider, model_name=model, workspace_root=workspace_root)
+
+
+# A Claude Code session limit resets within hours, not days (the user has observed several
+# resets in one day). 24h comfortably outlives any real reset cycle while still expiring a
+# record that has clearly stopped meaning anything -- see usage_summary()'s staleness check.
+RATE_LIMIT_RECORD_MAX_AGE = timedelta(hours=24)
 
 
 class OrderWorkflowService:
@@ -890,6 +896,14 @@ class OrderWorkflowService:
             from .claude_code_client import active_coding_backend
 
             if active_coding_backend() in {"", "ollama", "opencode_bridge", "grok", "openrouter"}:
+                last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
+            elif last_rate_limit_at is not None and utc_now(self._clock) - last_rate_limit_at > RATE_LIMIT_RECORD_MAX_AGE:
+                # A session limit resets within hours (the user has observed several
+                # resets a day), never days. Found 2026-09-03: a real limit hit on
+                # 2026-08-21 was still blocking every Claude Code live start 13 days
+                # later, because this was the only staleness check and it only fires
+                # for a DIFFERENT active backend -- Claude Code pinned as its own
+                # active backend could never outlive its own oldest recorded miss.
                 last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
 
         return {
