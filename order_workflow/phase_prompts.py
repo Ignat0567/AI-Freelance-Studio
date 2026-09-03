@@ -110,11 +110,16 @@ def build_ui_shell_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, additio
         "- Every place where asynchronous data or a future feature will later appear must show a "
         "loading or skeleton state now, so the UI does not visibly change shape once real logic is added.",
         "- Build navigation between all listed screens so it can be clicked through end to end.",
-        "- package.json must include a `preview` script that serves the production build "
-        "(the output of `npm run build`) on its tool's default local port, so the app can be "
-        "opened and smoke-tested automatically after this phase. A plain Vite project already "
-        "gets this for free (`vite preview`, default port 4173) -- do not remove or rename it "
-        "if it is already there; add it if it is missing.",
+        "- Scaffold MUST be Vite 5 + React 18, not Vite 2/3 and not React 17: package.json "
+        "dependencies `react` and `react-dom` at ^18.3.1, devDependencies `vite` at ^5.3.1 and "
+        "`@vitejs/plugin-react` at ^4.3.1, and `\"type\": \"module\"`.",
+        "- scripts.build must be `vite build`. scripts.preview must be exactly "
+        "`vite preview --host 127.0.0.1 --port 4173` so the smoke check can open "
+        "http://localhost:4173. Do not leave preview on Vite 2's default port 5000.",
+        "- src/main.jsx must import App from './App.jsx' and mount it with createRoot. Never "
+        "leave a Hello-World stub in the entry file while the real UI lives in App.jsx.",
+        "- Visible controls the smoke check can find must be real <button>, <input>, <select>, "
+        "or <a href> elements -- not clickable divs.",
         *_visual_gate_rules(brief),
         *([
             f"- The approved palette is already in ./{design_tokens_file} at the project root. Move or "
@@ -214,6 +219,8 @@ def build_core_feature_prompt(
         "values in state that outlives the screen -- context, a store, or a parent component that stays "
         "mounted -- or persist them to localStorage, so the rest of the app reads the same value.",
         "",
+        "Do not replace src/main.jsx with a Hello-World stub, do not downgrade Vite or React, "
+        "and do not remove or rename the `preview` script (`vite preview --host 127.0.0.1 --port 4173`).",
         "Do not expose secrets in logs, reports, or generated files.",
         "After wiring the feature and its test, stop and exit. Do not keep rewriting files.",
     ]
@@ -399,10 +406,18 @@ def build_static_page_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, addi
             "has no measurable contrast, and the gate rejects it.",
             "- Comment the code: what each section of the scene setup does, and why non-obvious "
             "numbers were chosen.",
+            "- Do not emit a rotating cube or a stock particle network unless the brief is about "
+            "networks or data in space. The scene must read as this brief's world.",
         ]
     else:
         shape_rules = [
             "- Do not add WebGL or Three.js unless the client asked for a 3D or cinematic scene.",
+            "- This is a website a client would open, not a raw unstyled form. Required structure: "
+            "a header or nav, a hero with an h1, one supporting sentence and a primary button or "
+            "link, at least two <section> blocks, and a footer.",
+            "- Author real CSS in a <style> tag: body margin 0, a max-width content column, "
+            "padding, and designed buttons (padding, not the browser default). Do not ship "
+            "Times-on-white unstyled controls.",
             "- Put the client's copy and controls in real HTML elements (headings, paragraphs, buttons), "
             "not as textures on a canvas.",
             "- JavaScript must be valid: no top-level return, no broken syntax, no references to files "
@@ -415,10 +430,11 @@ def build_static_page_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, addi
         if brief.elena_design_concept is not None:
             shape_rules.insert(
                 0,
-                "- Elena animates the client plate: if elena_background.webp is in the workspace, use "
-                "<img src=\"elena_background.webp\"> as a full-viewport background. Slow Ken Burns "
-                "(~30s), breathing sunlight, optional 2d-canvas water glints, frosted/solid panel for "
-                "all text, and freeze motion when prefers-reduced-motion is set.",
+                "- Elena animates the client plate as the full-viewport atmosphere: if "
+                "elena_background.webp is in the workspace, use <img src=\"elena_background.webp\"> as "
+                "the background. Slow Ken Burns (~30s), breathing sunlight, optional 2d-canvas water "
+                "glints, overlay chrome (name, nav, CTA, headline) unless the brief is a single card, "
+                "frosted/solid panel for all text, and freeze motion when prefers-reduced-motion is set.",
             )
     lines = [
         f"Build ONE self-contained file, {STATIC_PAGE_FILENAME}, at the project root. This is NOT "
@@ -437,6 +453,11 @@ def build_static_page_prompt(brief: ProjectBrief, handoff: AgentHandoff, *, addi
            ""] if addition_text else []),
         "Visual direction: follow the client's own description above -- the colours, mood and "
         "typography they asked for are authoritative. Do not substitute a different palette.",
+        "- Paint this brief's subject, not a leftover scene from another order: a bakery is a "
+        "bakery, a climate brand is that world, a card is a card.",
+        "- Unless the brief is a single card, use overlay editorial chrome on a full-viewport "
+        "atmosphere: mark and name, text nav, one CTA, headline. Put copy on a backing surface. "
+        "Do not reduce the page to one centered business card.",
         "",
         *(_elena_static_page_lines(brief, handoff)),
         "Strict rules for this phase (these take precedence over the client's additional notes above):"

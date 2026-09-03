@@ -133,6 +133,12 @@ OLLAMA_MODEL_MISSING = readiness_blocker(
     "ollama pull qwen2.5-coder:14b",
 )
 
+OPENROUTER_KEY_MISSING = readiness_blocker(
+    "preflight_openrouter_key_missing",
+    "OpenRouter API key is not configured. Save an OpenRouter key in Settings, or set OPENROUTER_API_KEY.",
+    "Open Settings",
+)
+
 PROVIDER_RECENTLY_FAILED = readiness_blocker(
     "preflight_provider_recently_failed",
     "The last live build died in under 10 seconds on the provider. Fix the login or local coder below, then retry this workspace.",
@@ -317,6 +323,24 @@ def probe_ollama_runtime(
     return "ok", selected, None
 
 
+def probe_openrouter_key(
+    *,
+    key_probe: Callable[[], bool] | None = None,
+) -> tuple[PreflightStatus, str, ExecutionBlocker | None]:
+    try:
+        if key_probe is not None:
+            present = bool(key_probe())
+        else:
+            from .openrouter_code_client import resolve_openrouter_api_key
+
+            present = bool(resolve_openrouter_api_key())
+    except Exception as exc:
+        return "unknown", f"could not be probed ({exc})", None
+    if present:
+        return "ok", "API key configured", None
+    return "blocked", OPENROUTER_KEY_MISSING.message, OPENROUTER_KEY_MISSING
+
+
 def run_preflight(
     *,
     workspace_root: Path | None = None,
@@ -329,6 +353,7 @@ def run_preflight(
     check_credentials: bool = True,
     ollama_tags_probe: Callable[[], tuple[str, ...]] | None = None,
     grok_probe: Callable[[], dict] | None = None,
+    openrouter_key_probe: Callable[[], bool] | None = None,
     # Injected so a test exercising the 401 path does not spend the real backoff waiting.
     sleeper: Callable[[float], None] = time.sleep,
 ) -> PreflightReport:
@@ -351,10 +376,21 @@ def run_preflight(
         if blocker is not None:
             blockers.append(blocker)
 
-    record("grok_cli", "Grok CLI login", probe_grok_cli(readiness_probe=grok_probe))
-
     coding_backend = (env.get("FREELANCERSTUDIO_CODING_BACKEND", "") or "").strip().lower()
-    uses_local_coder = coding_backend not in {"claude_code", "opencode_bridge"}
+    if coding_backend == "openrouter":
+        checks.append(
+            PreflightCheck(
+                code="grok_cli",
+                label="Grok CLI login",
+                status="skipped",
+                message="using OpenRouter as the coding worker",
+            )
+        )
+    else:
+        record("grok_cli", "Grok CLI login", probe_grok_cli(readiness_probe=grok_probe))
+
+    uses_local_coder = coding_backend not in {"claude_code", "opencode_bridge", "grok", "openrouter"}
+    uses_cloud_cli = coding_backend in {"claude_code", "opencode_bridge"}
     if uses_local_coder:
         record("ollama_runtime", "Ollama local coder", probe_ollama_runtime(tags_probe=ollama_tags_probe))
         checks.append(
@@ -365,7 +401,7 @@ def run_preflight(
                 message="using local Ollama instead of a cloud coding CLI",
             )
         )
-    elif check_credentials:
+    elif uses_cloud_cli and check_credentials:
         record(
             "coding_cli_credentials",
             "Coding CLI login",
@@ -375,8 +411,24 @@ def run_preflight(
                 sleeper=sleeper,
             ),
         )
-    else:
+    elif uses_cloud_cli:
         checks.append(PreflightCheck(code="coding_cli_credentials", label="Coding CLI login", status="skipped", message="not checked"))
+    else:
+        skip_reason = "using Grok CLI as the coding worker" if coding_backend == "grok" else "using OpenRouter as the coding worker"
+        checks.append(
+            PreflightCheck(
+                code="coding_cli_credentials",
+                label="Coding CLI login",
+                status="skipped",
+                message=skip_reason,
+            )
+        )
+        if coding_backend == "openrouter":
+            record(
+                "openrouter_api_key",
+                "OpenRouter API key",
+                probe_openrouter_key(key_probe=openrouter_key_probe),
+            )
 
     qa_backend = (env.get("FREELANCERSTUDIO_PHASED_QA_BACKEND", "docker") or "docker").strip().lower()
     docker_needed = qa_backend != "host" or container_deploy_enabled(env)

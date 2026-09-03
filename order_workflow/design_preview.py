@@ -361,9 +361,10 @@ def _static_page_elena_notes(brief: ProjectBrief) -> tuple[str, ...]:
     if brief.product_type is not ProductType.STATIC_PAGE:
         return ()
     return (
-        "If elena_background.webp is in the workspace, use it as a full-viewport living background.",
+        "If elena_background.webp is in the workspace, it is the full-viewport atmosphere, not a lone centered card.",
+        "Overlay editorial chrome (name, nav, CTA, headline) unless the brief is a single card.",
         "Animate the plate with slow Ken Burns, breathing light, and water glints; freeze when reduced-motion is set.",
-        "Put all copy on a frosted or solid card so contrast does not depend on the moving plate.",
+        "Put all copy on a frosted or solid panel so contrast does not depend on the moving plate.",
     )
 
 

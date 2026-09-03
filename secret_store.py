@@ -10,6 +10,7 @@ PROVIDER_ENV_NAMES = {
     "mistral": "MISTRAL_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
     "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
     "together": "TOGETHER_API_KEY",
     "xai": "XAI_API_KEY",
 }

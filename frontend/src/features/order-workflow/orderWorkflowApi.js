@@ -46,7 +46,17 @@ export const orderWorkflowApi = {
   // because a person opened the page and pressed the button, so the mid-build checkpoint
   // has someone to ask. Automated callers of the same endpoint leave it false and are
   // never paused.
-  startExecution: (orderId, mode = 'fake', live = false) => post(`/api/orders/${encodeURIComponent(orderId)}/execution`, { mode, live, attended: true }),
+  startExecution: (orderId, mode = 'fake', live = false, choice = {}) => post(`/api/orders/${encodeURIComponent(orderId)}/execution`, {
+    mode,
+    live,
+    attended: true,
+    coding_backend: choice.coding_backend || undefined,
+    connection_id: choice.connection_id || undefined,
+    model: choice.model || undefined,
+  }),
+  getGlobalAI: () => requestJson('/api/config/ai/global'),
+  getSystemConfig: () => requestJson('/api/config/system'),
+  getConnectionModels: connectionId => requestJson(`/api/provider-connections/${encodeURIComponent(connectionId)}/models`),
   getExecution: orderId => requestJson(`/api/orders/${encodeURIComponent(orderId)}/execution`),
   cancelExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/cancel`, {}),
   retryExecution: orderId => post(`/api/orders/${encodeURIComponent(orderId)}/execution/retry`, {}),

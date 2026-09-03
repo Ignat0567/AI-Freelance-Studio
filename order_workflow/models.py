@@ -527,6 +527,10 @@ class ProjectExecution(StrictDomainModel):
     prompt_additions: LongText | None = None
     events: tuple[ExecutionEvent, ...] = ()
     artifacts: tuple[ExecutionArtifact, ...] = ()
+    # Live coding pane: rolling assistant output and the file paths detected so far.
+    # Kept off the activity timeline so token streaming cannot flood the event log.
+    coding_transcript: Annotated[str, StringConstraints(max_length=24_000)] = ""
+    coding_files: tuple[ShortText, ...] = ()
     result: ExecutionResult | None = None
     created_at: datetime
     updated_at: datetime

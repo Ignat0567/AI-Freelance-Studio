@@ -1,0 +1,2464 @@
+<?xml version="1.0" encoding="utf-8"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld name="Slide 7">
+    <p:bg>
+      <p:bgPr>
+        <a:solidFill>
+          <a:srgbClr val="0E1513"/>
+        </a:solidFill>
+      </p:bgPr>
+    </p:bg>
+    <p:spTree>
+      <p:nvGrpSpPr>
+        <p:cNvPr id="1" name=""/>
+        <p:cNvGrpSpPr/>
+        <p:nvPr/>
+      </p:nvGrpSpPr>
+      <p:grpSpPr>
+        <a:xfrm>
+          <a:off x="0" y="0"/>
+          <a:ext cx="0" cy="0"/>
+          <a:chOff x="0" y="0"/>
+          <a:chExt cx="0" cy="0"/>
+        </a:xfrm>
+      </p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="2" name="Shape 0"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="201168" y="201168"/>
+            <a:ext cx="182880" cy="0"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="3" name="Shape 1"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="201168" y="201168"/>
+            <a:ext cx="0" cy="182880"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="4" name="Shape 2"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="11807647" y="201168"/>
+            <a:ext cx="182880" cy="0"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="5" name="Shape 3"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="11990527" y="201168"/>
+            <a:ext cx="0" cy="182880"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="6" name="Shape 4"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="201168" y="6656832"/>
+            <a:ext cx="182880" cy="0"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="7" name="Shape 5"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="201168" y="6473952"/>
+            <a:ext cx="0" cy="182880"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="8" name="Shape 6"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="11807647" y="6656832"/>
+            <a:ext cx="182880" cy="0"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="9" name="Shape 7"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="11990527" y="6473952"/>
+            <a:ext cx="0" cy="182880"/>
+          </a:xfrm>
+          <a:prstGeom prst="line">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln w="9525">
+            <a:solidFill>
+              <a:srgbClr val="5E635B"/>
+            </a:solidFill>
+            <a:prstDash val="solid"/>
+          </a:ln>
+        </p:spPr>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="10" name="Text 8"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="548640" y="320040"/>
+            <a:ext cx="6400800" cy="292608"/>
+          </a:xfrm>
+          <a:prstGeom prst="rect">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln/>
+        </p:spPr>
+        <p:txBody>
+          <a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="ctr"/>
+          <a:lstStyle/>
+          <a:p>
+            <a:pPr indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="EDE9DE"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>AI_FREELANCE_STUDIO </a:t>
+            </a:r>
+            <a:pPr indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="8A8F86"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>// </a:t>
+            </a:r>
+            <a:pPr indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="EDE9DE"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>MVP</a:t>
+            </a:r>
+            <a:endParaRPr lang="en-US" sz="1100" dirty="0"/>
+          </a:p>
+        </p:txBody>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="11" name="Text 9"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="6888175" y="320040"/>
+            <a:ext cx="4754880" cy="292608"/>
+          </a:xfrm>
+          <a:prstGeom prst="rect">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln/>
+        </p:spPr>
+        <p:txBody>
+          <a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="ctr"/>
+          <a:lstStyle/>
+          <a:p>
+            <a:pPr algn="r" indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="8A8F86"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>§ </a:t>
+            </a:r>
+            <a:pPr algn="r" indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="8A8F86"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>ЗАВИСИМОСТИ   </a:t>
+            </a:r>
+            <a:pPr algn="r" indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="A8D95E"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>07</a:t>
+            </a:r>
+            <a:pPr algn="r" indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="8A8F86"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t> / </a:t>
+            </a:r>
+            <a:pPr algn="r" indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1100" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="8A8F86"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>10</a:t>
+            </a:r>
+            <a:endParaRPr lang="en-US" sz="1100" dirty="0"/>
+          </a:p>
+        </p:txBody>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="12" name="Text 10"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="548640" y="777240"/>
+            <a:ext cx="9144000" cy="256032"/>
+          </a:xfrm>
+          <a:prstGeom prst="rect">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln/>
+        </p:spPr>
+        <p:txBody>
+          <a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="ctr"/>
+          <a:lstStyle/>
+          <a:p>
+            <a:pPr indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1200" spc="200" kern="0" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="A8D95E"/>
+                </a:solidFill>
+                <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>ЧТО ДОЛЖНО СТОЯТЬ НА МАШИНЕ</a:t>
+            </a:r>
+            <a:endParaRPr lang="en-US" sz="1200" dirty="0"/>
+          </a:p>
+        </p:txBody>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="13" name="Text 11"/>
+          <p:cNvSpPr/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="548640" y="1078992"/>
+            <a:ext cx="10972800" cy="365760"/>
+          </a:xfrm>
+          <a:prstGeom prst="rect">
+            <a:avLst/>
+          </a:prstGeom>
+          <a:noFill/>
+          <a:ln/>
+        </p:spPr>
+        <p:txBody>
+          <a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="ctr"/>
+          <a:lstStyle/>
+          <a:p>
+            <a:pPr indent="0" marL="0">
+              <a:buNone/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1600" dirty="0">
+                <a:solidFill>
+                  <a:srgbClr val="8A8F86"/>
+                </a:solidFill>
+                <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+              </a:rPr>
+              <a:t>Окно ≠ живой заказ. Ниже — минимум для каждого пути.</a:t>
+            </a:r>
+            <a:endParaRPr lang="en-US" sz="1600" dirty="0"/>
+          </a:p>
+        </p:txBody>
+      </p:sp>
+      <p:graphicFrame>
+        <p:nvGraphicFramePr>
+          <p:cNvPr id="8" name="Table 0"/>
+          <p:cNvGraphicFramePr>
+            <a:graphicFrameLocks noGrp="1"/>
+          </p:cNvGraphicFramePr>
+            
+          <p:nvPr>
+            <p:extLst>
+              <p:ext uri="{D42A27DB-BD31-4B8C-83A1-F6EECF244321}">
+                <p14:modId xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main" val="1579011935"/>
+              </p:ext>
+            </p:extLst>
+          </p:nvPr>
+        </p:nvGraphicFramePr>
+        <p:xfrm>
+          <a:off x="548640" y="1554480"/>
+          <a:ext cx="11064240" cy="4480560"/>
+        </p:xfrm>
+        <a:graphic>
+          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+            <a:tbl>
+              <a:tblPr/>
+              <a:tblGrid>
+                <a:gridCol w="2560320"/>
+                <a:gridCol w="2377440"/>
+                <a:gridCol w="2834640"/>
+                <a:gridCol w="3291840"/>
+              </a:tblGrid>
+              <a:tr h="640080">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1100" b="1" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="A8D95E"/>
+                          </a:solidFill>
+                          <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Программа</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1100" dirty="0">
+                        <a:latin typeface="Consolas" charset="0"/>
+                        <a:ea typeface="Consolas" charset="0"/>
+                        <a:cs typeface="Consolas" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="1A2320"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1100" b="1" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="A8D95E"/>
+                          </a:solidFill>
+                          <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Installer</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1100" dirty="0">
+                        <a:latin typeface="Consolas" charset="0"/>
+                        <a:ea typeface="Consolas" charset="0"/>
+                        <a:cs typeface="Consolas" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="1A2320"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1100" b="1" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="A8D95E"/>
+                          </a:solidFill>
+                          <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Live из исходников</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1100" dirty="0">
+                        <a:latin typeface="Consolas" charset="0"/>
+                        <a:ea typeface="Consolas" charset="0"/>
+                        <a:cs typeface="Consolas" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="1A2320"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1100" b="1" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="A8D95E"/>
+                          </a:solidFill>
+                          <a:latin typeface="Consolas" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Consolas" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Consolas" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Зачем</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1100" dirty="0">
+                        <a:latin typeface="Consolas" charset="0"/>
+                        <a:ea typeface="Consolas" charset="0"/>
+                        <a:cs typeface="Consolas" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="1A2320"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+              </a:tr>
+              <a:tr h="640080">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Windows 10/11</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>да</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>да</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>хост</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+              </a:tr>
+              <a:tr h="640080">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Python 3.12+</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="A8D95E"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>нет</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>да, venv</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>бэкенд исходников</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+              </a:tr>
+              <a:tr h="640080">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Node 20+</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="A8D95E"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>нет</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>да</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Electron / Vite</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+              </a:tr>
+              <a:tr h="640080">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Docker Desktop</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="E8A54A"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>для live QA</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>да</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>гейты в контейнере</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+              </a:tr>
+              <a:tr h="640080">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Grok CLI + login</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="E8A54A"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>для live writer</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>да</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>grok login</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+              </a:tr>
+              <a:tr h="640080">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="EDE9DE"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>Ollama 14b</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>если этот worker</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>если этот worker</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/>
+                    <a:lstStyle/>
+                    <a:p>
+                      <a:pPr algn="l" indent="0" marL="0">
+                        <a:buNone/>
+                      </a:pPr>
+                      <a:r>
+                        <a:rPr lang="en-US" sz="1300" dirty="0">
+                          <a:solidFill>
+                            <a:srgbClr val="8A8F86"/>
+                          </a:solidFill>
+                          <a:latin typeface="Calibri" pitchFamily="34" charset="0"/>
+                          <a:ea typeface="Calibri" pitchFamily="34" charset="-122"/>
+                          <a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>
+                        </a:rPr>
+                        <a:t>ollama serve / pull</a:t>
+                      </a:r>
+                      <a:endParaRPr lang="en-US" sz="1300" dirty="0">
+                        <a:latin typeface="Calibri" charset="0"/>
+                        <a:ea typeface="Calibri" charset="0"/>
+                        <a:cs typeface="Calibri" charset="0"/>
+                      </a:endParaRPr>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">
+                    <a:lnL w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnL>
+                    <a:lnR w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnR>
+                    <a:lnT w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnT>
+                    <a:lnB w="6350" cap="flat" cmpd="sng" algn="ctr">
+                      <a:solidFill>
+                        <a:srgbClr val="2A322E"/>
+                      </a:solidFill>
+                      <a:prstDash val="solid"/>
+                      <a:round/>
+                      <a:headEnd type="none" w="med" len="med"/>
+                      <a:tailEnd type="none" w="med" len="med"/>
+                    </a:lnB>
+                    <a:solidFill>
+                      <a:srgbClr val="151C1A"/>
+                    </a:solidFill>
+                      
+                  </a:tcPr>
+                   
+                </a:tc>
+              </a:tr>
+                    
+            </a:tbl>
+                
+          </a:graphicData>
+            
+        </a:graphic>
+      </p:graphicFrame>
+    </p:spTree>
+  </p:cSld>
+  <p:clrMapOvr>
+    <a:masterClrMapping/>
+  </p:clrMapOvr>
+</p:sld>

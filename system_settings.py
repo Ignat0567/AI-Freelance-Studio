@@ -18,6 +18,7 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "pycharm_path": "pycharm",
     "live_execution_enabled": False,
     "show_experimental": False,
+    "coding_backend": "",
 }
 
 ALLOWED_SYSTEM_KEYS = [
@@ -27,6 +28,7 @@ ALLOWED_SYSTEM_KEYS = [
     "default_budget", "polling_interval", "log_detail",
     "vscode_path", "pycharm_path",
     "live_execution_enabled", "show_experimental",
+    "coding_backend",
 ]
 
 _load_studio_keys: Callable[[], dict] | None = None

@@ -20,10 +20,69 @@ def test_extract_grok_text_accepts_result_and_nested_content():
     assert grok_bridge.extract_grok_text("plain text") == "plain text"
 
 
+def test_stream_event_text_keeps_assistant_text_and_drops_thoughts():
+    assert grok_bridge.stream_event_text({"type": "text", "data": "<<<FILE index.html\n"}) == "<<<FILE index.html\n"
+    assert grok_bridge.stream_event_text({"type": "thought", "data": "planning the scene"}) == ""
+    assert grok_bridge.stream_event_text({"sessionUpdate": "agent_thought_chunk", "content": {"type": "thought", "text": "PCFSoftShadowMap"}}) == ""
+    assert grok_bridge.stream_event_text({"type": "content_block_delta", "delta": {"text": "<html>"}}) == "<html>"
+    assert grok_bridge.stream_event_text({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "body"}}) == "body"
+    assert grok_bridge.stream_event_text({"params": {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "nested"}}}}) == "nested"
+
+
+def test_ask_grok_cli_streams_text_events_to_on_chunk(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_stream(cmd, timeout, cwd=None, on_line=None, cancel_check=None, **_kwargs):
+        captured["cmd"] = cmd
+        for line in (
+            json.dumps({"type": "thought", "data": "planning"}) + "\n",
+            json.dumps({"sessionUpdate": "agent_thought_chunk", "content": {"type": "thought", "text": "PCF"}}) + "\n",
+            json.dumps({"type": "text", "data": "<<<FILE index.html\n"}) + "\n",
+            json.dumps({"type": "text", "data": "<html></html>\nFILE>>>\n"}) + "\n",
+            json.dumps({"type": "end", "stopReason": "end_turn"}) + "\n",
+        ):
+            if on_line:
+                on_line(line)
+        return 0, "ignored", ""
+
+    monkeypatch.setattr(grok_bridge, "_discover_grok", lambda explicit="": r"C:\Tools\grok.exe")
+    monkeypatch.setattr(grok_bridge, "_run_capture_stream", fake_stream)
+    seen = []
+    result = grok_bridge.ask_grok_cli("system", "write files", on_chunk=seen.append)
+    assert captured["cmd"][captured["cmd"].index("--output-format") + 1] == "streaming-json"
+    assert "--leader-socket" in captured["cmd"]
+    assert seen == ["<<<FILE index.html\n", "<html></html>\nFILE>>>\n"]
+    assert result == "<<<FILE index.html\n<html></html>\nFILE>>>\n"
+
+
+def test_ask_grok_cli_recovers_file_markers_from_thoughts_when_text_is_empty(monkeypatch):
+    """The 2026-09-02 Alethia retry thought for 11 minutes and the only visible
+    sentence was 'Building...'. The page lived in agent_thought_chunk events.
+    """
+
+    def fake_stream(cmd, timeout, cwd=None, on_line=None, cancel_check=None, **_kwargs):
+        for line in (
+            json.dumps({"sessionUpdate": "agent_thought_chunk", "content": {"type": "thought", "text": "<<<FILE index.html\n<html>ok</html>\nFILE>>>\n"}}) + "\n",
+            json.dumps({"type": "text", "data": "Building a single self-contained index.html.\n"}) + "\n",
+            json.dumps({"type": "end", "stopReason": "end_turn"}) + "\n",
+        ):
+            if on_line:
+                on_line(line)
+        return 0, "ignored", ""
+
+    monkeypatch.setattr(grok_bridge, "_discover_grok", lambda explicit="": r"C:\Tools\grok.exe")
+    monkeypatch.setattr(grok_bridge, "_run_capture_stream", fake_stream)
+    seen = []
+    result = grok_bridge.ask_grok_cli("system", "write files", on_chunk=seen.append)
+    assert seen == ["Building a single self-contained index.html.\n"]
+    assert "<<<FILE index.html" in result
+    assert "<html>ok</html>" in result
+
+
 def test_ask_grok_cli_uses_plan_mode_and_prompt_file(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_run(cmd, timeout, cwd=None):
+    def fake_run(cmd, timeout, cwd=None, **_kwargs):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         return 0, json.dumps({"result": "spec-ok"}), ""
@@ -41,6 +100,23 @@ def test_ask_grok_cli_uses_plan_mode_and_prompt_file(monkeypatch, tmp_path):
     assert "-m" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("-m") + 1] == "grok-4.6"
     assert "--always-approve" not in captured["cmd"]
+
+
+def test_ask_grok_cli_does_not_copy_index_html_into_scratch(monkeypatch, tmp_path):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "index.html").write_text("<html>current</html>\n", encoding="utf-8")
+    captured = {}
+
+    def fake_run(cmd, timeout, cwd=None, **_kwargs):
+        captured["cwd"] = cwd
+        captured["has_index"] = bool(cwd) and (Path(cwd) / "index.html").is_file()
+        return 0, json.dumps({"result": "ok"}), ""
+
+    monkeypatch.setattr(grok_bridge, "_discover_grok", lambda explicit="": r"C:\Tools\grok.exe")
+    monkeypatch.setattr(grok_bridge, "_run_capture", fake_run)
+    grok_bridge.ask_grok_cli("system", "fix the page", working_directory=str(workspace))
+    assert captured["has_index"] is False
 
 
 def _client(monkeypatch, tmp_path):

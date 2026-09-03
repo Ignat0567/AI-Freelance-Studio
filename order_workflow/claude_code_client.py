@@ -18,7 +18,7 @@ from pathlib import Path
 
 import claude_bridge
 
-from .executors import CancellationToken, ExecutionEventSink
+from .executors import CancellationToken, ExecutionEventSink, emit_coding
 from .models import EventLevel, TokenUsage
 from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
@@ -148,6 +148,7 @@ class ConfiguredClaudeCodeExecutionClient:
 
         _ensure_isolated_git_repo(Path(workspace_path))
         event_sink.emit(stage="implementation", agent="Claude Code", progress=50, message="Invoking Claude Code CLI")
+        emit_coding(event_sink, "Claude Code is writing project files...\n", agent="Claude Code")
         # No --bare: it forces standard (prompting) permission behavior, which blocks
         # every file write in this non-interactive context with no TTY to answer the
         # prompt. _ensure_isolated_git_repo() above already stops `git diff`/`git status`
@@ -176,7 +177,15 @@ class ConfiguredClaudeCodeExecutionClient:
         for attempt in range(2):
             started = time.monotonic()
             try:
-                outcome = self._invoke(cmd, prompt, workspace_path, cancellation, attempt=attempt, timeout=limit)
+                outcome = self._invoke(
+                    cmd,
+                    prompt,
+                    workspace_path,
+                    cancellation,
+                    attempt=attempt,
+                    timeout=limit,
+                    on_stdout=lambda line: emit_coding(event_sink, line, agent="Claude Code"),
+                )
             except OSError as exc:
                 return OpenCodeExecutionResult(success=False, summary=f"Failed to start Claude Code CLI: {exc}", elapsed_seconds=time.monotonic() - started, timeout_seconds=limit)
             elapsed = time.monotonic() - started
@@ -280,7 +289,7 @@ class ConfiguredClaudeCodeExecutionClient:
         return OpenCodeExecutionResult(success=True, summary=str(payload.get("result") or "Claude Code completed."), outcome="generated", usage=usage, elapsed_seconds=elapsed, timeout_seconds=limit)
 
     @staticmethod
-    def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken, *, attempt: int = 0, timeout: int = CLAUDE_CODE_TASK_TIMEOUT) -> _InvokeOutcome:
+    def _invoke(cmd: list[str], prompt: str, workspace_path: Path, cancellation: CancellationToken, *, attempt: int = 0, timeout: int = CLAUDE_CODE_TASK_TIMEOUT, on_stdout=None) -> _InvokeOutcome:
         proc = subprocess.Popen(
             cmd,
             cwd=str(Path(workspace_path)),
@@ -295,10 +304,12 @@ class ConfiguredClaudeCodeExecutionClient:
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
 
-        def _drain(stream, sink: list[str]) -> None:
+        def _drain(stream, sink: list[str], notify=None) -> None:
             try:
                 for line in iter(stream.readline, ""):
                     sink.append(line)
+                    if notify is not None and line:
+                        notify(line)
             except Exception:
                 pass
 
@@ -310,7 +321,7 @@ class ConfiguredClaudeCodeExecutionClient:
                 pass
 
         stdin_thread = threading.Thread(target=_feed_stdin, daemon=True)
-        stdout_thread = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks), daemon=True)
+        stdout_thread = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks, on_stdout), daemon=True)
         stderr_thread = threading.Thread(target=_drain, args=(proc.stderr, stderr_chunks), daemon=True)
         stdin_thread.start()
         stdout_thread.start()
@@ -372,42 +383,66 @@ class ConfiguredClaudeCodeExecutionClient:
         )
 
 
+CODING_BACKENDS = ("ollama", "grok", "claude_code", "opencode_bridge", "openrouter")
+
+
 def _requested_coding_backend() -> str:
-    return os.environ.get("FREELANCERSTUDIO_CODING_BACKEND", "").strip().lower()
+    pinned = os.environ.get("FREELANCERSTUDIO_CODING_BACKEND", "").strip().lower()
+    if pinned:
+        return pinned
+    try:
+        from system_settings import SYSTEM_SETTINGS
+
+        return str(SYSTEM_SETTINGS.get("coding_backend") or "").strip().lower()
+    except Exception:
+        return ""
 
 
 def active_coding_backend() -> str:
     """Which coding worker can actually run right now.
 
-    Claude Code is no longer preferred: an expired subscription still looks
-    'installed' and used to win over a working local Ollama. Default order is
-    Ollama (local coder), then OpenCode, then Claude. FREELANCERSTUDIO_CODING_BACKEND
-    pins the choice when set to ollama / opencode_bridge / claude_code.
+    A saved Settings choice or FREELANCERSTUDIO_CODING_BACKEND pins the worker when that
+    worker is ready. Otherwise the default order is Ollama (local coder), then OpenCode,
+    then Claude, then Grok. OpenRouter is last because it spends a paid API key. Claude is
+    not preferred automatically: an expired subscription still looks installed and used to
+    win over a working local Ollama.
     """
     requested = _requested_coding_backend()
+    from .grok_code_client import ConfiguredGrokExecutionClient
     from .ollama_code_client import ConfiguredOllamaExecutionClient
+    from .openrouter_code_client import ConfiguredOpenRouterExecutionClient
     from .service import ConfiguredOpenCodeExecutionClient  # local import: avoids a service<->client import cycle
 
     ready = {
         "ollama": ConfiguredOllamaExecutionClient(expand_prompt=False).check_readiness().ready,
+        "grok": ConfiguredGrokExecutionClient().check_readiness().ready,
         "opencode_bridge": ConfiguredOpenCodeExecutionClient().check_readiness().ready,
         "claude_code": ConfiguredClaudeCodeExecutionClient().check_readiness().ready,
+        "openrouter": ConfiguredOpenRouterExecutionClient().check_readiness().ready,
     }
-    if requested in ready:
-        return requested if ready[requested] else ""
-    for backend in ("ollama", "opencode_bridge", "claude_code"):
+    if requested in CODING_BACKENDS:
+        return requested
+    for backend in ("ollama", "opencode_bridge", "claude_code", "grok"):
         if ready[backend]:
             return backend
+    if ready["openrouter"]:
+        return "openrouter"
     return ""
 
 
 def select_coding_execution_client() -> OpenCodeExecutionClient:
+    from .grok_code_client import ConfiguredGrokExecutionClient
     from .ollama_code_client import ConfiguredOllamaExecutionClient
+    from .openrouter_code_client import ConfiguredOpenRouterExecutionClient
     from .service import ConfiguredOpenCodeExecutionClient  # local import: avoids a service<->client import cycle
 
     backend = active_coding_backend()
     if backend == "ollama":
         return ConfiguredOllamaExecutionClient()
+    if backend == "grok":
+        return ConfiguredGrokExecutionClient()
     if backend == "claude_code":
         return ConfiguredClaudeCodeExecutionClient()
+    if backend == "openrouter":
+        return ConfiguredOpenRouterExecutionClient()
     return ConfiguredOpenCodeExecutionClient()

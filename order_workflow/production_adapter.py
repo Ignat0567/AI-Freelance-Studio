@@ -46,8 +46,9 @@ def live_opencode_execution_enabled(environ: dict[str, str] | None = None, confi
         return False
     if isinstance(config, dict):
         system = config.get("_system", {}) if isinstance(config.get("_system"), dict) else {}
-        if system.get("live_execution_enabled") is True:
-            return True
+        return system.get("live_execution_enabled") is True
+    if environ is not None:
+        return False
     try:
         from system_settings import SYSTEM_SETTINGS
         return bool(SYSTEM_SETTINGS.get("live_execution_enabled"))

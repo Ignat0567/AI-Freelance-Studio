@@ -244,8 +244,23 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
               </Section>
 
               <Section label="Live coding execution">
-                <Toggle checked={s.live_execution_enabled === true} onChange={v => updateSetting('live_execution_enabled', v)} label="Allow live builds that write project files (Grok spec + local Ollama)" />
-                <p className="provider-message">Turns on the same live pipeline the benchmark uses. You will still confirm each live start on the execution screen.</p>
+                <Toggle checked={s.live_execution_enabled === true} onChange={v => updateSetting('live_execution_enabled', v)} label="Allow live builds that write project files" />
+                <p className="provider-message">Turns on the same live pipeline the benchmark uses. You will still confirm each live start on the execution screen, and can change provider, model, and coding worker there.</p>
+                <label className="block mt-3 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Default coding worker
+                  <select
+                    value={s.coding_backend || ''}
+                    onChange={e => updateSetting('coding_backend', e.target.value)}
+                    className="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs focus:outline-none mt-1"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    <option value="">Auto (first ready worker)</option>
+                    <option value="ollama">Local Ollama (Grok spec + Qwen files)</option>
+                    <option value="grok">Grok subscription (Grok writes files)</option>
+                    <option value="claude_code">Claude Code subscription</option>
+                    <option value="opencode_bridge">OpenCode</option>
+                    <option value="openrouter">OpenRouter API (OpenRouter writes files)</option>
+                  </select>
+                </label>
               </Section>
 
               <Section label="Experimental tools">

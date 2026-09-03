@@ -33,6 +33,13 @@ def test_env_secret_store_reads_xai_api_key(monkeypatch):
     assert secret_store.env_name_for_secret("xai_key") == "XAI_API_KEY"
 
 
+def test_env_secret_store_reads_openrouter_api_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-env-secret")
+
+    assert secret_store.EnvSecretStore().get("openrouter_key") == "sk-or-env-secret"
+    assert secret_store.env_name_for_secret("openrouter_key") == "OPENROUTER_API_KEY"
+
+
 def test_legacy_secret_warning_is_safe(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

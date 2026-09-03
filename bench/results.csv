@@ -57,3 +57,8 @@ run_at,commit,bench_id,kind,product_type,outcome,completed,clean,failure_cause,f
 20260829T115512Z,a0c2303,b06-reading-journal,realistic_app,web_app,failed,0,0,provider,ui_shell,3.8,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b06-reading-journal-20260829T115512Z.json
 20260829T115526Z,a0c2303,b07-recipe-box,realistic_app,web_app,failed,0,0,provider,ui_shell,3.8,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b07-recipe-box-20260829T115526Z.json
 20260829T115539Z,a0c2303,b08-invoice-log,realistic_app,web_app,failed,0,0,provider,ui_shell,4.1,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b08-invoice-log-20260829T115539Z.json
+20260829T193558Z,eee31f2,b06-reading-journal,realistic_app,web_app,succeeded,1,1,,completed,873.3,0,,6,0,2,733.0,0,3.542,66134,0.354,ui_shell=sonnet;core_feature=sonnet,6,1,1,bench-b06-reading-journal-20260829T193558Z.json
+20260829T195244Z,eee31f2,b07-recipe-box,realistic_app,web_app,succeeded,1,0,,completed,1429.2,2,core_feature/qa=1;ui_shell/visual=1,6,0,4,1146.0,0,5.73,101720,0.327,ui_shell=sonnet;core_feature=sonnet,6,1,1,bench-b07-recipe-box-20260829T195244Z.json
+20260829T201649Z,eee31f2,b08-invoice-log,realistic_app,web_app,failed,0,0,provider,ui_shell,3.5,0,,0,1,1,2.0,0,0.0,0,0.001,ui_shell=sonnet,0,0,0,bench-b08-invoice-log-20260829T201649Z.json
+20260901T123516Z,1a230b2-dirty,b04-tip-splitter,small_app,web_app,qa_failed,0,0,generated_code,ui_shell,1001.4,5,ui_shell/qa=5,1,1,0,0,0,0.0,0,0.0,ui_shell=sonnet,0,0,0,bench-b04-tip-splitter-20260901T123516Z.json
+20260901T130309Z,1a230b2-dirty,b04-tip-splitter,small_app,web_app,succeeded,1,0,,completed,1302.9,2,core_feature/qa=1;ui_shell/visual=1,6,0,0,0,0,0.0,0,0.0,ui_shell=sonnet;core_feature=sonnet,6,1,1,bench-b04-tip-splitter-20260901T130309Z.json

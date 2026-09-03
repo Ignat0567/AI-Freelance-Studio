@@ -18,10 +18,11 @@ import re
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from .coding_prompt import expand_coding_prompt, is_one_file_static_page_task
-from .executors import CancellationToken, ExecutionEventSink
+from .executors import CancellationToken, ExecutionEventSink, emit_coding
 from .models import EventLevel
 from .production_adapter import OpenCodeExecutionResult
 from .readiness import OLLAMA_UNAVAILABLE, ReadinessResult
@@ -141,6 +142,29 @@ def select_ollama_coding_model(installed: tuple[str, ...] | None = None, request
     return names[0] if names else ""
 
 
+def coding_paths_from_partial(text: str) -> tuple[str, ...]:
+    """FILE paths visible in a still-streaming response, including an unfinished last file."""
+    seen: list[str] = []
+    for match in _FILE_MARKER.finditer(text or ""):
+        rel = match.group("path").strip().strip("`").replace("\\", "/")
+        if rel and rel not in seen:
+            seen.append(rel)
+    for match in _ALT_FILE_MARKER.finditer(text or ""):
+        rel = match.group("path").strip().strip("`").replace("\\", "/")
+        if rel and rel not in seen:
+            seen.append(rel)
+    for match in re.finditer(r"<<<FILE\s+(?P<path>[^\r\n]+)", text or ""):
+        rel = match.group("path").strip().strip("`").replace("\\", "/")
+        if rel and rel not in seen:
+            seen.append(rel)
+    kept: list[str] = []
+    for rel in seen:
+        if any(other != rel and other.startswith(rel) for other in seen):
+            continue
+        kept.append(rel)
+    return tuple(kept)
+
+
 def parse_emitted_files(text: str) -> list[tuple[str, str]]:
     files: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -176,8 +200,11 @@ def write_emitted_files(workspace: Path, files: list[tuple[str, str]]) -> tuple[
         path = _safe_workspace_file(workspace, relative)
         if path is None:
             continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        except OSError:
+            continue
         written.append(relative.replace("\\", "/"))
     return tuple(written)
 
@@ -189,6 +216,7 @@ def generate_ollama_completion(
     endpoint: str | None = None,
     timeout: int = OLLAMA_TASK_TIMEOUT,
     cancellation: CancellationToken | None = None,
+    on_chunk: Callable[[str], None] | None = None,
 ) -> str:
     host = (endpoint or ollama_endpoint()).rstrip("/")
     payload = {
@@ -216,7 +244,10 @@ def generate_ollama_completion(
             except ValueError:
                 continue
             if event.get("response"):
-                chunks.append(str(event["response"]))
+                piece = str(event["response"])
+                chunks.append(piece)
+                if on_chunk is not None and piece:
+                    on_chunk(piece)
             if event.get("done"):
                 break
     return "".join(chunks)
@@ -282,6 +313,7 @@ class ConfiguredOllamaExecutionClient:
             progress=40,
             message=f"Local coder {selected} is writing project files.",
         )
+        emit_coding(event_sink, f"Local coder {selected} is writing project files...\n", agent="Ollama")
         full_prompt = f"{coder_preamble_for_spec(spec)}\n\n{spec}"
         try:
             output = generate_ollama_completion(
@@ -290,6 +322,7 @@ class ConfiguredOllamaExecutionClient:
                 endpoint=self._endpoint,
                 timeout=limit,
                 cancellation=cancellation,
+                on_chunk=lambda piece: emit_coding(event_sink, piece, agent="Ollama"),
             )
         except urllib.error.URLError as exc:
             return OpenCodeExecutionResult(

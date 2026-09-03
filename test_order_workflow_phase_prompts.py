@@ -65,8 +65,12 @@ def test_ui_shell_prompt_forbids_backend_auth_and_external_calls_and_requires_sk
     assert "do not call any external api" in lowered
     assert "loading or skeleton state" in lowered
     assert "provide conversational search across uploaded pdf documents" in lowered
-    assert "`preview` script" in prompt
+    assert "`preview` script" in prompt or "scripts.preview" in prompt
     assert "4173" in prompt
+    assert "^5.3.1" in prompt
+    assert "^18.3.1" in prompt
+    assert "vite preview --host 127.0.0.1 --port 4173" in prompt
+    assert "createRoot" in prompt
 
 
 def test_ui_shell_prompt_states_the_visual_gate_s_own_thresholds():

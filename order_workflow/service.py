@@ -105,6 +105,9 @@ class ConfiguredOpenCodeExecutionClient:
         if not connection:
             return OpenCodeExecutionResult(success=False, summary="OpenCode bridge connection is not ready.")
         event_sink.emit(stage="implementation", agent="OpenCode", progress=50, message="Invoking OpenCode bridge")
+        from .executors import emit_coding
+
+        emit_coding(event_sink, "OpenCode is writing project files...\n", agent="OpenCode")
         result = OpenCodeBridgeConnection.from_dict(connection).execute(
             {
                 "user_content": prompt,
@@ -115,6 +118,9 @@ class ConfiguredOpenCodeExecutionClient:
                 "workspace_path": str(Path(workspace_path).expanduser().resolve()),
             }
         )
+        text = str(result.get("text") or "")
+        if text:
+            emit_coding(event_sink, text, agent="OpenCode")
         if result.get("status") == "success":
             return OpenCodeExecutionResult(success=True, summary=str(result.get("text") or "OpenCode completed."), outcome="generated", meaningful_artifacts=tuple(result.get("meaningful_artifacts") or ()))
         if result.get("classification") in {"generated_needs_review", "opencode_usable_but_nonterminating"}:
@@ -382,7 +388,7 @@ class OrderWorkflowService:
         if result.failure_cause != "provider" or duration >= PROVIDER_FAST_FAIL_SECONDS:
             return None
         leftover = str(result.rate_limit_message or result.summary or "")
-        if looks_like_claude_session_limit(leftover) and active_coding_backend() in {"", "ollama", "opencode_bridge"}:
+        if looks_like_claude_session_limit(leftover) and active_coding_backend() in {"", "ollama", "opencode_bridge", "grok", "openrouter"}:
             return None
         return {
             "order_id": latest.order_id,
@@ -478,11 +484,22 @@ class OrderWorkflowService:
             "design_preview_required": self._design_preview_required(brief),
             "handoff_ready": handoff is not None,
             "handoff": handoff.to_dict() if handoff else None,
-            "execution": execution.to_dict() if execution else None,
+            "execution": self._execution_payload(execution),
             "delivery": self._delivery_payload(order_id, execution),
             "next_action": next_action,
             "blockers": [item.to_dict() for item in blockers],
         }
+
+    def _execution_payload(self, execution) -> dict[str, Any] | None:
+        if execution is None:
+            return None
+        payload = execution.to_dict()
+        view = self._executions.coding_view(execution.id) if hasattr(self._executions, "coding_view") else {}
+        if view.get("coding_transcript"):
+            payload["coding_transcript"] = view["coding_transcript"]
+        if view.get("coding_files"):
+            payload["coding_files"] = view["coding_files"]
+        return payload
 
     def questions(self, order_id: str) -> dict[str, Any]:
         return self.snapshot(order_id)
@@ -668,9 +685,21 @@ class OrderWorkflowService:
                 raise OrderWorkflowError("handoff_blocked", "Approve the current brief before requesting a handoff.")
         return self.snapshot(order_id)
 
-    def start_execution(self, order_id: str, mode: ExecutionMode, *, live: bool = False, prompt_additions: str = "", attended: bool = False) -> dict[str, Any]:
+    def start_execution(
+        self,
+        order_id: str,
+        mode: ExecutionMode,
+        *,
+        live: bool = False,
+        prompt_additions: str = "",
+        attended: bool = False,
+        coding_backend: str | None = None,
+        connection_id: str | None = None,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         if live and mode is not ExecutionMode.PRODUCTION:
             raise OrderWorkflowError("invalid_execution_mode", "Live execution requires production mode.")
+        self._remember_execution_choice(coding_backend=coding_backend, connection_id=connection_id, model=model)
         with self._lock:
             order = self._order(order_id)
             brief = self._require_brief(order_id)
@@ -687,6 +716,35 @@ class OrderWorkflowService:
             self._orders[order_id] = order.model_copy(update={"execution_id": execution.id, "status": next_status})
         self._persist()
         return self.snapshot(order_id)
+
+    @staticmethod
+    def _remember_execution_choice(*, coding_backend: str | None, connection_id: str | None, model: str | None) -> None:
+        """Persist the launch-screen choice so the next run offers the same worker.
+
+        Env pin is set in this process so select_coding_execution_client() sees it even
+        when settings storage is not wired (unit tests). Automated callers omit the
+        fields and leave the saved default alone.
+        """
+        from .claude_code_client import CODING_BACKENDS
+
+        backend = (coding_backend or "").strip().lower()
+        if backend in CODING_BACKENDS:
+            os.environ["FREELANCERSTUDIO_CODING_BACKEND"] = backend
+            try:
+                from system_settings import update_system_config
+
+                update_system_config({"coding_backend": backend})
+            except Exception:
+                pass
+        conn = (connection_id or "").strip()
+        chosen_model = (model or "").strip()
+        if conn and chosen_model:
+            try:
+                from provider_config import _save_global_ai_config
+
+                _save_global_ai_config({"connection_id": conn, "model": chosen_model})
+            except Exception:
+                pass
 
     def execution_prompt_preview(self, order_id: str, prompt_additions: str = "") -> dict[str, Any]:
         """The exact instruction the coding CLI will receive for the first build phase.
@@ -831,7 +889,7 @@ class OrderWorkflowService:
         if last_rate_limit and looks_like_claude_session_limit(str(last_rate_limit.get("message") or "")):
             from .claude_code_client import active_coding_backend
 
-            if active_coding_backend() in {"", "ollama", "opencode_bridge"}:
+            if active_coding_backend() in {"", "ollama", "opencode_bridge", "grok", "openrouter"}:
                 last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
 
         return {

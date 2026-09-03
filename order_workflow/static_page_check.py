@@ -96,10 +96,34 @@ _CSS_URL = re.compile(r"""url\(\s*['"]?([^'")]+)['"]?\s*\)""", re.IGNORECASE)
 _REMOTE_SRC_PREFIXES = ("http://", "https://", "//", "data:", "blob:")
 
 
+def _iter_workspace_paths(cwd: Path):
+    """Yield paths under cwd without letting a Windows npm junction abort the walk.
+
+    `Path.rglob` follows `node_modules/.bin/playwright` (an NTFS junction this gate
+    creates) and `stat()` then raises WinError 1920. The Alethia repair of 2026-09-01
+    died on that after Grok had already returned, so the loop never asked again.
+    """
+    try:
+        iterator = cwd.rglob("*")
+    except OSError:
+        return
+    while True:
+        try:
+            path = next(iterator)
+        except StopIteration:
+            return
+        except OSError:
+            continue
+        yield path
+
+
 def _delivered_files(cwd: Path) -> list[Path]:
     files = []
-    for path in sorted(cwd.rglob("*")):
-        relative = path.relative_to(cwd)
+    for path in _iter_workspace_paths(cwd):
+        try:
+            relative = path.relative_to(cwd)
+        except ValueError:
+            continue
         # Name filters first: they answer without touching the filesystem, and the paths they
         # exclude include the one that cannot be stat-ed -- node_modules/.bin, which this gate
         # creates itself by installing Playwright into the workspace.
@@ -110,6 +134,7 @@ def _delivered_files(cwd: Path) -> list[Path]:
         if not is_regular_file(path):
             continue
         files.append(relative)
+    files.sort(key=lambda item: str(item).casefold())
     return files
 
 
@@ -147,6 +172,22 @@ def inspect_static_page_files(cwd: Path) -> list[str]:
     if size > STATIC_PAGE_MAX_BYTES:
         failures.append(f"{STATIC_PAGE_FILENAME} is {size // 1000} KB, over the {STATIC_PAGE_MAX_BYTES // 1000} KB limit. Reduce inline data or generate textures procedurally instead of embedding them.")
 
+    failures.extend(_website_shape_failures(_read_text(page)))
+    return failures
+
+
+def _website_shape_failures(html: str) -> list[str]:
+    """Cheap file-shape floor for a non-WebGL website. A canvas scene is a different product."""
+    lowered = html.lower()
+    if "<canvas" in lowered:
+        return []
+    failures: list[str] = []
+    if "<h1" not in lowered and "<h2" not in lowered:
+        failures.append("The page has no heading. A website needs a visible title (h1 or h2).")
+    if "<button" not in lowered and re.search(r"<a\b", lowered) is None:
+        failures.append("The page has no button or link. A website needs at least one way to act.")
+    if "<style" not in lowered and "style=" not in lowered:
+        failures.append("The page has no CSS. A website cannot ship as an unstyled document.")
     return failures
 
 
@@ -181,8 +222,15 @@ def _resolve_workspace_asset(cwd: Path, html_origin: Path, src: str) -> Path | N
     candidates = [cwd.joinpath(*parts), html_origin.parent.joinpath(*parts)]
     name = parts[-1]
     if name:
-        for path in cwd.rglob(name):
-            relative = path.relative_to(cwd)
+        try:
+            matches = list(cwd.rglob(name))
+        except OSError:
+            matches = []
+        for path in matches:
+            try:
+                relative = path.relative_to(cwd)
+            except ValueError:
+                continue
             if any(part in _IGNORED_NAMES for part in relative.parts):
                 continue
             if any(relative.parts[-1].startswith(prefix) for prefix in _IGNORED_PREFIXES):
@@ -193,9 +241,9 @@ def _resolve_workspace_asset(cwd: Path, html_origin: Path, src: str) -> Path | N
     for candidate in candidates:
         try:
             candidate.resolve().relative_to(root)
-        except ValueError:
+        except (OSError, ValueError):
             continue
-        if candidate.is_file():
+        if is_regular_file(candidate):
             return candidate
     return None
 
@@ -325,11 +373,21 @@ def finish_static_page_background(cwd: Path, filename: str = f"{ELENA_BACKGROUND
 
 
 def _remove_empty_dirs(cwd: Path) -> None:
-    dirs = sorted((path for path in cwd.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True)
-    for path in dirs:
-        relative = path.relative_to(cwd)
+    dirs = []
+    for path in _iter_workspace_paths(cwd):
+        try:
+            relative = path.relative_to(cwd)
+        except ValueError:
+            continue
         if any(part in _IGNORED_NAMES for part in relative.parts):
             continue
+        try:
+            if path.is_dir():
+                dirs.append(path)
+        except OSError:
+            continue
+    dirs.sort(key=lambda path: len(path.parts), reverse=True)
+    for path in dirs:
         try:
             path.rmdir()
         except OSError:
@@ -406,9 +464,8 @@ http.createServer(async (req, res) => {{
 
 
 def _build_check_script(*, require_webgl: bool = True) -> str:
-    webgl_failures = ""
     if require_webgl:
-        webgl_failures = """  if (!canvas) {
+        extra_failures = """  if (!canvas) {
     failures.push('The page has no <canvas> element, so nothing is being rendered.');
   } else {
     if (canvas.w < 2 || canvas.h < 2) failures.push(`The canvas is ${canvas.w}x${canvas.h}px -- it is not sized to be visible.`);
@@ -425,6 +482,17 @@ def _build_check_script(*, require_webgl: bool = True) -> str:
   }
   if (unbacked.length > 0) {
     failures.push(`Text sits directly over the 3D scene with no backing surface or text shadow: "${unbacked.join('", "')}". Contrast over a moving scene is not measurable -- put it on a frosted/solid panel or give it a text shadow.`);
+  }
+"""
+    else:
+        extra_failures = """  if (!websiteShape.heading) {
+    failures.push('The page has no visible heading (h1 or h2). A website needs a title.');
+  }
+  if (!websiteShape.action) {
+    failures.push('The page has no button or link. A website needs at least one action.');
+  }
+  if (websiteShape.uaMargin && !websiteShape.designedControl) {
+    failures.push('The page still uses the browser default document look (body margin and unstyled controls). Author CSS so this reads as a designed website.');
   }
 """
     return f"""import {{ chromium }} from 'playwright';
@@ -577,6 +645,16 @@ async function main() {{
   const hosts = await page.evaluate(assetHosts);
   const unbacked = await page.evaluate(unbackedTextOverScene);
   const desktop = await page.evaluate(overflowAndTargets);
+  const websiteShape = await page.evaluate(() => {{
+    const heading = Boolean(document.querySelector('h1, h2'));
+    const action = Boolean(document.querySelector('button, a[href], [role="button"]'));
+    const uaMargin = parseFloat(getComputedStyle(document.body).marginTop) >= 8;
+    const designedControl = Array.from(document.querySelectorAll('button, a[href]')).some((node) => {{
+      const style = getComputedStyle(node);
+      return parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) >= 12;
+    }});
+    return {{ heading, action, uaMargin, designedControl }};
+  }});
 
   const startedAt = Date.now();
   await page.waitForTimeout(1500);
@@ -591,7 +669,7 @@ async function main() {{
   await browser.close();
 
   const failures = [];
-{webgl_failures}
+{extra_failures}
   const foreign = hosts.filter((host) => !ALLOWED_HOSTS.includes(host));
   if (foreign.length > 0) {{
     failures.push(`Assets loaded from hosts that are not allowed: ${{foreign.join(', ')}}. Allowed: ${{ALLOWED_HOSTS.join(', ')}} -- everything else must be inline or a data: URI.`);

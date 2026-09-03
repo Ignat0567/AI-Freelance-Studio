@@ -59,6 +59,8 @@ TERMINAL_EXECUTION_STATUSES = frozenset(
 # Matches the slice every emitter already applies to its own details, and stays well inside
 # the LongText bound on ExecutionEvent.details.
 MAX_EVENT_DETAIL_CHARS = 2000
+CODING_TRANSCRIPT_LIMIT = 24000
+CODING_FILE_LIMIT = 40
 
 
 class ExecutionServiceError(ValueError):
@@ -73,6 +75,10 @@ class _ExecutionRecord:
         self.token = token
         self.worker: Thread | None = None
         self.started_monotonic: float | None = None
+        # Raw coding stream, kept off pydantic so trailing spaces between tokens survive.
+        self.coding_transcript = ""
+        self.coding_files: list[str] = []
+        self.last_coding_save: float = 0.0
 
 
 class _Sink(ExecutionEventSink):
@@ -107,6 +113,9 @@ class _Sink(ExecutionEventSink):
         return self._service._add_artifact(
             self._execution_id, kind=kind, name=name, summary=summary, reference=reference, simulated=self._simulated
         )
+
+    def coding(self, chunk: str, *, agent: str = "", files: tuple[str, ...] = ()) -> None:
+        self._service._append_coding(self._execution_id, chunk, agent=agent, files=files)
 
 
 class ProjectExecutionService:
@@ -461,7 +470,11 @@ class ProjectExecutionService:
             if record.snapshot.status in {ExecutionStatus.SUCCEEDED, ExecutionStatus.FAILED}:
                 return self._snapshot(record.snapshot)
             record.token.cancel()
-            if record.snapshot.status in {ExecutionStatus.QUEUED, ExecutionStatus.AWAITING_USER}:
+            worker = record.worker
+            worker_alive = worker is not None and bool(getattr(worker, "is_alive", lambda: False)())
+            if record.snapshot.status in {ExecutionStatus.QUEUED, ExecutionStatus.AWAITING_USER} or (
+                record.snapshot.status is ExecutionStatus.RUNNING and not worker_alive
+            ):
                 finished_event = self._finish_locked(record, self._cancelled_result(), ExecutionStatus.CANCELLED)
                 if finished_event is not None:
                     self._notify_collaboration(finished_event)
@@ -519,11 +532,26 @@ class ProjectExecutionService:
             pass  # collaboration mirroring is best-effort and must never break real execution
 
     def _restore(self) -> None:
+        now = utc_now(self._clock)
+        interrupted = ExecutionResult(
+            success=False,
+            outcome="failed",
+            summary="Studio restarted while this build was writing files. Retry this workspace.",
+            errors=("execution_interrupted_by_restart",),
+            test_summary=TestSummary(failed=1),
+            completed_at=now,
+        )
         for snapshot in self._store.load():
             record = _ExecutionRecord(snapshot, CancellationToken())
             self._records[snapshot.id] = record
             if snapshot.approval_fingerprint:
                 self._by_approval[(snapshot.order_id, snapshot.brief_id, snapshot.approval_fingerprint)] = snapshot.id
+            if snapshot.status in {ExecutionStatus.RUNNING, ExecutionStatus.QUEUED}:
+                self._finish_locked(
+                    record,
+                    interrupted.model_copy(update={"final_stage": snapshot.stage, "completed_at": utc_now(self._clock)}),
+                    ExecutionStatus.FAILED,
+                )
 
     def _run(
         self,
@@ -690,6 +718,55 @@ class ProjectExecutionService:
             record.snapshot = updated
             self._save(updated)
         self._notify_collaboration(event)
+
+    def coding_view(self, execution_id: str) -> dict[str, object]:
+        with self._lock:
+            record = self._records.get(execution_id)
+            if record is None:
+                return {}
+            return {
+                "coding_transcript": record.coding_transcript[-CODING_TRANSCRIPT_LIMIT:],
+                "coding_files": list(record.coding_files[:CODING_FILE_LIMIT]),
+            }
+
+    def _append_coding(
+        self,
+        execution_id: str,
+        chunk: str,
+        *,
+        agent: str = "",
+        files: tuple[str, ...] = (),
+    ) -> None:
+        piece = str(chunk or "")
+        extra = tuple(str(item).strip() for item in files if str(item).strip())
+        if not piece and not extra:
+            return
+        with self._lock:
+            record = self._records.get(execution_id)
+            if record is None or record.snapshot.status in TERMINAL_EXECUTION_STATUSES:
+                return
+            if piece:
+                record.coding_transcript = (record.coding_transcript + piece)[-CODING_TRANSCRIPT_LIMIT:]
+            from .ollama_code_client import coding_paths_from_partial
+
+            for path in (*extra, *coding_paths_from_partial(record.coding_transcript)):
+                cleaned = sanitize_public_text(path)[:240]
+                if cleaned and cleaned not in record.coding_files:
+                    record.coding_files.append(cleaned)
+            if len(record.coding_files) > CODING_FILE_LIMIT:
+                record.coding_files = record.coding_files[-CODING_FILE_LIMIT:]
+            now = monotonic()
+            if now - record.last_coding_save >= 2.0:
+                record.last_coding_save = now
+                record.snapshot = record.snapshot.model_copy(update=self._coding_snapshot_update(record))
+                self._save(record.snapshot)
+
+    def _coding_snapshot_update(self, record: _ExecutionRecord) -> dict[str, object]:
+        return {
+            "coding_transcript": record.coding_transcript[-CODING_TRANSCRIPT_LIMIT:],
+            "coding_files": tuple(record.coding_files[:CODING_FILE_LIMIT]),
+            "updated_at": utc_now(self._clock),
+        }
 
     def _note_queued_behind_running_build(self, execution_id: str) -> None:
         """Say why nothing is happening yet, without claiming the run has started.
@@ -984,6 +1061,8 @@ class ProjectExecutionService:
                 "current_activity": result.summary[:240],
                 "events": append_bounded_event(record.snapshot.events, event, limit=self._event_limit),
                 "result": result,
+                "coding_transcript": record.coding_transcript[-CODING_TRANSCRIPT_LIMIT:],
+                "coding_files": tuple(record.coding_files[:CODING_FILE_LIMIT]),
                 "updated_at": now,
                 "finished_at": now,
             }

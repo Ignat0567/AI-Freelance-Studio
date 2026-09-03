@@ -82,6 +82,11 @@ class StartExecutionRequest(StrictApiModel):
     # through. Defaults false so anything automated -- the bench runner, the demo scripts,
     # a future API client -- never blocks waiting for someone who is not there.
     attended: bool = False
+    # Optional per-run coding choice. Saved into Settings when present so the next launch
+    # offers the same provider; omitted by automated callers, which keep the saved default.
+    coding_backend: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] | None = None
+    connection_id: Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)] | None = None
+    model: Annotated[str, StringConstraints(strip_whitespace=True, max_length=160)] | None = None
 
 
 class ReviseExecutionRequest(StrictApiModel):

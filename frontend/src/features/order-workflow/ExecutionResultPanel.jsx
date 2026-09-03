@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { formatLabel } from './orderWorkflowState.js';
-import { EventTimeline } from './ExecutionDashboard.jsx';
+import { CodingWorkbench, EventTimeline } from './ExecutionDashboard.jsx';
 
 function UsageDetails({ usage }) {
   if (!usage) return null;
@@ -91,6 +91,7 @@ export default function ExecutionResultPanel({ state, pending, onRetry, onRevise
       )}
       {execution?.artifacts?.length > 0 && <section className="ow-artifacts"><h3>Artifacts</h3>{execution.artifacts.map(item => <article key={item.id}><strong>{item.name}</strong><span>{item.summary}</span>{item.simulated && <b>Simulated artifact</b>}</article>)}</section>}
       {result?.warnings?.length > 0 && <div className="ow-callout warning"><strong>Warnings</strong>{result.warnings.map(item => <p key={item}>{item}</p>)}</div>}
+      {(execution?.coding_transcript || execution?.coding_files?.length) ? <CodingWorkbench execution={execution} /> : null}
       <EventTimeline events={execution?.events || []} />
       {canRevise && <RevisionRequestForm pending={pending} onSubmit={onRevise} />}
       <div className="ow-actions">

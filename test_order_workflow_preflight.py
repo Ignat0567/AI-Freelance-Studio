@@ -94,6 +94,39 @@ def test_ollama_coding_backend_skips_the_cloud_cli_login():
     assert by_code["ollama_runtime"].message == "qwen2.5-coder:14b"
 
 
+def test_grok_coding_backend_skips_ollama_and_the_cloud_cli_login():
+    report = _preflight(environ={"FREELANCERSTUDIO_CODING_BACKEND": "grok"})
+
+    assert report.ready is True
+    by_code = {check.code: check for check in report.checks}
+    assert "ollama_runtime" not in by_code
+    assert by_code["coding_cli_credentials"].status == "skipped"
+    assert by_code["grok_cli"].status == "ok"
+
+
+def test_openrouter_coding_backend_skips_grok_and_ollama_and_requires_a_key():
+    blocked = _preflight(
+        environ={"FREELANCERSTUDIO_CODING_BACKEND": "openrouter"},
+        openrouter_key_probe=lambda: False,
+    )
+    assert blocked.ready is False
+    blocked_checks = {check.code: check for check in blocked.checks}
+    assert blocked_checks["grok_cli"].status == "skipped"
+    assert "ollama_runtime" not in blocked_checks
+    assert blocked_checks["coding_cli_credentials"].status == "skipped"
+    assert blocked_checks["openrouter_api_key"].status == "blocked"
+    assert "OPENROUTER_API_KEY" in blocked_checks["openrouter_api_key"].message
+
+    ready = _preflight(
+        environ={"FREELANCERSTUDIO_CODING_BACKEND": "openrouter"},
+        openrouter_key_probe=lambda: True,
+    )
+    assert ready.ready is True
+    ready_checks = {check.code: check for check in ready.checks}
+    assert ready_checks["openrouter_api_key"].status == "ok"
+    assert ready_checks["openrouter_api_key"].message == "API key configured"
+
+
 def test_grok_not_logged_in_blocks_with_the_terminal_command():
     report = _preflight(
         grok_probe=lambda: {

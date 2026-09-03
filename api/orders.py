@@ -273,7 +273,17 @@ def get_handoff(order_id: str, request: Request):
 @router.post("/{order_id}/execution")
 async def start_execution(order_id: str, request: Request):
     payload = await _body(request, StartExecutionRequest)
-    return _call(get_order_workflow_service(request).start_execution, order_id, ExecutionMode(payload.mode), live=payload.live, prompt_additions=payload.prompt_additions, attended=payload.attended)
+    return _call(
+        get_order_workflow_service(request).start_execution,
+        order_id,
+        ExecutionMode(payload.mode),
+        live=payload.live,
+        prompt_additions=payload.prompt_additions,
+        attended=payload.attended,
+        coding_backend=payload.coding_backend,
+        connection_id=payload.connection_id,
+        model=payload.model,
+    )
 
 
 @router.get("/{order_id}/readiness")

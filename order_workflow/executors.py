@@ -49,6 +49,19 @@ class ExecutionEventSink(Protocol):
 
     def artifact(self, *, kind: ArtifactKind, name: str, summary: str, reference: str) -> ExecutionArtifact: ...
 
+    def coding(self, chunk: str, *, agent: str = "", files: tuple[str, ...] = ()) -> None: ...
+
+
+def emit_coding(event_sink: object, chunk: str, *, agent: str = "", files: tuple[str, ...] = ()) -> None:
+    """Forward a coding-stream chunk when the sink implements coding(); otherwise no-op.
+
+    Test doubles and older adapters only implement emit(). Token streaming must not
+    require every sink to grow a new method.
+    """
+    method = getattr(event_sink, "coding", None)
+    if callable(method):
+        method(chunk, agent=agent, files=files)
+
 
 @dataclass(frozen=True, slots=True)
 class ExecutionRequest:

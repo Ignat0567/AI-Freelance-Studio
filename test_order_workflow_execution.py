@@ -194,6 +194,41 @@ def test_duplicate_active_returns_existing_and_terminal_duplicate_conflicts():
     assert duplicate.value.code == "execution_already_completed"
 
 
+def test_restored_running_execution_fails_so_retry_is_available():
+    brief, handoff = _approved_contract()
+    store = InMemoryExecutionStateStore()
+    first = _service(state_store=store, thread_factory=lambda *args, **kwargs: DeferredWorker())
+    started = first.start(brief, handoff)
+    assert started.status is ExecutionStatus.QUEUED
+
+    restored = _service(state_store=store)
+    snapshot = restored.snapshot(started.id)
+    assert snapshot.status is ExecutionStatus.FAILED
+    assert snapshot.result is not None
+    assert "restarted" in snapshot.result.summary.casefold()
+    assert "execution_interrupted_by_restart" in snapshot.result.errors
+
+    retried = restored.retry(started.id, brief, handoff)
+    assert retried.status in {ExecutionStatus.QUEUED, ExecutionStatus.RUNNING}
+    finished = restored.wait(started.id, 2)
+    assert finished.status is ExecutionStatus.SUCCEEDED
+
+
+def test_cancel_finishes_a_running_execution_with_no_worker():
+    brief, handoff = _approved_contract()
+    service = _service(thread_factory=lambda *args, **kwargs: DeferredWorker())
+    started = service.start(brief, handoff)
+    with service._lock:
+        record = service._records[started.id]
+        record.worker = None
+        record.snapshot = record.snapshot.model_copy(
+            update={"status": ExecutionStatus.RUNNING, "started_at": record.snapshot.created_at}
+        )
+    cancelled = service.cancel(started.id)
+    assert cancelled.status is ExecutionStatus.CANCELLED
+    assert cancelled.finished_at is not None
+
+
 def test_restored_terminal_execution_preserves_duplicate_prevention():
     brief, handoff = _approved_contract()
     store = InMemoryExecutionStateStore()

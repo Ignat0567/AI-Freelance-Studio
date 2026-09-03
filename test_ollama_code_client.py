@@ -21,6 +21,39 @@ def test_select_ollama_coding_model_prefers_qwen_14b_and_skips_base():
     assert select_ollama_coding_model(installed, requested="qwen2.5-coder:14b") == "qwen2.5-coder:14b"
 
 
+def test_coding_paths_from_partial_include_an_unfinished_file():
+    from order_workflow.ollama_code_client import coding_paths_from_partial
+
+    text = "noise\n<<<FILE index.html\n<!DOCTYPE html><html>"
+    assert coding_paths_from_partial(text) == ("index.html",)
+    assert coding_paths_from_partial("<<<FILE index.\n<<<FILE index.html\n") == ("index.html",)
+
+
+def test_ollama_stream_forwards_chunks_to_the_callback(monkeypatch):
+    from order_workflow.ollama_code_client import generate_ollama_completion
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def __iter__(self):
+            return iter(
+                [
+                    b'{"response":"<<<FILE index.html\\n"}\n',
+                    b'{"response":"<html></html>\\nFILE>>>","done":true}\n',
+                ]
+            )
+
+    monkeypatch.setattr("order_workflow.ollama_code_client.urllib.request.urlopen", lambda *_args, **_kwargs: _FakeResponse())
+    seen = []
+    text = generate_ollama_completion("prompt", model="qwen2.5-coder:14b", on_chunk=seen.append)
+    assert "".join(seen) == text
+    assert "<<<FILE index.html" in text
+
+
 def test_parse_and_write_file_markers_stay_inside_the_workspace(tmp_path):
     text = (
         "noise\n"
@@ -41,7 +74,26 @@ def test_parse_and_write_file_markers_stay_inside_the_workspace(tmp_path):
     assert not (tmp_path / "escape.txt").exists()
 
 
+def test_select_coding_execution_client_honors_saved_grok_choice(monkeypatch):
+    from order_workflow.grok_code_client import ConfiguredGrokExecutionClient
+
+    class Ready:
+        ready = True
+
+    monkeypatch.setattr("order_workflow.ollama_code_client.ConfiguredOllamaExecutionClient.check_readiness", lambda self: Ready())
+    monkeypatch.setattr("order_workflow.claude_code_client.ConfiguredClaudeCodeExecutionClient.check_readiness", lambda self: Ready())
+    monkeypatch.setattr("order_workflow.service.ConfiguredOpenCodeExecutionClient.check_readiness", lambda self: Ready())
+    monkeypatch.setattr("order_workflow.grok_code_client.ConfiguredGrokExecutionClient.check_readiness", lambda self: Ready())
+    monkeypatch.setattr("order_workflow.openrouter_code_client.ConfiguredOpenRouterExecutionClient.check_readiness", lambda self: Ready())
+    monkeypatch.setenv("FREELANCERSTUDIO_CODING_BACKEND", "grok")
+
+    client = select_coding_execution_client()
+    assert isinstance(client, ConfiguredGrokExecutionClient)
+
+
 def test_select_coding_execution_client_prefers_ollama_over_claude(monkeypatch):
+    import system_settings
+
     class Ready:
         ready = True
 
@@ -52,6 +104,7 @@ def test_select_coding_execution_client_prefers_ollama_over_claude(monkeypatch):
     monkeypatch.setattr("order_workflow.claude_code_client.ConfiguredClaudeCodeExecutionClient.check_readiness", lambda self: Blocked())
     monkeypatch.setattr("order_workflow.service.ConfiguredOpenCodeExecutionClient.check_readiness", lambda self: Blocked())
     monkeypatch.delenv("FREELANCERSTUDIO_CODING_BACKEND", raising=False)
+    monkeypatch.setitem(system_settings.SYSTEM_SETTINGS, "coding_backend", "")
 
     client = select_coding_execution_client()
     assert isinstance(client, ConfiguredOllamaExecutionClient)

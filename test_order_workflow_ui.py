@@ -33,11 +33,15 @@ def test_new_order_screen_states_supported_profile_and_no_unsupported_options():
     # Every product type the selector offers has to appear in the stated profile: a screen
     # that offers a third option while promising two teaches the client not to read it.
     assert "small browser-based web applications" in profile
-    assert "interactive single-file page" in profile
+    assert "websites (one html file)" in profile
     assert "coming later" in profile
     assert "telegram bot" in profile
     assert "Small web application" in source
+    assert ">Website<" in source
+    assert 'option value="static_page"' in source
     assert 'option value="bot" disabled' in source
+    assert "Use bakery website example" in source
+    assert "Harbour Bakery" in _read("orderWorkflowState.js")
     assert "desktop" not in profile
     assert "mobile application" not in profile
 
@@ -82,6 +86,14 @@ def test_execution_dashboard_is_live_first_and_cancellable():
     assert "Cancel execution" in source
     assert "Grok" in source
     assert "Ollama" in source
+    assert "This run" in source
+    assert "Who writes the project files" in source
+    assert "claude_code" in source
+    assert "openrouter" in source
+    assert "Provider connection" in source
+    assert "Writing project files" in source
+    assert "ow-execution-split" in source
+    assert "CodingWorkbench" in source
     for agent in ["active_agent", "stage", "progress", "events", "blockers", "Execution Readiness"]:
         assert agent in source
 
@@ -98,6 +110,7 @@ def test_result_screen_shows_simulated_artifacts_and_verification_summary():
     assert "delivery_report.md" in source
     assert "delivery_screenshot.png" in source
     assert "Retry this workspace" in source
+    assert "CodingWorkbench" in source
     assert "session limit" in source
     assert "europe/berlin" in source.lower() or "europe\\/berlin" in source.lower()
 
@@ -180,7 +193,7 @@ def test_execution_readiness_panel_guides_settings_without_live_execution():
     assert "can_prepare_dry_run" in page
     assert "orderWorkflowApi.getReadiness" in page
     assert "startExecution(state.order.id, mode, false)" in page
-    assert "startExecution(state.order.id, 'production', true)" in page
+    assert "startExecution(state.order.id, 'production', true, choice)" in page
     assert "mode = 'production'" in api
     assert "X-FreelancerStudio-Token" not in dashboard + page + api
     assert "ow-readiness" in css

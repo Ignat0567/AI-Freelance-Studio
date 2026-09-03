@@ -58,9 +58,23 @@
 .ow-proposal-text { white-space: pre-wrap; word-break: break-word; background: rgba(255,255,255,.05); border: 1px solid var(--fs-border); border-radius: 16px; padding: 14px; color: var(--fs-text); font-family: inherit; max-height: 420px; overflow-y: auto; }
 .ow-progress { height: 12px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.12); }
 .ow-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--fs-accent), #8fe3ff); }
+.ow-execution-split { display: grid; grid-template-columns: minmax(260px, 0.85fr) minmax(340px, 1.15fr); gap: 16px; align-items: stretch; }
+.ow-execution-main { display: grid; gap: 16px; min-width: 0; }
+.ow-coding { display: grid; grid-template-rows: auto auto minmax(280px, 52vh); min-height: 420px; border: 1px solid var(--fs-border); border-radius: 20px; background: #0b1220; overflow: hidden; }
+.ow-coding-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; padding: 14px 16px 10px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.ow-coding-head h3 { margin: 4px 0 0; color: #e8f0fb; }
+.ow-coding-head strong { color: #8fe3ff; font-size: .85rem; }
+.ow-coding-pulse { animation: ow-coding-pulse 1.4s ease-in-out infinite; }
+.ow-coding-files { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.ow-coding-files button { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); color: #c5d4e8; border-radius: 999px; padding: 5px 10px; font-size: .75rem; white-space: nowrap; }
+.ow-coding-files button.active { background: rgba(143, 227, 255, .16); border-color: rgba(143, 227, 255, .45); color: #fff; }
+.ow-coding-stream { margin: 0; padding: 12px 14px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 12px; line-height: 1.45; color: #d7e3f4; white-space: pre-wrap; word-break: break-word; }
+.ow-coding-stream.live::after { content: "▍"; color: #8fe3ff; animation: ow-coding-caret 1s step-end infinite; }
+@keyframes ow-coding-caret { 50% { opacity: 0; } }
+@keyframes ow-coding-pulse { 50% { opacity: .45; } }
 .ow-timeline, .ow-artifacts { display: grid; gap: 8px; }
 .ow-timeline article, .ow-artifacts article { display: grid; gap: 3px; border: 1px solid var(--fs-border); border-radius: 16px; padding: 11px; background: rgba(255,255,255,.045); }
 .ow-timeline span, .ow-artifacts span, .ow-artifacts b { color: var(--fs-muted); }
 .ow-result-summary { display: grid; gap: 12px; }
-@media (max-width: 860px) { .ow-hero, .ow-revision-box, .ow-design-head { flex-direction: column; } .ow-grid.two, .ow-brief-grid, .ow-status-grid, .ow-region-list, .ow-readiness-modes, .ow-readiness-checks { grid-template-columns: 1fr; } .ow-mode { justify-items: start; } }
-@media (prefers-reduced-motion: reduce) { .ow-steps button, .ow-actions button { transition: none; } }
+@media (max-width: 860px) { .ow-hero, .ow-revision-box, .ow-design-head { flex-direction: column; } .ow-grid.two, .ow-brief-grid, .ow-status-grid, .ow-region-list, .ow-readiness-modes, .ow-readiness-checks, .ow-execution-split { grid-template-columns: 1fr; } .ow-mode { justify-items: start; } .ow-coding { min-height: 320px; grid-template-rows: auto auto minmax(220px, 40vh); } }
+@media (prefers-reduced-motion: reduce) { .ow-steps button, .ow-actions button, .ow-coding-pulse, .ow-coding-stream.live::after { transition: none; animation: none; } }

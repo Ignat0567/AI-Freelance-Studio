@@ -207,6 +207,8 @@ def _selected_model(config: dict | None, active_backend_probe: Callable[[], str]
         return "qwen2.5-coder:14b"
     if backend == "grok":
         return "grok-4.6"
+    if backend == "openrouter":
+        return "anthropic/claude-sonnet-4"
     return ""
 
 

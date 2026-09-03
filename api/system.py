@@ -348,6 +348,7 @@ class SystemConfigPayload(StrictRequestModel):
     pycharm_path: Any | None = None
     live_execution_enabled: Any | None = None
     show_experimental: Any | None = None
+    coding_backend: Any | None = None
 
 
 @router.get("/api/system/build")

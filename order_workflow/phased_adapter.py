@@ -56,6 +56,7 @@ from .qa_runner import QAOutcome, run_qa_commands
 from .state_continuity_check import run_state_continuity_check_in_docker
 from .readiness import LIVE_EXECUTION_OPT_IN_REQUIRED, ReadinessResult
 from .visual_check import SCREENSHOT_FILENAME, build_visual_check_runner, palette_from_concept
+from .web_app_scaffold import reconcile_web_app_workspace
 from .website_generation import detect_cinematic_website_intent
 from .workspace import is_regular_file, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
@@ -334,7 +335,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         deploy_runner: Callable[..., DeploymentOutcome] | None = None,
     ) -> None:
         super().__init__(provider_name=provider_name, model_name=model_name, workspace_root=workspace_root, qa_commands=qa_commands, dry_run=True, writable_probe=writable_probe)
-        self._opencode_client = opencode_client or UnavailableOpenCodeExecutionClient()
+        self._opencode_client = _WebAppCodingClient(opencode_client or UnavailableOpenCodeExecutionClient())
         self._environ = environ
         # The general-purpose prose call: the README overview, and the cinematic-website
         # fallback's own section-copy call. The backend-decision gate used to take a second,
@@ -1143,6 +1144,27 @@ class TelegramBotExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
         )
 
 
+class _WebAppCodingClient:
+    """Write-only coding CLIs invent Vite 2 and Hello-World entry files; pin the scaffold after every write."""
+
+    def __init__(self, inner: OpenCodeExecutionClient) -> None:
+        self._inner = inner
+
+    def check_readiness(self):
+        return self._inner.check_readiness()
+
+    def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
+        params = self._inner.execute_project_prompt.__code__.co_varnames
+        kwargs = {}
+        if "model" in params:
+            kwargs["model"] = model
+        if "timeout" in params:
+            kwargs["timeout"] = timeout
+        result = self._inner.execute_project_prompt(prompt, workspace_path, event_sink, cancellation, **kwargs)
+        reconcile_web_app_workspace(Path(workspace_path))
+        return result
+
+
 class _StaticPageCodingClient:
     """Write-only coding CLIs cannot delete leftover files; reconcile after every write."""
 
@@ -1164,7 +1186,12 @@ class _StaticPageCodingClient:
         )
         if self._after_write is not None:
             self._after_write(Path(workspace_path))
-        reconcile_static_page_workspace(Path(workspace_path))
+        try:
+            reconcile_static_page_workspace(Path(workspace_path))
+        except OSError:
+            # A Windows npm junction in node_modules/.bin must not turn a finished
+            # Grok write into "the repair call could not be made".
+            pass
         return result
 
 
@@ -1228,7 +1255,10 @@ class StaticPageExecutionAdapter(PhasedLiveOpenCodeExecutionAdapter):
             if plate is not None and staged_name:
                 stage_static_page_background(Path(cwd), plate)
                 finish_static_page_background(Path(cwd), staged_name)
-            reconcile_static_page_workspace(Path(cwd))
+            try:
+                reconcile_static_page_workspace(Path(cwd))
+            except OSError:
+                pass
             if inner_runner is run_static_page_check_in_docker:
                 return run_static_page_check_in_docker(qa_commands, cwd, require_webgl=cinematic)
             return inner_runner(qa_commands, cwd)

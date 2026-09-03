@@ -52,3 +52,13 @@ def test_one_file_task_tells_grok_to_list_only_index_html():
     assert "exactly one file" in captured["user"].casefold()
     assert "Do not list package.json" in captured["user"]
     assert "FILE: index.html" in expansion_user_prompt(original)
+
+
+def test_web_app_task_tells_grok_to_pin_vite_5_and_mount_app():
+    original = "Implement ONLY the UI shell for this project: screens and navigation between them."
+    prompt = expansion_user_prompt(original)
+
+    assert "vite preview --host 127.0.0.1 --port 4173" in prompt
+    assert "^5.3.1" in prompt
+    assert "createRoot" in prompt
+    assert "Do not list package.json" not in prompt

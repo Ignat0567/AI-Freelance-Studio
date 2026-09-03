@@ -55,6 +55,11 @@ GROK_CLI_UNAVAILABLE = readiness_blocker(
     "Grok CLI is not installed or not logged in. Run `grok login`.",
 )
 
+OPENROUTER_UNAVAILABLE = readiness_blocker(
+    "openrouter_unavailable",
+    "OpenRouter API key is not configured. Save an OpenRouter key in Settings, or set OPENROUTER_API_KEY.",
+)
+
 WORKSPACE_UNAVAILABLE = readiness_blocker(
     "workspace_unavailable",
     "A writable project workspace is not available.",

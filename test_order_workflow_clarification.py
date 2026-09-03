@@ -155,6 +155,32 @@ def test_static_page_brief_includes_elena_living_plate_concept():
     assert "living client plate" in brief.elena_design_concept.visual_direction.casefold()
 
 
+def test_static_page_brief_for_a_named_business_is_not_a_mini_card():
+    clarification, briefs, _handoffs = _services()
+    order = _order(
+        "Harbour Bakery: a one-page site. Warm bread, morning light, harbour fog outside.",
+        title="Harbour Bakery",
+        product_type="static_page",
+        id="order_harbour_bakery",
+    )
+    started = clarification.begin(order)
+    current_order, session = started.order, started.session
+    if any(question.id == "core-features" for question in current_order.questions):
+        answered = clarification.apply_answers(
+            current_order,
+            session,
+            (ClarificationAnswer(question_id="core-features", value="See the bread, read the hours, order a loaf"),),
+        )
+        current_order, session = answered.order, answered.session
+    completed = clarification.use_recommended_defaults(current_order, session)
+    brief = briefs.generate(completed.order, completed.session)
+
+    assert brief.elena_design_concept is not None
+    assert "harbour bakery" in brief.elena_design_concept.visual_direction.casefold()
+    assert "centered frosted content card" not in brief.elena_design_concept.layout.casefold()
+    assert "living client plate" not in brief.elena_design_concept.visual_direction.casefold()
+
+
 def test_complete_web_description_creates_fewer_questions():
     sparse = AlexClarificationService(clock=lambda: NOW).begin(_order("Build an app.", title="Small app"))
     complete = AlexClarificationService(clock=lambda: NOW).begin(

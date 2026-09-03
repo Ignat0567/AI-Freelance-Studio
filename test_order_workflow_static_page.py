@@ -197,6 +197,34 @@ def test_file_shape_rejects_an_oversized_page(tmp_path):
     assert "over the" in report and "KB limit" in report
 
 
+def test_an_unstyled_form_fails_the_website_shape_floor(tmp_path):
+    (tmp_path / STATIC_PAGE_FILENAME).write_text(
+        "<!doctype html><html><body><input id='total'><button>10%</button></body></html>",
+        encoding="utf-8",
+    )
+
+    failures = inspect_static_page_files(tmp_path)
+
+    assert any("heading" in item.lower() for item in failures)
+    assert any("css" in item.lower() for item in failures)
+
+
+def test_a_designed_website_file_passes_the_shape_floor(tmp_path):
+    (tmp_path / STATIC_PAGE_FILENAME).write_text(
+        "<!doctype html><html><head><style>body{margin:0}button{padding:12px 20px}</style></head>"
+        "<body><h1>Harbour Bakery</h1><button>See today's loaves</button></body></html>",
+        encoding="utf-8",
+    )
+
+    assert inspect_static_page_files(tmp_path) == []
+
+
+def test_a_webgl_canvas_page_is_not_held_to_the_website_shape_floor(tmp_path):
+    _page(tmp_path)
+
+    assert inspect_static_page_files(tmp_path) == []
+
+
 def test_file_shape_ignores_the_pipeline_s_own_footprint(tmp_path):
     # node_modules from the gate's own Playwright install, checkpoints, prompt records and
     # delivery docs are not the client's deliverable -- counting them would fail every run.
@@ -363,6 +391,30 @@ def test_a_windows_npm_junction_cannot_crash_the_gate(tmp_path, monkeypatch):
     assert _delivered_files(tmp_path) == [Path("index.html")]
 
 
+def test_reconcile_survives_a_windows_npm_junction_on_is_dir(tmp_path, monkeypatch):
+    """The same junction that `_delivered_files` already skipped still killed reconcile:
+    `_remove_empty_dirs` called `is_dir()` *before* the node_modules name filter, and
+    WinError 1920 aborted the repair loop of 2026-09-01 after Grok had returned.
+    """
+    from order_workflow.static_page_check import reconcile_static_page_workspace
+
+    (tmp_path / "index.html").write_text("<!doctype html><title>t</title>", encoding="utf-8")
+    junction = tmp_path / "node_modules" / ".bin"
+    junction.mkdir(parents=True)
+    (junction / "playwright").write_text("shim", encoding="utf-8")
+
+    real_is_dir = Path.is_dir
+
+    def exploding_is_dir(self):
+        if ".bin" in self.parts:
+            raise OSError(1920, "the file cannot be accessed by the system")
+        return real_is_dir(self)
+
+    monkeypatch.setattr(Path, "is_dir", exploding_is_dir)
+    reconcile_static_page_workspace(tmp_path)
+    assert (tmp_path / "index.html").is_file()
+
+
 def test_an_entry_that_cannot_answer_is_not_a_file(tmp_path, monkeypatch):
     from order_workflow.workspace import is_regular_file
 
@@ -419,7 +471,8 @@ def test_reconcile_promotes_the_richest_html_and_drops_sibling_sources(tmp_path)
 
 def test_reconcile_inlines_external_script_into_the_page(tmp_path):
     (tmp_path / "index.html").write_text(
-        "<!doctype html><html><body><h1>Mini Card</h1><button>Email</button>"
+        "<!doctype html><html><head><style>body{margin:0}button{padding:12px 20px}</style></head>"
+        "<body><h1>Mini Card</h1><button>Email</button>"
         "<script src=\"main.js\"></script></body></html>",
         encoding="utf-8",
     )
@@ -451,6 +504,9 @@ def test_non_cinematic_prompt_does_not_require_webgl():
     assert "working webgl context" not in lowered
     assert "issue draw calls" not in lowered
     assert STATIC_PAGE_FILENAME in prompt
+    assert "not a raw unstyled form" in lowered
+    assert "<section>" in prompt
+    assert "designed buttons" in lowered
 
 
 def test_non_webgl_check_script_still_screenshots_and_skips_draw_calls(tmp_path):
@@ -469,12 +525,15 @@ def test_non_webgl_check_script_still_screenshots_and_skips_draw_calls(tmp_path)
     assert "pageerror" in script
     assert "Zero WebGL draw calls" not in script
     assert "The page has no <canvas>" not in script
+    assert "websiteShape" in script
+    assert "designed website" in script
 
 
 def test_reconcile_inlines_background_image_and_drops_the_sibling(tmp_path):
     (tmp_path / "elena_background.webp").write_bytes(b"RIFF....WEBPFAKE")
     (tmp_path / "index.html").write_text(
-        "<!doctype html><html><body><h1>Mini Card</h1><button>Email</button>"
+        "<!doctype html><html><head><style>body{margin:0}button{padding:12px 20px}</style></head>"
+        "<body><h1>Mini Card</h1><button>Email</button>"
         '<img src="elena_background.webp" alt=""></body></html>',
         encoding="utf-8",
     )
@@ -543,3 +602,43 @@ def test_elena_static_page_prompt_asks_to_animate_the_plate():
     assert "elena_background.webp" in lowered
     assert "ken burns" in lowered
     assert "working webgl context" not in lowered
+
+
+def test_cinematic_prompt_forbids_a_cube_and_asks_for_this_brief_s_world():
+    prompt = build_static_page_prompt(_brief(), _handoff()).lower()
+    assert "rotating cube" in prompt
+    assert "this brief's subject" in prompt
+    assert "overlay editorial chrome" in prompt
+    assert "stock particle network" in prompt
+
+
+def test_elena_static_concept_follows_the_order_subject():
+    from order_workflow.brief_service import _elena_placeholder
+
+    climate = _elena_placeholder(
+        ElenaDesignChoice.SHOW_ELENA_CONCEPT,
+        product_type=ProductType.STATIC_PAGE,
+        described="A cinematic WebGL nature world for alethia climate-tech. Moss, ferns, fog.",
+        title="Alethia Carbon Intelligence",
+    )
+    bakery = _elena_placeholder(
+        ElenaDesignChoice.SHOW_ELENA_CONCEPT,
+        product_type=ProductType.STATIC_PAGE,
+        described="Harbour Bakery: warm bread, morning light, harbour fog outside the windows.",
+        title="Harbour Bakery",
+    )
+    card = _elena_placeholder(
+        ElenaDesignChoice.SHOW_ELENA_CONCEPT,
+        product_type=ProductType.STATIC_PAGE,
+        described="A single HTML page showing the name Mini Card and a button labelled Email.",
+        title="Mini Card",
+    )
+    assert climate is not None and bakery is not None and card is not None
+    assert "alethia" in climate.visual_direction.casefold()
+    assert "harbour bakery" in bakery.visual_direction.casefold()
+    assert climate.visual_direction != bakery.visual_direction
+    assert "centered frosted content card" not in climate.layout.casefold()
+    assert "centered frosted content card" not in bakery.layout.casefold()
+    assert "overlay" in climate.layout.casefold()
+    assert "living client plate" in card.visual_direction.casefold()
+    assert "centered frosted content card" in card.layout.casefold()

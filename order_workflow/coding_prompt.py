@@ -47,6 +47,17 @@ _ONE_FILE_EXPAND_ADDENDUM = (
     "Do not list package.json, src/, sibling .js/.css, tests, or Dockerfile.\n\n"
 )
 
+_WEB_APP_EXPAND_ADDENDUM = (
+    "If this is a Vite/React app, pin the scaffold the smoke check opens:\n"
+    "- FILE: package.json with react/react-dom ^18.3.1, vite ^5.3.1, @vitejs/plugin-react ^4.3.1, "
+    "type module, scripts.build `vite build`, scripts.preview exactly "
+    "`vite preview --host 127.0.0.1 --port 4173`.\n"
+    "- FILE: src/main.jsx must import App from './App.jsx' and mount it with createRoot. "
+    "Never a Hello-World stub in the entry file.\n"
+    "- FILE: vite.config.js preview.host 127.0.0.1 and preview.port 4173.\n"
+    "Do not specify Vite 2/3 or React 17.\n\n"
+)
+
 
 def is_one_file_static_page_task(text: str) -> bool:
     lowered = (text or "").casefold()
@@ -57,11 +68,11 @@ def is_one_file_static_page_task(text: str) -> bool:
 
 def expansion_user_prompt(original: str) -> str:
     prefix = _EXPAND_INSTRUCTIONS
-    if is_one_file_static_page_task(original):
-        prefix = _EXPAND_INSTRUCTIONS.replace(
-            "Original coding task:\n",
-            _ONE_FILE_EXPAND_ADDENDUM + "Original coding task:\n",
-        )
+    addendum = _ONE_FILE_EXPAND_ADDENDUM if is_one_file_static_page_task(original) else _WEB_APP_EXPAND_ADDENDUM
+    prefix = _EXPAND_INSTRUCTIONS.replace(
+        "Original coding task:\n",
+        addendum + "Original coding task:\n",
+    )
     return prefix + original
 
 

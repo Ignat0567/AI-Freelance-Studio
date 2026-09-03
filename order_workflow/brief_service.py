@@ -295,7 +295,37 @@ def verify_brief_approval(brief: ProjectBrief) -> bool:
     return _brief_fingerprint(unapproved) == brief.approval_fingerprint
 
 
-def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType = ProductType.WEB_APP, described: str = "") -> ElenaDesignConcept | None:
+_CARD_PAGE_CUES = ("mini card", "profile card", "business card", "name card", "calling card")
+_NOT_A_CARD_CUES = ("webgl", "cinematic", "three.js", "3d scene", "living nature", "full-viewport")
+
+
+def _looks_like_card_page(text: str) -> bool:
+    hay = (text or "").casefold()
+    if any(cue in hay for cue in _NOT_A_CARD_CUES):
+        return False
+    if any(cue in hay for cue in _CARD_PAGE_CUES):
+        return True
+    return bool(re.search(r"\bcard\b", hay))
+
+
+def _static_page_subject(title: str, described: str) -> str:
+    raw = (title or "").strip() or (described or "").strip()
+    if not raw:
+        return "this page"
+    head = re.split(r"[.!?\n]", raw, maxsplit=1)[0].strip()
+    words = head.split()
+    if len(words) > 6:
+        words = words[:6]
+    return " ".join(words)[:80]
+
+
+def _elena_placeholder(
+    choice: ElenaDesignChoice,
+    *,
+    product_type: ProductType = ProductType.WEB_APP,
+    described: str = "",
+    title: str = "",
+) -> ElenaDesignConcept | None:
     if choice is not ElenaDesignChoice.SHOW_ELENA_CONCEPT or product_type is ProductType.BOT:
         # A bot has no screens/light-dark theme -- there is nothing for Elena's visual
         # design concept to describe. In practice, product_type BOT orders never reach
@@ -316,19 +346,44 @@ def _elena_placeholder(choice: ElenaDesignChoice, *, product_type: ProductType =
     dark_by_default = wants_dark_ground(described)
     default_theme = style.dark_theme if dark_by_default else style.light_theme
     if product_type is ProductType.STATIC_PAGE:
-        # Palette is still not a gate here (see build_static_page_prompt). Elena's job on a
-        # single-file page is motion: turn a still plate into a living background and keep
-        # the client's copy readable on a backing surface.
+        # Palette is still not a gate here (see build_static_page_prompt). A card brief
+        # keeps the living plate. Every other single-file order gets overlay chrome on
+        # an atmosphere of *this* brief -- Alethia looked right because the client
+        # overrode Elena; the Mini Card constants must not win by default.
+        if _looks_like_card_page(f"{title} {described}"):
+            return ElenaDesignConcept(
+                visual_direction="Living client plate: slow camera drift, breathing light, water glints; frosted card for copy.",
+                layout="Full-viewport animated background with a centered frosted content card for title, sentence, and action.",
+                screens=("Single living page",),
+                components=("Animated background plate", "Frosted content card", "Primary action"),
+                light_theme=default_theme,
+                dark_theme=style.dark_theme,
+                accessibility_notes=(
+                    "Keep all text on a frosted or solid panel so contrast does not depend on the moving plate.",
+                    "Honor prefers-reduced-motion by freezing the plate and any sparkle loop.",
+                ),
+            )
+        subject = _static_page_subject(title, described)
+        mood = "Dark atmospheric" if dark_by_default else style.name
+        direction = (
+            f"{mood} overlay site for {subject}: full-viewport atmosphere of that world, "
+            "editorial chrome, client copy on panels."
+        )[:240]
         return ElenaDesignConcept(
-            visual_direction="Living client plate: slow camera drift, breathing light, water glints; frosted card for copy.",
-            layout="Full-viewport animated background with a centered frosted content card for title, sentence, and action.",
+            visual_direction=direction,
+            layout=(
+                "Full-viewport atmosphere of the client's world. Overlay: mark and name at top left, "
+                "text nav, one CTA, headline and supporting line on a frosted or solid panel. "
+                "Motion stays alive; freeze when reduced-motion is set. If elena_background.webp is "
+                "present it is the atmosphere, not a lone centered card."
+            ),
             screens=("Single living page",),
-            components=("Animated background plate", "Frosted content card", "Primary action"),
+            components=("Living atmosphere", "Overlay name and nav", "Headline panel", "Primary CTA"),
             light_theme=default_theme,
             dark_theme=style.dark_theme,
             accessibility_notes=(
-                "Keep all text on a frosted or solid panel so contrast does not depend on the moving plate.",
-                "Honor prefers-reduced-motion by freezing the plate and any sparkle loop.",
+                "Keep all text on a frosted or solid panel so contrast does not depend on the moving scene.",
+                "Honor prefers-reduced-motion by freezing atmosphere and sparkle loops.",
             ),
         )
     return ElenaDesignConcept(
@@ -478,7 +533,12 @@ class ProjectBriefService:
             open_questions=(),
             recommended_stack=stack,
             elena_design_choice=session.elena_choice,
-            elena_design_concept=_elena_placeholder(session.elena_choice, product_type=order.product_type, described=f"{order.title} {order.description} {goal}"),
+            elena_design_concept=_elena_placeholder(
+                session.elena_choice,
+                product_type=order.product_type,
+                described=f"{order.title} {order.description} {goal}",
+                title=order.title,
+            ),
             created_at=now,
             updated_at=now,
         )
@@ -539,7 +599,12 @@ class ProjectBriefService:
                 "assumptions": tuple(assumptions),
                 "acceptance_criteria": tuple(criteria),
                 "elena_design_choice": choice,
-                "elena_design_concept": _elena_placeholder(choice, product_type=brief.product_type, described=brief.goal),
+                "elena_design_concept": _elena_placeholder(
+                    choice,
+                    product_type=brief.product_type,
+                    described=brief.goal,
+                    title=brief.goal.split(".")[0][:80],
+                ),
                 "approved_at": None,
                 "approved_revision": None,
                 "approval_fingerprint": None,

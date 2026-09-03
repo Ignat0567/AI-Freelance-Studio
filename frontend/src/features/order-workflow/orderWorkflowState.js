@@ -6,6 +6,14 @@ export const PDF_VOICE_ASSISTANT_EXAMPLE = {
   constraints: '',
 };
 
+export const WEBSITE_LANDING_EXAMPLE = {
+  title: 'Harbour Bakery',
+  description: 'A one-page website for Harbour Bakery, a neighbourhood bakery. Hero with the bakery name, one sentence about warm bread from 7am, and a button labelled See today\'s loaves. Then a short about section, three signature breads, opening hours, and a footer with the street address. Calm, warm, fully designed -- not a raw unstyled form.',
+  product_type: 'static_page',
+  preferred_language: 'en',
+  constraints: '',
+};
+
 export const TERMINAL_EXECUTION_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 
 export const STAGE_PROGRESS = {

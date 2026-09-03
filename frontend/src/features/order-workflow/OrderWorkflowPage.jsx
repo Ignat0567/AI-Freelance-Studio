@@ -15,7 +15,7 @@ export const STORAGE_KEY = 'studio_order_workflow_last_order_id_v1';
 const emptyForm = {
   title: '',
   description: '',
-  product_type: 'web_app',
+  product_type: 'static_page',
   preferred_language: 'en',
   constraints: '',
 };
@@ -24,7 +24,7 @@ function asOrderPayload(form) {
   return {
     title: form.title.trim(),
     description: form.description.trim(),
-    product_type: form.product_type || 'web_app',
+    product_type: form.product_type || 'static_page',
     preferred_language: form.preferred_language || 'en',
     constraints: form.constraints.split('\n').map(item => item.trim()).filter(Boolean),
   };
@@ -107,7 +107,7 @@ export default function OrderWorkflowPage({ active }) {
       } catch (err) {
         if (!cancelled) setError(cleanError(err, 'Execution status could not be refreshed.'));
       }
-    }, 700);
+    }, 400);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -190,10 +190,10 @@ export default function OrderWorkflowPage({ active }) {
     if (!readiness?.can_prepare_dry_run) { setError('Resolve production dry-run blockers before preparing a package.'); return; }
     startExecution('production');
   };
-  const startLive = () => {
+  const startLive = (choice = {}) => {
     if (!readiness?.can_run_live) { setError('Live execution is locked. Enable Live coding execution in Settings.'); return; }
     if (!liveConfirm) { setError('Confirm the live build before starting.'); return; }
-    run(() => orderWorkflowApi.startExecution(state.order.id, 'production', true));
+    run(() => orderWorkflowApi.startExecution(state.order.id, 'production', true, choice));
   };
   const retryExecution = () => run(() => orderWorkflowApi.retryExecution(state.order.id));
   // The run is parked until this returns; applyState then swaps the panel out for the

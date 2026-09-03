@@ -73,6 +73,7 @@ _CAUSE_BY_CODE: dict[str, FailureCause] = {
     # Studio's own fault.
     "execution_internal_error": "product_bug",
     "execution_contract_violation": "product_bug",
+    "execution_interrupted_by_restart": "product_bug",
 }
 
 # Outcomes are coarser than error codes and only consulted when no code matched.

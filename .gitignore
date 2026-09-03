@@ -126,3 +126,7 @@ generated_projects/*.zip
 # Legacy secret material. studio_config.json is already ignored; its migration backups
 # carry the same credentials and must never be tracked either.
 /studio_config.*.json.bak
+
+# Investor/MVP presentation build tooling (docs/mvp-pack): its own node_modules, not
+# Studio source. The pptx/png deliverables it produces stay tracked.
+/docs/mvp-pack/node_modules/
