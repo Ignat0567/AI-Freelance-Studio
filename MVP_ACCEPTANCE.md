@@ -79,6 +79,45 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Writer switched off Grok, and the 3-of-3 evidence does not carry over (2026-09-03)
+
+Both parts of the criterion met on 2026-08-27/28 were measured on the Claude/sonnet writer.
+Between then and today, uncommitted work (landed today in `2fc349c`) moved the live default to
+Grok CLI + local Ollama and added Claude Code, OpenCode and OpenRouter as per-run alternatives.
+Grok's own subscription had since lapsed. **Neither criterion 1 nor criterion 2 has been
+re-verified on any writer other than Claude/sonnet -- the 3-of-3 sequences above do not carry
+over to today's default path**, and attempting them today found real defects rather than
+confirming the old result:
+
+**Ollama, five attempts, five failures, $0 (its compute is local; free), ~31 minutes wall
+clock across two sequences.** `b02` and `b06` failed cold-start (Ollama's own daemon returned
+HTTP 500 on the first call after a backend restart; both recovered on retry once warm -- not
+a code defect, a hardware reality: this machine's RTX 3050 has 8GB VRAM, the 14B model needs
+~9, so it always runs a 60/40 CPU/GPU split at ~4.6 tokens/s). Warm, both still failed, each on
+a different real bug: `b02`'s repair loop *regressed* -- fixing a reported tablet-overflow
+issue, the next attempt produced a page with no heading, no button and no CSS, worse than what
+it replaced. `b06` repeated the identical `Could not resolve "./design-tokens.css"` build
+error verbatim across all three repair attempts -- the model never once addressed it, spending
+the whole repair budget on an error it was never going to fix. `b03` (from the first sequence)
+reached `qa_failed` after 3 repairs on `core_feature`'s `npm test` gate, which can never pass
+on this path: neither the local coder nor `web_app_scaffold.py` (`2fc349c`) ever wires a real
+test runner, so `npm test` always hits npm's own `Error: no test specified` stub regardless of
+what the repair writes.
+
+**Claude Code: blocked, then fixed live, then succeeded clean.** The first attempt reported
+`provider_rate_limited -- resets 2:30pm (Europe/Berlin)` at readiness, before any build started.
+A direct `claude -p` call seconds later succeeded cleanly ($0.09, `is_error: false`) --  the
+account was not actually rate-limited. Traced to `order_executions_state.json`: the cached
+record was a real session limit from **2026-08-21, 13 days old**. `usage_summary()`'s only
+staleness check cleared a stale Claude record when a *different* backend was active; pinned to
+`claude_code` itself, as it now is, the record could never age out -- a self-lock closed in
+`4a204b0` (24h expiry, regardless of active backend, with a regression test). Re-run after the
+fix: `b01-profile-card` succeeded in 119.5s, 0 repairs, $0.38.
+
+**Neither criterion has been re-verified end to end on Ollama+Claude Code as a pair.** What is
+now verified: Claude Code alone completes a clean static-page order on this build. The 3-order
+unattended sequence (`b02`+`b06`+`b03`) has not been re-run since the stale-quota fix.
+
 ## Criteria 1 and 2, in one pass (2026-08-27, 23:12)
 
 **3 of 3 again, and this time every folder is complete in the same sequence.**
