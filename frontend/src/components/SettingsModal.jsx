@@ -261,6 +261,22 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
                     <option value="openrouter">OpenRouter API (OpenRouter writes files)</option>
                   </select>
                 </label>
+                <label className="block mt-3 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Who fixes QA failures
+                  <select
+                    value={s.repair_backend || ''}
+                    onChange={e => updateSetting('repair_backend', e.target.value)}
+                    className="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs focus:outline-none mt-1"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    <option value="">Same as build worker</option>
+                    <option value="ollama">Local Ollama (Grok spec + Qwen files)</option>
+                    <option value="grok">Grok subscription (Grok writes files)</option>
+                    <option value="claude_code">Claude Code subscription</option>
+                    <option value="opencode_bridge">OpenCode</option>
+                    <option value="openrouter">OpenRouter API (OpenRouter writes files)</option>
+                  </select>
+                </label>
+                <p className="provider-message">When a QA check fails, this worker gets the repair prompt instead of the one that wrote the first draft -- e.g. a fast local draft, then a stronger worker fixes what the checks find.</p>
               </Section>
 
               <Section label="Experimental tools">

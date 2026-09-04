@@ -398,21 +398,35 @@ def _requested_coding_backend() -> str:
         return ""
 
 
-def active_coding_backend() -> str:
-    """Which coding worker can actually run right now.
+def _requested_repair_backend() -> str:
+    """Empty means "same as the build worker" -- see active_repair_backend()."""
+    pinned = os.environ.get("FREELANCERSTUDIO_REPAIR_BACKEND", "").strip().lower()
+    if pinned:
+        return pinned
+    try:
+        from system_settings import SYSTEM_SETTINGS
 
-    A saved Settings choice or FREELANCERSTUDIO_CODING_BACKEND pins the worker when that
-    worker is ready. Otherwise the default order is Ollama (local coder), then OpenCode,
-    then Claude, then Grok. OpenRouter is last because it spends a paid API key. Claude is
-    not preferred automatically: an expired subscription still looks installed and used to
-    win over a working local Ollama.
+        return str(SYSTEM_SETTINGS.get("repair_backend") or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _resolve_ready_backend(requested: str) -> str:
+    """Shared resolution: an explicit pin wins outright, bypassing readiness -- Grok's and
+    Claude's readiness checks both only detect a CLI login, not real quota (a real 13-day-old
+    stale Claude session limit still blocked every live start when found 2026-09-03; see
+    MVP_ACCEPTANCE.md), so trusting auto-detection for either would risk silently retrying a
+    subscription that looks ready but is not. Unpinned, the default order is Ollama (local,
+    free), then OpenCode, then Claude, then Grok. OpenRouter is last because it spends a paid
+    API key.
     """
-    requested = _requested_coding_backend()
     from .grok_code_client import ConfiguredGrokExecutionClient
     from .ollama_code_client import ConfiguredOllamaExecutionClient
     from .openrouter_code_client import ConfiguredOpenRouterExecutionClient
     from .service import ConfiguredOpenCodeExecutionClient  # local import: avoids a service<->client import cycle
 
+    if requested in CODING_BACKENDS:
+        return requested
     ready = {
         "ollama": ConfiguredOllamaExecutionClient(expand_prompt=False).check_readiness().ready,
         "grok": ConfiguredGrokExecutionClient().check_readiness().ready,
@@ -420,8 +434,6 @@ def active_coding_backend() -> str:
         "claude_code": ConfiguredClaudeCodeExecutionClient().check_readiness().ready,
         "openrouter": ConfiguredOpenRouterExecutionClient().check_readiness().ready,
     }
-    if requested in CODING_BACKENDS:
-        return requested
     for backend in ("ollama", "opencode_bridge", "claude_code", "grok"):
         if ready[backend]:
             return backend
@@ -430,19 +442,49 @@ def active_coding_backend() -> str:
     return ""
 
 
-def select_coding_execution_client() -> OpenCodeExecutionClient:
+def active_coding_backend() -> str:
+    """Which coding worker writes the first draft of each phase.
+
+    A saved Settings choice or FREELANCERSTUDIO_CODING_BACKEND pins the worker when that
+    worker is ready. Otherwise the default order is Ollama (local coder), then OpenCode,
+    then Claude, then Grok. OpenRouter is last because it spends a paid API key. Claude is
+    not preferred automatically: an expired subscription still looks installed and used to
+    win over a working local Ollama.
+    """
+    return _resolve_ready_backend(_requested_coding_backend())
+
+
+def active_repair_backend() -> str:
+    """Which coding worker fixes a QA failure -- independent of who wrote the first draft.
+
+    Empty (the default, nobody has touched Settings' "Who fixes QA failures") means "the same
+    worker that wrote the draft" -- active_coding_backend()'s own result -- so every existing
+    setup behaves exactly as it did before this setting existed: one worker for the whole
+    phase. A pinned value (e.g. Ollama drafts, Claude Code or Grok repairs) resolves through
+    the same pin-bypasses-readiness rule active_coding_backend() uses, for the same reason.
+    """
+    requested = _requested_repair_backend()
+    if not requested:
+        return active_coding_backend()
+    return _resolve_ready_backend(requested)
+
+
+def select_coding_execution_client(backend: str | None = None) -> OpenCodeExecutionClient:
+    """`backend`, when given, is used as-is (already resolved by the caller, e.g. from
+    active_repair_backend()) instead of re-resolving via active_coding_backend() -- so build
+    and repair clients share this one dispatch table without a second readiness pass."""
     from .grok_code_client import ConfiguredGrokExecutionClient
     from .ollama_code_client import ConfiguredOllamaExecutionClient
     from .openrouter_code_client import ConfiguredOpenRouterExecutionClient
     from .service import ConfiguredOpenCodeExecutionClient  # local import: avoids a service<->client import cycle
 
-    backend = active_coding_backend()
-    if backend == "ollama":
+    resolved = backend if backend is not None else active_coding_backend()
+    if resolved == "ollama":
         return ConfiguredOllamaExecutionClient()
-    if backend == "grok":
+    if resolved == "grok":
         return ConfiguredGrokExecutionClient()
-    if backend == "claude_code":
+    if resolved == "claude_code":
         return ConfiguredClaudeCodeExecutionClient()
-    if backend == "openrouter":
+    if resolved == "openrouter":
         return ConfiguredOpenRouterExecutionClient()
     return ConfiguredOpenCodeExecutionClient()

@@ -58,7 +58,7 @@ from .preflight import (
 )
 from .readiness import BRIEF_NOT_APPROVED, DESIGN_PREVIEW_NOT_APPROVED
 from .readiness import OPENCODE_UNAVAILABLE, ReadinessResult
-from .claude_code_client import select_coding_execution_client
+from .claude_code_client import active_repair_backend, select_coding_execution_client
 from .deployment import container_deploy_enabled
 from .midbuild_clarification import midbuild_clarification_enabled
 from .phase_prompts import build_ui_shell_prompt
@@ -219,6 +219,17 @@ class ConfigurationBackedExecutionAdapter:
         if self._live:
             environ = {"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1"} if snapshot.live_opt_in.enabled else {}
             opencode_client = self._opencode_client or select_coding_execution_client()
+            # Independent from the build client above: who fixes a QA failure, not who wrote
+            # the first draft (active_repair_backend(), claude_code_client.py). Not computed
+            # when self._opencode_client was explicitly injected (tests, revision workspaces
+            # created before this setting existed) -- those callers get the pre-existing
+            # single-client behavior unchanged. Only PhasedLiveOpenCodeExecutionAdapter and
+            # its subclasses below accept this; the legacy pipeline branch does not.
+            repair_client = (
+                select_coding_execution_client(backend=active_repair_backend())
+                if self._opencode_client is None
+                else None
+            )
             if self._revision:
                 # ReviseProjectExecutionAdapter itself checks request.brief.product_type to
                 # pick web (npm) vs bot (pip/python) QA commands -- same adapter class
@@ -228,6 +239,7 @@ class ConfigurationBackedExecutionAdapter:
                     model_name=model,
                     workspace_root=workspace_root,
                     opencode_client=opencode_client,
+                    repair_opencode_client=repair_client,
                     environ=environ,
                     ai_ask=self._website_section_ai_ask,
                     qa_runner=_select_qa_runner(self._environ),
@@ -240,6 +252,7 @@ class ConfigurationBackedExecutionAdapter:
                     model_name=model,
                     workspace_root=workspace_root,
                     opencode_client=opencode_client,
+                    repair_opencode_client=repair_client,
                     environ=environ,
                     ai_ask=self._website_section_ai_ask,
                     qa_runner=_select_qa_runner(self._environ),
@@ -250,6 +263,7 @@ class ConfigurationBackedExecutionAdapter:
                     model_name=model,
                     workspace_root=workspace_root,
                     opencode_client=opencode_client,
+                    repair_opencode_client=repair_client,
                     environ=environ,
                     ai_ask=self._website_section_ai_ask,
                     qa_runner=_select_qa_runner(self._environ),
@@ -269,6 +283,7 @@ class ConfigurationBackedExecutionAdapter:
                 model_name=model,
                 workspace_root=workspace_root,
                 opencode_client=opencode_client,
+                repair_opencode_client=repair_client,
                 environ=environ,
                 ai_ask=self._website_section_ai_ask,
                 # environ above is a synthetic live-opt-in-only dict (see the LiveOpenCodeExecutionAdapter

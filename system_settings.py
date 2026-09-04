@@ -19,6 +19,10 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "live_execution_enabled": False,
     "show_experimental": False,
     "coding_backend": "",
+    # Empty means "same as coding_backend" -- see active_repair_backend() in
+    # claude_code_client.py. A non-empty value pins the QA-repair-loop worker independently
+    # of who wrote the first draft, e.g. Ollama drafts, Claude Code repairs.
+    "repair_backend": "",
 }
 
 ALLOWED_SYSTEM_KEYS = [
@@ -28,7 +32,7 @@ ALLOWED_SYSTEM_KEYS = [
     "default_budget", "polling_interval", "log_detail",
     "vscode_path", "pycharm_path",
     "live_execution_enabled", "show_experimental",
-    "coding_backend",
+    "coding_backend", "repair_backend",
 ]
 
 _load_studio_keys: Callable[[], dict] | None = None

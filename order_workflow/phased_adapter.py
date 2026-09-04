@@ -319,6 +319,11 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         model_name: str | None,
         workspace_root: str | Path | None,
         opencode_client: OpenCodeExecutionClient | None = None,
+        # Independent from opencode_client: a QA failure is fixed by whichever worker
+        # Settings names for that job (active_repair_backend(), claude_code_client.py).
+        # None (the default -- nobody has pinned repair_backend) means "the client above",
+        # so every existing setup behaves exactly as before this parameter existed.
+        repair_opencode_client: OpenCodeExecutionClient | None = None,
         qa_commands: tuple[str, ...] = ("npm test",),
         environ: dict[str, str] | None = None,
         writable_probe: Callable[[Path], bool] | None = None,
@@ -336,6 +341,11 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
     ) -> None:
         super().__init__(provider_name=provider_name, model_name=model_name, workspace_root=workspace_root, qa_commands=qa_commands, dry_run=True, writable_probe=writable_probe)
         self._opencode_client = _WebAppCodingClient(opencode_client or UnavailableOpenCodeExecutionClient())
+        # Wrapped the same way as the build client above so the scaffold guard still runs
+        # after a repair write too, whichever worker made it.
+        self._repair_client = (
+            _WebAppCodingClient(repair_opencode_client) if repair_opencode_client is not None else self._opencode_client
+        )
         self._environ = environ
         # The general-purpose prose call: the README overview, and the cinematic-website
         # fallback's own section-copy call. The backend-decision gate used to take a second,
@@ -561,7 +571,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
 
         try:
             repair = run_qa_repair_loop(
-                opencode_client=self._opencode_client,
+                opencode_client=self._repair_client,
                 opencode_succeeded=result.success,
                 workspace_path=workspace_path,
                 qa_commands=qa_commands,
@@ -662,7 +672,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         and the check fails, it goes through the same repair loop as build/test QA."""
         try:
             smoke_repair = run_qa_repair_loop(
-                opencode_client=self._opencode_client,
+                opencode_client=self._repair_client,
                 opencode_succeeded=True,
                 workspace_path=workspace.project_path,
                 qa_commands=("Functional smoke check: the app must boot, render visible content, "
@@ -718,7 +728,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         """
         try:
             state_repair = run_qa_repair_loop(
-                opencode_client=self._opencode_client,
+                opencode_client=self._repair_client,
                 opencode_succeeded=True,
                 workspace_path=workspace.project_path,
                 qa_commands=("State continuity check: a value the user changes must survive navigating "
@@ -795,7 +805,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
             return None
         try:
             visual_repair = run_qa_repair_loop(
-                opencode_client=self._opencode_client,
+                opencode_client=self._repair_client,
                 opencode_succeeded=True,
                 workspace_path=workspace.project_path,
                 qa_commands=("Visual check: the built page must paint the approved palette, meet WCAG AA "

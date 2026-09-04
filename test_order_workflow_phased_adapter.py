@@ -20,7 +20,7 @@ from order_workflow import (
 )
 from order_workflow.claude_code_client import CLAUDE_CODE_REPAIR_TIMEOUT
 from order_workflow.docker_qa_runner import DockerUnavailableError, run_qa_commands_in_docker
-from order_workflow.models import ExecutionStage, EventKind
+from order_workflow.models import EventKind, ExecutionStage
 from order_workflow.phased_adapter import (
     CORE_FEATURE_QA_COMMANDS,
     MAX_PHASE_REPAIR_ATTEMPTS,
@@ -145,12 +145,15 @@ def _safe_prose_ai_ask(_prompt: str) -> str:
     return "A generated project overview paragraph."
 
 
-def _adapter(tmp_path, *, opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None, visual_check_runner=None, state_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
+def _adapter(tmp_path, *, opencode_client=None, repair_opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None, visual_check_runner=None, state_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
     return PhasedLiveOpenCodeExecutionAdapter(
         provider_name="opencode_bridge",
         model_name="openai/gpt-5.5",
         workspace_root=tmp_path,
         opencode_client=opencode_client or FakePhaseOpenCodeClient(),
+        # None (the default) leaves the constructor's own fallback in place -- the same
+        # client repairs as built, exactly as before this parameter existed.
+        repair_opencode_client=repair_opencode_client,
         qa_runner=qa_runner or _passing_qa,
         ai_ask=ai_ask or _safe_prose_ai_ask,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1", **(environ or {})},
@@ -361,6 +364,53 @@ def test_ui_shell_qa_failure_then_repair_succeeds(tmp_path):
     result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
 
     assert result.success is True
+
+
+_QA_FIX_MARKER = "A check that has to pass before this project can be delivered is failing."
+
+
+def test_a_qa_failure_is_repaired_by_a_different_worker_than_the_one_that_built_it(tmp_path):
+    """The root cause of the two Ollama-write repairs that regressed or repeated an
+    unfixed error live 2026-09-03 (MVP_ACCEPTANCE.md): one client did both the draft and
+    every fix. repair_opencode_client, once set, must carry every repair call instead --
+    the build client is never asked to fix its own QA failure."""
+    brief, handoff = _contract()
+    build_client = FakePhaseOpenCodeClient()
+    repair_client = FakePhaseOpenCodeClient()
+    qa_runner = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    adapter = _adapter(tmp_path, opencode_client=build_client, repair_opencode_client=repair_client, qa_runner=qa_runner)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    assert repair_client.call_count >= 1, "the fix must have gone through the repair client"
+    assert any(_QA_FIX_MARKER in prompt for prompt in repair_client.prompts)
+    assert not any(_QA_FIX_MARKER in prompt for prompt in build_client.prompts), (
+        "the build client must never receive a repair prompt once a repair client is set"
+    )
+
+
+def test_a_qa_failure_is_repaired_by_the_build_worker_when_no_repair_worker_is_set(tmp_path):
+    """The other half of the same guarantee: repair_opencode_client=None (nobody has
+    touched the new setting) must fall back to the exact pre-existing single-client
+    behavior -- the build client repairs its own failure, same as before this feature."""
+    brief, handoff = _contract()
+    client = FakePhaseOpenCodeClient()
+    qa_runner = ScriptedQARunner([
+        QAOutcome(passed=False, results=(QACommandResult(command="npm run build", exit_code=1, stdout_tail="", stderr_tail="broken", duration=0.1),)),
+        QAOutcome(passed=True, results=(QACommandResult(command="npm run build", exit_code=0, stdout_tail="ok", stderr_tail="", duration=0.1),)),
+    ])
+    adapter = _adapter(tmp_path, opencode_client=client, qa_runner=qa_runner)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    assert any(_QA_FIX_MARKER in prompt for prompt in client.prompts), (
+        "with no repair client set, the one client must still receive and act on the repair prompt"
+    )
 
 
 class TimingOutRepairClient(FakePhaseOpenCodeClient):
