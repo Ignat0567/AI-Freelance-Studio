@@ -79,6 +79,54 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Ollama drafts, Claude Code repairs -- the three defects from 2026-09-03 fixed and verified (2026-09-04)
+
+Following up the entry below: three targeted fixes, then a live re-run of `b04-tip-splitter`
+(the order that first exposed the scaffold gap, 2026-09-01, and again on 2026-09-03) on the
+now-intended arrangement -- `coding_backend=""` (auto, resolves to Ollama first) and
+`repair_backend="claude_code"`, a new setting.
+
+**What was fixed.** (1) Ollama's cold-start `HTTP 500` on the first call after a restart now
+retries once after an 8s delay (`generate_ollama_completion`), instead of failing the order
+outright. (2) `web_app_scaffold.py` now pins a full, strict vitest harness (vitest, jsdom,
+`@testing-library/react`+`jest-dom`, versions checked one by one against `node:20-slim` --
+`npm install && npm test && npm run build` verified in that exact image before trusting any
+version number) -- `scripts.test` has no `--passWithNoTests`, so a missing test is a specific,
+repairable QA failure instead of npm's permanent `Error: no test specified` stub. (3) QA
+repairs now go to a separately-selectable worker (`repair_backend`, mirroring `coding_backend`;
+a Settings dropdown, "Who fixes QA failures") instead of always looping back to whichever
+worker wrote the draft -- the actual root cause of both 2026-09-03 regressions: one client did
+both, and a 14B local model repairing its own reported failure sometimes regressed structure
+it had just gotten right, or repeated an identical unresolved error across all 3 attempts.
+
+**Live result, `b04-tip-splitter`, 2026-09-04 05:25-05:55 UTC: succeeded, $2.33, 1758s, 6
+repairs.** Every single repair call in the log is "Invoking Claude Code CLI" -- not one went
+back to Ollama. The `core_feature` phase hit exactly the failure class item (2) was built for
+("Test Files 1 failed (1) / Tests no tests") and Claude Code closed it in 1 attempt, where
+2026-09-01's b04 spent 5 repairs on the unfixable version of this same gate. The other four
+repairs (an `npm ci` timeout, a missing-import build error, two visual/contrast findings) all
+converged in 1-2 attempts each -- no regression, no repeated identical finding, the exact
+failure modes item (3) targets.
+
+Full regression sweep: 2259 passed (up from 2254), 16 failed -- the same 16 pre-existing,
+already-diagnosed failures as every prior run this week (frozen Sandbox Test Lab Playwright
+suite, two dead OpenCode-settings-string assertions, one theme color-format drift, one
+runtime-hygiene test bug in its own `*.json` substring check), zero new failures.
+
+**One dead end worth recording so it is not re-proposed**: `StaticPageExecutionAdapter`'s
+`_StaticPageCodingClient` wrapper (re-stages Elena's background plate, reconciles leftover
+files) was suspected to need the same build/repair-client swap as the coding-client wrapper.
+Traced the actual call sequence in `phase_repair.run_qa_repair_loop`: the phase's own
+`qa_runner` closure unconditionally re-runs that exact staging/reconciling *before every QA
+check*, including the one immediately after each repair write -- so the wrapper's coverage is
+already fully redundant for static pages regardless of which client wrote the fix. Verified by
+writing the swap, watching the intended test pass identically with and without it, and
+reverting rather than keeping code justified by a claim that did not hold up.
+
+**Still open**: the 3-order unattended acceptance sequence has not been re-run on this
+arrangement -- `b04` alone, not `b02`+`b06`+`b03` together. Grok resumes 2026-09-06; activating
+it as the repair worker at that point is the one Settings dropdown above, no code change.
+
 ## Writer switched off Grok, and the 3-of-3 evidence does not carry over (2026-09-03)
 
 Both parts of the criterion met on 2026-08-27/28 were measured on the Claude/sonnet writer.
