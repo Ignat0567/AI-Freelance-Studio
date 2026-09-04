@@ -31,6 +31,13 @@ from .workspace_processes import stop_processes_left_in_workspace
 DEFAULT_OLLAMA_ENDPOINT = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_TASK_TIMEOUT = 1500
 OLLAMA_REPAIR_TIMEOUT = 900
+# Ollama unloads the model between orders on memory-constrained hosts and reloading it takes
+# longer than the request that triggered the load waits for -- observed live 2026-09-03, twice
+# in one bench sequence: the first call after a backend restart got HTTP 500 in ~15s, and a
+# bare retry a few seconds later (once the daemon had finished loading) succeeded. The failure
+# happens on urlopen() itself, before any token is streamed, so nothing has reached on_chunk
+# yet and a retry cannot duplicate output.
+OLLAMA_COLD_START_RETRY_DELAY_SECONDS = 8.0
 
 CODING_MODEL_PREFERENCE = (
     "qwen2.5-coder:14b",
@@ -217,6 +224,9 @@ def generate_ollama_completion(
     timeout: int = OLLAMA_TASK_TIMEOUT,
     cancellation: CancellationToken | None = None,
     on_chunk: Callable[[str], None] | None = None,
+    # Injected so a test exercising the retry does not spend the real delay waiting --
+    # same pattern as preflight.py's probe_coding_cli_credentials.
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> str:
     host = (endpoint or ollama_endpoint()).rstrip("/")
     payload = {
@@ -231,8 +241,15 @@ def generate_ollama_completion(
         method="POST",
         headers={"Content-Type": "application/json"},
     )
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 500:
+            raise
+        sleeper(OLLAMA_COLD_START_RETRY_DELAY_SECONDS)
+        response = urllib.request.urlopen(request, timeout=timeout)
     chunks: list[str] = []
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with response:
         for raw in response:
             if cancellation is not None and cancellation.is_cancelled():
                 break
