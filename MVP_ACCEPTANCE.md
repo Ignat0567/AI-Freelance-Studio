@@ -79,6 +79,28 @@ showed one and two, so these numbers had to be counted by hand out of prose.
    and whether the delivery folder answers the four questions in criterion 2.
 5. Fix only what broke. Improve nothing.
 
+## Criterion 1 met again, on the current writer (2026-09-04, 15:35-16:16)
+
+**3 of 3, unattended, back to back: `b02-pricing-page`, `b06-reading-journal`,
+`b03-focus-timer` -- the same trio every prior 3-of-3 sequence used.** Closes the "still open"
+line at the end of the entry below.
+
+| order | outcome | duration | repairs |
+|---|---|---|---|
+| `b02-pricing-page` | succeeded | 352s | 1 |
+| `b06-reading-journal` | succeeded | 1084s | 2 |
+| `b03-focus-timer` | succeeded | 927s | 2 |
+
+$2.70, 41 minutes wall clock, `coding_backend=""` (auto -> Ollama) / `repair_backend="claude_code"`.
+Every one of the 5 repairs is "Invoking Claude Code CLI" in the event log; grepping for an
+Ollama call anywhere after an "asking Codex to fix" line returns nothing -- zero repairs went
+back to the drafting worker. Ollama's own cold start (no model loaded when the run began,
+confirmed via `ollama ps`) cost nothing extra this time: the retry from the cold-start fix
+absorbed it silently, no `provider`-classified failure anywhere in the run.
+
+Every prior 3-of-3 in this file was measured on the Claude/sonnet writer. This is the first one
+on Ollama+Claude Code, and the first since the writer moved off Grok on 2026-09-01.
+
 ## Ollama drafts, Claude Code repairs -- the three defects from 2026-09-03 fixed and verified (2026-09-04)
 
 Following up the entry below: three targeted fixes, then a live re-run of `b04-tip-splitter`
@@ -123,8 +145,8 @@ already fully redundant for static pages regardless of which client wrote the fi
 writing the swap, watching the intended test pass identically with and without it, and
 reverting rather than keeping code justified by a claim that did not hold up.
 
-**Still open**: the 3-order unattended acceptance sequence has not been re-run on this
-arrangement -- `b04` alone, not `b02`+`b06`+`b03` together. Grok resumes 2026-09-06; activating
+**Closed the same day**: the 3-order unattended acceptance sequence, re-run on this exact
+arrangement -- see "Criterion 1 met again, on the current writer" above. Grok resumes 2026-09-06; activating
 it as the repair worker at that point is the one Settings dropdown above, no code change.
 
 ## Writer switched off Grok, and the 3-of-3 evidence does not carry over (2026-09-03)
