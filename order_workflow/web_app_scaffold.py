@@ -21,6 +21,19 @@ VITE = "^5.3.1"
 PLUGIN_REACT = "^4.3.1"
 PREVIEW_SCRIPT = "vite preview --host 127.0.0.1 --port 4173"
 BUILD_SCRIPT = "vite build"
+TEST_SCRIPT = "vitest run"
+
+# `npm test` runs inside the node:20-slim Docker image (docker_qa_runner.py), permanently --
+# see project_vite8_frontend_upgrade_deferred. Every version below is pinned against that,
+# not against "latest": vitest 5.x needs Vite >=6 (incompatible with VITE above); jsdom's own
+# Node floor rose from a plain >=20 to >=20.19 (27.1.0) then to >=22 (30.0.0); jest-dom's rose
+# straight to >=22 at 6.10.0/7.0.0. Bump any of these only after checking `npm view <pkg>@<new
+# version> engines` against the image's actual node --version, not the registry's "latest".
+VITEST = "^3.2.7"
+JSDOM = "^27.0.1"
+TESTING_LIBRARY_REACT = "^16.3.3"
+TESTING_LIBRARY_JEST_DOM = "^6.9.1"
+TESTING_LIBRARY_DOM = "^10.4.1"
 
 _VITE_CONFIG = """import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -28,7 +41,15 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   preview: { host: '127.0.0.1', port: 4173, strictPort: true },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./vitest.setup.js'],
+  },
 });
+"""
+
+_VITEST_SETUP = """import '@testing-library/jest-dom/vitest';
 """
 
 _INDEX_HTML = """<!DOCTYPE html>
@@ -85,6 +106,8 @@ def reconcile_web_app_workspace(cwd: Path) -> tuple[str, ...]:
         changed.append("package.json")
     if _ensure_vite_config(root):
         changed.append("vite.config.js")
+    if _ensure_vitest_setup(root):
+        changed.append("vitest.setup.js")
     if _ensure_index_html(root, entry=f"/{entry_rel}"):
         changed.append("index.html")
     if app is not None and _ensure_main_entry(root, app=app, entry_rel=entry_rel):
@@ -122,12 +145,23 @@ def _ensure_package_json(root: Path) -> bool:
             **scripts,
             "build": BUILD_SCRIPT,
             "preview": PREVIEW_SCRIPT,
+            # No --passWithNoTests: `core_feature`'s own prompt already tells the model to
+            # "wire the feature and its test". A missing test is a defect to repair, the same
+            # bar the Claude Code/OpenCode-authored path has always had to clear -- the gap
+            # measured live 2026-09-03 (b03/b04) was that nothing installed a test runner for
+            # this write-only path, not that the requirement should be softer.
+            "test": TEST_SCRIPT,
         },
         "dependencies": {**dependencies, "react": REACT, "react-dom": REACT},
         "devDependencies": {
             **dev_dependencies,
             "vite": VITE,
             "@vitejs/plugin-react": PLUGIN_REACT,
+            "vitest": VITEST,
+            "jsdom": JSDOM,
+            "@testing-library/react": TESTING_LIBRARY_REACT,
+            "@testing-library/jest-dom": TESTING_LIBRARY_JEST_DOM,
+            "@testing-library/dom": TESTING_LIBRARY_DOM,
         },
     }
     if "dev" not in desired["scripts"]:
@@ -153,6 +187,24 @@ def _ensure_vite_config(root: Path) -> bool:
             stale.unlink()
         except OSError:
             pass
+    return True
+
+
+def _ensure_vitest_setup(root: Path) -> bool:
+    """Register jest-dom's matchers on vitest's own `expect`, not a global-scope shim --
+    the exact wiring `test: { environment: 'jsdom', setupFiles: [...] }` in vite.config.js
+    points at. Only written if missing: a model-authored setup file (e.g. one that also
+    configures MSW or a mock) is left alone as long as it already imports jest-dom/vitest."""
+    path = root / "vitest.setup.js"
+    if path.is_file():
+        current = path.read_text(encoding="utf-8")
+        if "@testing-library/jest-dom/vitest" in current or "@testing-library/jest-dom" in current:
+            return False
+    text = _VITEST_SETUP if _VITEST_SETUP.endswith("\n") else _VITEST_SETUP + "\n"
+    if path.is_file():
+        path.write_text(path.read_text(encoding="utf-8").rstrip("\n") + "\n" + text, encoding="utf-8")
+    else:
+        path.write_text(text, encoding="utf-8")
     return True
 
 

@@ -209,6 +209,11 @@ def build_core_feature_prompt(
         "",
         "Required: write exactly one automated test that exercises this feature and asserts it returns "
         "the expected result on a test input. The test must be runnable by the project's normal test command.",
+        "The test runner is vitest, already installed and configured (jsdom environment, "
+        "@testing-library/jest-dom wired). Import from 'vitest' directly -- "
+        "`import { describe, it, expect, vi } from 'vitest'` -- and use `vi.useFakeTimers()`/"
+        "`vi.fn()`, not Jest's `jest.useFakeTimers()`/`jest.fn()`, which do not exist here and "
+        "fail the whole file at collection.",
         "",
         # Prevention for the state-continuity gate, which failed on the third gate of this
         # phase in every measured CRUD run and was then fixed by repair every time -- the

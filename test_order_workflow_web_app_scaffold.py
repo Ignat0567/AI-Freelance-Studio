@@ -8,10 +8,16 @@ import json
 from pathlib import Path
 
 from order_workflow.web_app_scaffold import (
+    JSDOM,
     PLUGIN_REACT,
     PREVIEW_SCRIPT,
     REACT,
+    TEST_SCRIPT,
+    TESTING_LIBRARY_DOM,
+    TESTING_LIBRARY_JEST_DOM,
+    TESTING_LIBRARY_REACT,
     VITE,
+    VITEST,
     looks_like_web_app_workspace,
     reconcile_web_app_workspace,
 )
@@ -73,6 +79,15 @@ def test_vite2_stub_entry_is_rewritten_to_mount_app(tmp_path: Path):
     assert package["devDependencies"]["@vitejs/plugin-react"] == PLUGIN_REACT
     assert package["scripts"]["preview"] == PREVIEW_SCRIPT
     assert package["scripts"]["build"] == "vite build"
+    assert package["scripts"]["test"] == TEST_SCRIPT
+    assert "--passWithNoTests" not in package["scripts"]["test"], (
+        "a missing test must fail the gate -- core_feature's prompt already asks for one"
+    )
+    assert package["devDependencies"]["vitest"] == VITEST
+    assert package["devDependencies"]["jsdom"] == JSDOM
+    assert package["devDependencies"]["@testing-library/react"] == TESTING_LIBRARY_REACT
+    assert package["devDependencies"]["@testing-library/jest-dom"] == TESTING_LIBRARY_JEST_DOM
+    assert package["devDependencies"]["@testing-library/dom"] == TESTING_LIBRARY_DOM
     main = (src / "main.jsx").read_text(encoding="utf-8")
     assert "from './App.jsx'" in main
     assert "createRoot" in main
@@ -81,6 +96,11 @@ def test_vite2_stub_entry_is_rewritten_to_mount_app(tmp_path: Path):
     vite = (tmp_path / "vite.config.js").read_text(encoding="utf-8")
     assert "port: 4173" in vite
     assert "127.0.0.1" in vite
+    assert "environment: 'jsdom'" in vite
+    assert "./vitest.setup.js" in vite
+    assert "vitest.setup.js" in changed
+    setup = (tmp_path / "vitest.setup.js").read_text(encoding="utf-8")
+    assert "@testing-library/jest-dom/vitest" in setup
 
 
 def test_a_correct_scaffold_is_not_rewritten(tmp_path: Path):
@@ -90,4 +110,36 @@ def test_a_correct_scaffold_is_not_rewritten(tmp_path: Path):
     second = reconcile_web_app_workspace(tmp_path)
 
     assert "package.json" in first
+    assert "vitest.setup.js" in first
     assert second == ()
+
+
+def test_a_model_authored_setup_file_is_extended_not_replaced(tmp_path: Path):
+    """A model that already wrote its own vitest.setup.js (a mock server, extra matchers)
+    must not have that work silently discarded just because jest-dom's import is missing."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.jsx").write_text("export default function App() { return <button>Go</button>; }\n", encoding="utf-8")
+    (tmp_path / "vitest.setup.js").write_text("import './some-mock-server-setup.js';\n", encoding="utf-8")
+
+    changed = reconcile_web_app_workspace(tmp_path)
+
+    assert "vitest.setup.js" in changed
+    setup = (tmp_path / "vitest.setup.js").read_text(encoding="utf-8")
+    assert "./some-mock-server-setup.js" in setup
+    assert "@testing-library/jest-dom/vitest" in setup
+
+    # And now it is left alone: the model's line plus ours together already satisfy it.
+    second = reconcile_web_app_workspace(tmp_path)
+    assert "vitest.setup.js" not in second
+
+
+def test_a_model_authored_setup_file_with_jest_dom_already_is_left_alone(tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.jsx").write_text("export default function App() { return <button>Go</button>; }\n", encoding="utf-8")
+    original = "import '@testing-library/jest-dom';\nimport './extra-setup.js';\n"
+    (tmp_path / "vitest.setup.js").write_text(original, encoding="utf-8")
+
+    changed = reconcile_web_app_workspace(tmp_path)
+
+    assert "vitest.setup.js" not in changed
+    assert (tmp_path / "vitest.setup.js").read_text(encoding="utf-8") == original

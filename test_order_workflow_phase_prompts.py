@@ -148,6 +148,18 @@ def test_core_feature_prompt_does_not_repeat_the_full_ui_shell_instructions():
     assert "do not connect a database" not in prompt.lower()
 
 
+def test_core_feature_prompt_requires_vitest_api_not_jest():
+    # Found live 2026-09-03: a model-authored test used jest.useFakeTimers(), which does not
+    # exist under vitest and fails the whole file at collection -- npm test then reports the
+    # same failure as no test having been written at all.
+    prompt = build_core_feature_prompt(_brief(), _handoff(), _phase_context("ui_shell"))
+
+    assert "from 'vitest'" in prompt
+    assert "vi.useFakeTimers" in prompt
+    assert "jest.useFakeTimers" in prompt  # named as the thing NOT to use
+    assert "vitest" in prompt.lower()
+
+
 def test_backend_bridge_prompt_states_phases_are_already_implemented():
     prompt = build_backend_bridge_prompt(
         _brief(), _handoff(), _phase_context("ui_shell"), _phase_context("core_feature"),
