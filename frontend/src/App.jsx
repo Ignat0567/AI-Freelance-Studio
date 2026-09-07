@@ -119,6 +119,7 @@ function App() {
                 logs={logs}
                 agents={agentList}
                 statuses={agentStatuses}
+                language={language}
                 settingsContent={<SettingsModal activePort={activePort} embedded addLog={addLog} />}
                 infoContent={<InfoModal activePort={activePort} embedded addLog={addLog} appVersion={appVersion} />}
                 onKeyManager={() => setIsKeyManagerOpen(true)}

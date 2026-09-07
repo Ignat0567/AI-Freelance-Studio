@@ -5,7 +5,10 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "global_provider": "grok",
     "global_model": "grok-4.6",
     "theme": "dark",
-    "accent_color": "#0ea5e9",
+    # oklch equivalent of the original Sky swatch (#0ea5e9) -- accent is stored/selected in
+    # oklch throughout the Liquid Glass redesign (see frontend/src/theme.js), but theme.js
+    # still accepts a legacy hex value transparently for anyone with an older saved setting.
+    "accent_color": "oklch(0.685 0.148 237.3)",
     "animation_speed": "normal",
     "font_size": "medium",
     "language": "en",

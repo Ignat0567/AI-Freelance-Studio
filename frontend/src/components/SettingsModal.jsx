@@ -5,15 +5,20 @@ import OpenCodeConnectionSetup from './OpenCodeConnectionSetup.jsx';
 import ClaudeCodeConnectionSetup from './ClaudeCodeConnectionSetup.jsx';
 import GrokConnectionSetup from './GrokConnectionSetup.jsx';
 
+// Colors are the exact oklch equivalents of the project's original 8 hex swatches (Sky
+// #0ea5e9, Indigo #6366f1, Emerald #10b981, Amber #f59e0b, Rose #f43f5e, Purple #a855f7,
+// Cyan #06b6d4, Slate #475569), converted once via the standard sRGB->OKLab pipeline so the
+// whole accent system (see theme.js) is genuinely oklch end to end, not just for the new
+// design tokens -- same 8 selectable variants, same look, just expressed in oklch.
 const ACCENT_COLORS = [
-  { name: 'Sky', color: '#0ea5e9' },
-  { name: 'Indigo', color: '#6366f1' },
-  { name: 'Emerald', color: '#10b981' },
-  { name: 'Amber', color: '#f59e0b' },
-  { name: 'Rose', color: '#f43f5e' },
-  { name: 'Purple', color: '#a855f7' },
-  { name: 'Cyan', color: '#06b6d4' },
-  { name: 'Slate', color: '#475569' },
+  { name: 'Sky', color: 'oklch(0.685 0.148 237.3)' },
+  { name: 'Indigo', color: 'oklch(0.585 0.204 277.1)' },
+  { name: 'Emerald', color: 'oklch(0.696 0.149 162.5)' },
+  { name: 'Amber', color: 'oklch(0.769 0.165 70.1)' },
+  { name: 'Rose', color: 'oklch(0.645 0.215 16.4)' },
+  { name: 'Purple', color: 'oklch(0.627 0.233 303.9)' },
+  { name: 'Cyan', color: 'oklch(0.715 0.126 215.2)' },
+  { name: 'Slate', color: 'oklch(0.446 0.037 257.3)' },
 ];
 
 export default function SettingsModal({ activePort, onClose, addLog, embedded = false }) {

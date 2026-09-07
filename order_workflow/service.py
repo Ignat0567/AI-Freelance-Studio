@@ -462,6 +462,7 @@ class OrderWorkflowService:
                 "id": order.id,
                 "title": order.title,
                 "status": order.status.value,
+                "product_type": order.product_type.value,
                 "created_at": order.created_at.isoformat(),
                 "updated_at": order.updated_at.isoformat(),
                 "execution_status": result.status.value if result else None,

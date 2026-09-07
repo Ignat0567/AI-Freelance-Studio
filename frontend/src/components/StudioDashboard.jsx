@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import OrderWorkflowPage, { STORAGE_KEY as ORDER_STORAGE_KEY } from '../features/order-workflow/OrderWorkflowPage.jsx';
 import ProjectsListPage from '../features/order-workflow/ProjectsListPage.jsx';
 import { orderWorkflowApi } from '../features/order-workflow/orderWorkflowApi.js';
@@ -8,6 +8,11 @@ import MarketplacePage from '../features/marketplace/MarketplacePage.jsx';
 import VideoGenerationPage from '../features/video-generation/VideoGenerationPage.jsx';
 import PresentationGeneratorPage from '../features/presentation-generator/PresentationGeneratorPage.jsx';
 import TeamChatPage from '../features/collaboration/TeamChatPage.jsx';
+import LiquidGlassDefs from './LiquidGlassDefs.jsx';
+import ContextRail from './ContextRail.jsx';
+import { initLiquidGlass } from '../liquidGlass.js';
+import { parseLogLine, LOG_LEVELS } from '../logFormat.js';
+import { tr } from '../i18n.js';
 
 const CORE_NAV_IDS = new Set(['overview', 'create-project', 'projects', 'logs', 'settings']);
 const navItems = [
@@ -26,6 +31,27 @@ const navItems = [
   { id: 'settings', label: 'Settings', icon: 'ST' },
 ];
 
+// Real backend pipeline stages (order_workflow.models.ExecutionStage) grouped under README's
+// conceptual pipeline names. There is no distinct "security" phase in the real pipeline (that
+// belonged to the classic, now-deleted generator) so it is left out rather than fabricated.
+const STAGE_GROUPS = [
+  { id: 'requirements', labelKey: 'stageBrief', code: 'PM', match: ['requirements'] },
+  { id: 'architecture', labelKey: 'stageArchitecture', code: 'ARCH', match: ['design', 'planning', 'backend_decision'] },
+  { id: 'ui', labelKey: 'stageUi', code: 'UI', match: ['ui_shell'] },
+  { id: 'code', labelKey: 'stageCode', code: 'DEV', match: ['core_feature', 'implementation', 'bot_build', 'static_page_build', 'revision', 'repair'] },
+  { id: 'qa', labelKey: 'stageQa', code: 'QA', match: ['verification'] },
+  { id: 'deploy', labelKey: 'stageDeploy', code: 'OPS', match: ['packaging', 'completed'] },
+];
+
+function stageGroupIndex(stage) {
+  return STAGE_GROUPS.findIndex(group => group.match.includes(stage));
+}
+
+function pickActiveOrder(orders) {
+  if (!Array.isArray(orders) || !orders.length) return null;
+  return orders.find(order => ['running', 'in_progress', 'awaiting_user'].includes(String(order.execution_status || '').toLowerCase())) || orders[0];
+}
+
 function pretty(value, fallback = 'Unavailable') {
   if (value === null || value === undefined || value === '') return fallback;
   return String(value).replace(/_/g, ' ');
@@ -33,7 +59,7 @@ function pretty(value, fallback = 'Unavailable') {
 
 function statusTone(status) {
   status = String(status || '').trim().toLowerCase().replace(/\s+/g, '_');
-  if (['completed', 'passed', 'done'].includes(status)) return 'success';
+  if (['completed', 'passed', 'done', 'succeeded'].includes(status)) return 'success';
   if (['working', 'running', 'in_progress'].includes(status)) return 'active';
   if (['failed', 'error'].includes(status)) return 'danger';
   if (['unavailable', 'not_verified', 'incomplete'].includes(status)) return 'warning';
@@ -55,6 +81,7 @@ export default function StudioDashboard({
   logs,
   agents,
   statuses,
+  language,
   settingsContent,
   infoContent,
   onKeyManager,
@@ -63,9 +90,19 @@ export default function StudioDashboard({
   const [sandboxOpened, setSandboxOpened] = useState(false);
   const [recentOrders, setRecentOrders] = useState(null);
   const [showExperimental, setShowExperimental] = useState(false);
+  const [backendPing, setBackendPing] = useState(null);
   const agentEntries = getAgentEntries(agents);
+  const t = key => tr(language, key);
 
   const eventRows = (logs || []).slice(0, 7);
+
+  // Liquid Glass: one shared rAF loop + one delegated mousemove listener for the whole app,
+  // started once and torn down on unmount. Never re-initialized on nav switches -- .fs-shell
+  // (this component's root) never unmounts while the app is open.
+  useEffect(() => {
+    const cleanup = initLiquidGlass();
+    return cleanup;
+  }, []);
 
   useEffect(() => {
     fetch(`http://localhost:${activePort}/api/config/system`)
@@ -79,7 +116,22 @@ export default function StudioDashboard({
     orderWorkflowApi.listOrders().then(data => setRecentOrders(data?.orders || [])).catch(() => setRecentOrders([]));
   }, [activeView]);
 
+  // Real backend status + ping for the sidebar footer (README: "backend :8080", "42ms").
+  useEffect(() => {
+    let cancelled = false;
+    const check = () => {
+      const startedAt = performance.now();
+      fetch(`http://localhost:${activePort}/health`)
+        .then(r => { if (r.ok && !cancelled) setBackendPing(Math.round(performance.now() - startedAt)); })
+        .catch(() => { if (!cancelled) setBackendPing(null); });
+    };
+    check();
+    const interval = setInterval(check, 8000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [activePort]);
+
   const visibleNavItems = navItems.filter(item => showExperimental || CORE_NAV_IDS.has(item.id));
+  const activeNavItem = navItems.find(item => item.id === activeView);
 
   useEffect(() => {
     if (showExperimental || CORE_NAV_IDS.has(activeView) || activeView === 'info') return;
@@ -99,15 +151,38 @@ export default function StudioDashboard({
   const openInfo = () => setActiveView('info');
 
   const workspaceWide = ['settings', 'info', 'sandbox'].includes(activeView);
+  const pipelineActive = Array.isArray(recentOrders) && recentOrders.some(order => ['running', 'in_progress'].includes(String(order.execution_status || '').toLowerCase()));
+
+  const attentionItems = useMemo(() => {
+    if (!Array.isArray(recentOrders)) return [];
+    return recentOrders
+      .filter(order => ['failed', 'qa_failed'].includes(String(order.execution_status || '').toLowerCase()))
+      .slice(0, 2)
+      .map(order => ({
+        id: order.id,
+        title: `${order.title || order.id} — ${t('needsAttention')}`,
+        description: `${t('executionStatusLabel')}: ${pretty(order.execution_status)}.`,
+        actionLabel: t('openOrder'),
+        onAction: () => openProject(order.id),
+      }));
+  }, [recentOrders, language]);
 
   return (
     <div className={`fs-shell ${workspaceWide ? 'workspace-wide' : ''}`}>
+      <LiquidGlassDefs />
+      <div className="fs-liquid-bg" aria-hidden="true">
+        <div className="fs-liquid-blob fs-liquid-blob-1" />
+        <div className="fs-liquid-blob fs-liquid-blob-2" />
+        <div className="fs-liquid-blob fs-liquid-blob-3" />
+        <div className="fs-liquid-blob fs-liquid-blob-4" />
+      </div>
+
       <aside className="fs-sidebar" aria-label="FreelancerStudio navigation">
         <div className="fs-brand">
           <div className="fs-brand-mark" aria-hidden="true">FS</div>
           <div>
-            <strong>FreelancerStudio</strong>
-            <span>Autonomous AI Workspace</span>
+            <strong>AI Freelance Studio</strong>
+            <span>Autonomous Pipeline</span>
           </div>
         </div>
         <nav className="fs-nav">
@@ -130,18 +205,35 @@ export default function StudioDashboard({
           <span className="fs-nav-icon" aria-hidden="true">i</span>
           <span>Info</span>
         </button>
+        <div className="fs-sidebar-card">
+          <span className="fs-device-summary">
+            <i className="fs-status-dot success" aria-hidden="true" />
+            <b style={{ fontFamily: 'var(--fs-font-mono)', fontSize: 11 }}>backend :{activePort}</b>
+            {backendPing !== null && <span style={{ fontFamily: 'var(--fs-font-mono)', fontSize: 11 }}>{backendPing}ms</span>}
+          </span>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            {/* Theme switching lives only in Settings -> Appearance, per explicit user
+                instruction -- no duplicate toggle here. */}
+            <button type="button" className="fs-secondary" style={{ flex: 1 }} onClick={onKeyManager} title="Manage API keys">Keys</button>
+          </div>
+        </div>
       </aside>
 
       <section className="fs-app">
         <header className="fs-header">
           <div className="fs-project-context">
-            <span className="fs-eyebrow">FreelancerStudio</span>
-            <strong>Autonomous AI Workspace</strong>
+            <span className="fs-eyebrow" style={{ fontFamily: 'var(--fs-font-mono)' }}>studio / {activeNavItem?.label || activeView}</span>
+            <strong>{activeNavItem?.label || 'AI Freelance Studio'}</strong>
           </div>
           <div className="fs-header-actions">
-            <button type="button" className="fs-pill" onClick={onKeyManager} title="Manage API keys">Keys</button>
+            {pipelineActive && (
+              <span className="fs-pill" style={{ borderColor: 'var(--fs-acc-line)', background: 'var(--fs-acc-soft)', color: 'var(--fs-accent)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <i aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--fs-accent)', animation: 'fs-pulse 1.4s infinite', display: 'inline-block' }} />
+                {t('pipelineActive')}
+              </span>
+            )}
             <button type="button" className="fs-pill" onClick={() => setActiveView('settings')} title="Open settings">Settings</button>
-            <span className="fs-pill status" title="Backend status">Backend {activePort}</span>
+            <button type="button" className="fs-pill accent" onClick={() => setActiveView('create-project')} title="Start a new order">{t('newOrder')}</button>
           </div>
         </header>
 
@@ -149,13 +241,15 @@ export default function StudioDashboard({
           <main className={`fs-workspace ${activeView === 'overview' ? 'fs-overview-workspace' : ''} ${activeView === 'settings' ? 'fs-settings-workspace' : ''} ${activeView === 'info' ? 'fs-info-workspace' : ''}`} tabIndex={0} aria-label="Central workspace content">
             {activeView === 'overview' && (
               <>
-                <OverviewHero onNewProject={() => setActiveView('create-project')} orders={recentOrders} onOpenProject={openProject} onViewAllProjects={() => setActiveView('projects')} />
+                <OverviewHero onNewProject={() => setActiveView('create-project')} orders={recentOrders} onOpenProject={openProject} onViewAllProjects={() => setActiveView('projects')} language={language} />
+                {pickActiveOrder(recentOrders) && <PipelineStages orderId={pickActiveOrder(recentOrders).id} language={language} />}
+                {pickActiveOrder(recentOrders) && <ArtifactsGrid orderId={pickActiveOrder(recentOrders).id} language={language} />}
                 <AgentActivity agents={agentEntries} statuses={statuses} />
                 <ActivityPanel logs={eventRows} onOpenLogs={() => setActiveView('logs')} />
               </>
             )}
             {activeView === 'create-project' && <OrderWorkflowPage active={activeView === 'create-project'} />}
-            {activeView === 'projects' && <ProjectsListPage active={activeView === 'projects'} onOpenProject={() => setActiveView('create-project')} />}
+            {activeView === 'projects' && <ProjectsListPage active={activeView === 'projects'} onOpenProject={() => setActiveView('create-project')} language={language} />}
             {activeView === 'knowledge-base' && <KnowledgeBasePage active={activeView === 'knowledge-base'} />}
             {activeView === 'marketplace' && <MarketplacePage active={activeView === 'marketplace'} />}
             {activeView === 'video-generation' && <VideoGenerationPage active={activeView === 'video-generation'} />}
@@ -163,51 +257,235 @@ export default function StudioDashboard({
             {activeView === 'team-chat' && <TeamChatPage active={activeView === 'team-chat'} />}
             {activeView === 'team' && <AgentActivity agents={agentEntries} statuses={statuses} expanded />}
             {activeView === 'mobile' && <MobilePreviewPanel activePort={activePort} />}
-            {activeView === 'logs' && <LogPanel logs={logs} />}
+            {activeView === 'logs' && <LogPanel logs={logs} language={language} />}
             {sandboxOpened && <section className="fs-test-lab-host" hidden={activeView !== 'sandbox'}><SandboxTestLabPage active={activeView === 'sandbox'} /></section>}
             {activeView === 'settings' && <section className="fs-panel fs-settings-page">{settingsContent}</section>}
             {activeView === 'info' && <section className="fs-panel fs-info-page">{infoContent}</section>}
             <div className="fs-workspace-bottom-sentinel" data-testid="workspace-bottom-sentinel" aria-hidden="true" />
           </main>
+          {!workspaceWide && (
+            <ContextRail logs={logs} agentEntries={agentEntries} statuses={statuses} attentionItems={attentionItems} language={language} />
+          )}
         </div>
       </section>
     </div>
   );
 }
 
-function OverviewHero({ onNewProject, orders, onOpenProject, onViewAllProjects }) {
+function OverviewHero({ onNewProject, orders, onOpenProject, onViewAllProjects, language }) {
+  const cardRef = useRef(null);
+  const t = key => tr(language, key);
   const hasOrders = Array.isArray(orders) && orders.length > 0;
   const recent = hasOrders ? orders.slice(0, 5) : [];
+  const activeOrder = pickActiveOrder(orders);
+  const [detail, setDetail] = useState(null);
+
+  useEffect(() => {
+    if (!activeOrder) { setDetail(null); return; }
+    let cancelled = false;
+    orderWorkflowApi.getExecution(activeOrder.id).then(data => { if (!cancelled) setDetail(data); }).catch(() => { if (!cancelled) setDetail(null); });
+    return () => { cancelled = true; };
+  }, [activeOrder?.id]);
+
+  // Hero card gets its own dedicated tilt/glare handling (README: excluded from the shared
+  // delegated [data-glass] handler, larger amplitude/glare, opacity fade instead of an
+  // instant SVG-filter swap). Ref-based, never touches React state.
+  const handleMouseMove = (event) => {
+    const el = cardRef.current;
+    if (!el || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+    const rect = el.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const w = rect.width;
+    const h = rect.height;
+    const amp = w > 700 ? 7 : 9;
+    const rotX = -((y - h / 2) / h) * amp;
+    const rotY = ((x - w / 2) / w) * amp;
+    el.style.transform = `perspective(1400px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg)`;
+    el.style.setProperty('--fs-hero-glare-x', `${x}px`);
+    el.style.setProperty('--fs-hero-glare-y', `${y}px`);
+    el.style.setProperty('--fs-hero-glare-opacity', '1');
+  };
+  const handleMouseLeave = () => {
+    const el = cardRef.current;
+    if (!el) return;
+    el.style.transform = '';
+    el.style.setProperty('--fs-hero-glare-opacity', '0');
+  };
+
+  const execution = detail?.execution;
+  const groupIndex = execution ? stageGroupIndex(execution.stage) : -1;
+  const usage = detail?.execution?.result?.usage;
+
+  if (!hasOrders) {
+    return (
+      <section className="fs-hero" ref={cardRef} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
+        <div className="fs-hero-top">
+          <div>
+            <span className="fs-eyebrow">Workspace Overview</span>
+            <h1>Start a project to activate the studio</h1>
+            <p>Create an AI order to generate a new project. Frozen tools stay hidden until you enable experimental features in Settings.</p>
+          </div>
+          <div className="fs-hero-actions">
+            <button type="button" className="fs-primary" onClick={onNewProject}>Create Project</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section className="fs-hero">
+    <section className="fs-hero" ref={cardRef} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
       <div className="fs-hero-top">
         <div>
-          <span className="fs-eyebrow">Workspace Overview</span>
-          <h1>{hasOrders ? `${orders.length} project${orders.length === 1 ? '' : 's'} in this workspace` : 'Start a project to activate the studio'}</h1>
-          <p>{hasOrders ? 'Pick up where you left off, or start a new AI order.' : 'Create an AI order to generate a new project. Frozen tools stay hidden until you enable experimental features in Settings.'}</p>
+          <span className="fs-eyebrow" style={{ fontFamily: 'var(--fs-font-mono)' }}>{t('activeOrderEyebrow')} · {activeOrder.id}</span>
+          <h1>{activeOrder.title}</h1>
+          <p>{execution ? pretty(execution.current_activity, t('queuedLabel')) : `${orders.length} project${orders.length === 1 ? '' : 's'} in this workspace`}</p>
         </div>
-        <div className="fs-hero-actions">
-          <button type="button" className="fs-primary" onClick={onNewProject}>Create Project</button>
+        <div className="fs-meta-row" style={{ marginTop: 0 }}>
+          <span><b style={{ fontVariantNumeric: 'tabular-nums' }}>{groupIndex >= 0 ? `${groupIndex + 1} / ${STAGE_GROUP_COUNT}` : '—'}</b> {t('stageMetric')}</span>
+          <span><b style={{ fontVariantNumeric: 'tabular-nums' }}>{usage ? formatTokens(usage.input_tokens + usage.output_tokens) : '—'}</b> {t('tokensMetric')}</span>
+          <span style={{ color: 'var(--fs-warning)' }}><b style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--fs-warning)' }}>{usage ? `$${usage.total_cost_usd.toFixed(2)}` : '—'}</b> {t('costMetric')}</span>
         </div>
       </div>
-      {hasOrders && (
-        <div className="fs-hero-recent">
-          {recent.map(order => (
-            <button type="button" className="fs-hero-recent-row" key={order.id} onClick={() => onOpenProject(order.id)}>
-              <strong>{order.title}</strong>
-              <span>{String(order.execution_status || order.status || '').replace(/_/g, ' ')}</span>
-            </button>
-          ))}
-          {orders.length > recent.length && <button type="button" className="fs-hero-recent-more" onClick={onViewAllProjects}>View all {orders.length} projects</button>}
+      {typeof execution?.progress === 'number' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, height: 5, borderRadius: 20, background: 'var(--fs-line)', overflow: 'hidden' }}>
+            <div style={{ width: `${execution.progress}%`, height: '100%', borderRadius: 20, background: 'linear-gradient(90deg, var(--fs-accent), var(--fs-warning))', boxShadow: '0 0 14px -2px var(--fs-accent)' }} />
+          </div>
+          <span style={{ color: 'var(--fs-accent)', fontWeight: 600, fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}>{execution.progress}%</span>
         </div>
       )}
+      <div className="fs-hero-recent">
+        {recent.map(order => (
+          <button type="button" className="fs-hero-recent-row" key={order.id} onClick={() => onOpenProject(order.id)}>
+            <strong>{order.title}</strong>
+            <span>{String(order.execution_status || order.status || '').replace(/_/g, ' ')}</span>
+          </button>
+        ))}
+        {orders.length > recent.length && <button type="button" className="fs-hero-recent-more" onClick={onViewAllProjects}>View all {orders.length} projects</button>}
+      </div>
+    </section>
+  );
+}
+
+const STAGE_GROUP_COUNT = STAGE_GROUPS.length;
+function formatTokens(total) {
+  if (!total) return '0';
+  if (total >= 1_000_000) return `${(total / 1_000_000).toFixed(2)}M`;
+  if (total >= 1_000) return `${(total / 1_000).toFixed(1)}K`;
+  return String(total);
+}
+
+function PipelineStages({ orderId, language }) {
+  const t = key => tr(language, key);
+  const [events, setEvents] = useState([]);
+  const [executionStage, setExecutionStage] = useState(null);
+  const [openIndex, setOpenIndex] = useState(-1);
+
+  useEffect(() => {
+    if (!orderId) { setEvents([]); setExecutionStage(null); return; }
+    let cancelled = false;
+    Promise.all([orderWorkflowApi.getEvents(orderId), orderWorkflowApi.getExecution(orderId)])
+      .then(([eventsData, execData]) => {
+        if (cancelled) return;
+        setEvents(eventsData?.events || []);
+        setExecutionStage(execData?.execution?.stage || null);
+      })
+      .catch(() => { if (!cancelled) { setEvents([]); setExecutionStage(null); } });
+    return () => { cancelled = true; };
+  }, [orderId]);
+
+  const currentGroupIndex = executionStage ? stageGroupIndex(executionStage) : -1;
+  useEffect(() => { if (currentGroupIndex >= 0) setOpenIndex(currentGroupIndex); }, [currentGroupIndex]);
+
+  return (
+    <section className="fs-panel fs-pipeline-panel" data-glass>
+      <div className="fs-panel-title">
+        <div>
+          <span>{t('pipelineLabel')}</span>
+          <strong style={{ fontFamily: 'var(--fs-font-mono)', fontSize: 11, fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+            {STAGE_GROUPS.map(group => group.id).join(' → ')}
+          </strong>
+        </div>
+      </div>
+      <div className="fs-pipeline">
+        {STAGE_GROUPS.map((group, index) => {
+          const groupEvents = events.filter(event => group.match.includes(event.stage));
+          const isDone = currentGroupIndex > index;
+          const isActive = currentGroupIndex === index;
+          const isOpen = openIndex === index;
+          const lastEvent = groupEvents[groupEvents.length - 1];
+          return (
+            <div
+              key={group.id}
+              className={`fs-stage ${isDone ? 'success' : isActive ? 'active' : ''}`}
+              style={{ cursor: 'pointer' }}
+              onClick={() => setOpenIndex(isOpen ? -1 : index)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <i aria-hidden="true" />
+                <span style={{ fontFamily: 'var(--fs-font-mono)', fontSize: 11, color: 'var(--fs-dim)' }}>{isOpen ? '▾' : '▸'}</span>
+              </div>
+              <b>{t(group.labelKey)}</b>
+              <span>{isDone ? t('stageDone') : isActive ? t('stageActive') : t('stagePending')}</span>
+              {lastEvent?.agent && (
+                <div style={{ borderTop: '1px solid var(--fs-border)', marginTop: 8, paddingTop: 6, fontFamily: 'var(--fs-font-mono)', fontSize: 11, color: 'var(--fs-dim)' }}>
+                  {lastEvent.agent}
+                </div>
+              )}
+              {isOpen && groupEvents.length > 0 && (
+                <div style={{ borderTop: '1px dashed var(--fs-border)', marginTop: 8, paddingTop: 6, display: 'grid', gap: 4 }}>
+                  {groupEvents.slice(-4).map(event => (
+                    <div
+                      key={event.id}
+                      style={{
+                        fontFamily: 'var(--fs-font-mono)',
+                        fontSize: 11,
+                        color: event.level === 'error' ? 'var(--fs-danger)' : event.level === 'warning' ? 'var(--fs-warning)' : 'var(--fs-dim)',
+                        overflowWrap: 'anywhere',
+                      }}
+                    >{event.message}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ArtifactsGrid({ orderId, language }) {
+  const t = key => tr(language, key);
+  const [artifacts, setArtifacts] = useState([]);
+  useEffect(() => {
+    if (!orderId) { setArtifacts([]); return; }
+    let cancelled = false;
+    orderWorkflowApi.getArtifacts(orderId).then(data => { if (!cancelled) setArtifacts(data?.artifacts || []); }).catch(() => { if (!cancelled) setArtifacts([]); });
+    return () => { cancelled = true; };
+  }, [orderId]);
+
+  return (
+    <section className="fs-panel fs-artifacts-panel" data-glass>
+      <div className="fs-panel-title"><div><span>{t('artifactsLabel')}</span><strong>{artifacts.length}</strong></div></div>
+      <div className="fs-artifacts-grid">
+        {artifacts.length ? artifacts.map(item => (
+          <div className="fs-artifact-card" key={item.id}>
+            <div className="fs-artifact-preview"><span>{item.kind.replace(/_/g, ' ')}</span></div>
+            <b>{item.name}</b>
+            <span>{item.summary}</span>
+          </div>
+        )) : <p className="fs-empty">{t('noArtifacts')}</p>}
+      </div>
     </section>
   );
 }
 
 function AgentActivity({ agents, statuses, expanded = false }) {
   return (
-    <section className="fs-panel fs-team-panel">
+    <section className="fs-panel fs-team-panel" data-glass>
       <div className="fs-panel-title"><div><span>AI Team</span><strong>{agents.length || 0} configured agents</strong></div></div>
       <div className={`fs-agent-grid ${expanded ? 'expanded' : ''}`}>
         {agents.length ? agents.map(agent => {
@@ -227,7 +505,7 @@ function AgentActivity({ agents, statuses, expanded = false }) {
 
 function ActivityPanel({ logs, onOpenLogs }) {
   return (
-    <section className="fs-panel fs-activity fs-activity-panel">
+    <section className="fs-panel fs-activity fs-activity-panel" data-glass>
       <div className="fs-panel-title"><div><span>Recent Activity</span><strong>{logs.length ? `${logs.length} latest events` : 'No events'}</strong></div><button type="button" onClick={onOpenLogs}>Open logs</button></div>
       <div className="fs-log-list">
         {logs.length ? logs.map((log, index) => <div className="fs-log-line" key={`${log}-${index}`}><i aria-hidden="true" /><span>{log}</span></div>) : <p className="fs-empty">No recent activity is available.</p>}
@@ -236,8 +514,48 @@ function ActivityPanel({ logs, onOpenLogs }) {
   );
 }
 
-function LogPanel({ logs }) {
-  return <section className="fs-panel fs-log-panel"><div className="fs-panel-title"><div><span>Logs</span><strong>{logs?.length || 0} events</strong></div></div><div className="fs-full-log">{logs?.length ? logs.map((log, index) => <div key={`${log}-${index}`}>{log}</div>) : <p className="fs-empty">No log entries are available.</p>}</div></section>;
+function LogPanel({ logs, language }) {
+  const t = key => tr(language, key);
+  const [levelFilter, setLevelFilter] = useState('all');
+  const [query, setQuery] = useState('');
+  const parsed = (logs || []).map(parseLogLine);
+  const filtered = parsed.filter(line => {
+    if (levelFilter !== 'all' && line.level !== levelFilter) return false;
+    if (query && !line.text.toLowerCase().includes(query.toLowerCase())) return false;
+    return true;
+  });
+  return (
+    <section className="fs-panel fs-log-panel" data-glass>
+      <div className="fs-panel-title">
+        <div><span>Logs</span><strong>{logs?.length || 0} events</strong></div>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        {['all', ...LOG_LEVELS].map(level => (
+          <button
+            key={level}
+            type="button"
+            className="fs-secondary"
+            style={levelFilter === level ? { borderColor: 'var(--fs-acc-line)', background: 'var(--fs-acc-soft)', color: 'var(--fs-accent)' } : undefined}
+            onClick={() => setLevelFilter(level)}
+          >{level}</button>
+        ))}
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder={t('filterByText')}
+          style={{ marginLeft: 'auto', width: 200, border: '1px solid var(--fs-border)', borderRadius: 999, padding: '8px 12px', background: 'var(--fs-input-bg)', color: 'var(--fs-text)', font: '11px var(--fs-font-mono)' }}
+        />
+      </div>
+      <div className="fs-full-log">
+        {filtered.length ? filtered.map((line, index) => (
+          <div key={`${line.raw}-${index}`} className={`fs-rail-log-line level-${line.level}`}>
+            <time>{line.time}</time>
+            <span>{line.text}</span>
+          </div>
+        )) : <p className="fs-empty">No log entries are available.</p>}
+      </div>
+    </section>
+  );
 }
 
 const MOBILE_DEVICES = [
@@ -275,7 +593,7 @@ function MobilePreviewPanel({ activePort }) {
   const canEmbed = isEmbeddablePreviewUrl(previewUrl);
   const hasExternalUrl = previewUrl && !canEmbed;
   return (
-    <section className="fs-panel fs-mobile-preview-page">
+    <section className="fs-panel fs-mobile-preview-page" data-glass>
       <div className="fs-panel-title">
         <div><span>Mobile Preview</span></div>
       </div>
