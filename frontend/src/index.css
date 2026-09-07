@@ -300,6 +300,11 @@ html,
      gradients -- same dark palette as before, just with visible texture for the new
      glass panels to blur over instead of a flat gradient. */
   --fs-bg-texture: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22640%22%20height=%22640%22%20viewBox=%220%200%20640%20640%22%3E%20%3Cdefs%3E%20%3Cpattern%20id=%22grid%22%20width=%2242%22%20height=%2242%22%20patternUnits=%22userSpaceOnUse%22%3E%20%3Cpath%20d=%22M%2042%200%20L%200%200%200%2042%22%20fill=%22none%22%20stroke=%22rgba(148,196,255,0.05)%22%20stroke-width=%221%22/%3E%20%3C/pattern%3E%20%3Cpattern%20id=%22dots%22%20width=%2221%22%20height=%2221%22%20patternUnits=%22userSpaceOnUse%22%3E%20%3Ccircle%20cx=%221%22%20cy=%221%22%20r=%221%22%20fill=%22rgba(148,196,255,0.07)%22/%3E%20%3C/pattern%3E%20%3Cfilter%20id=%22grain%22%3E%20%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%220.85%22%20numOctaves=%222%22%20stitchTiles=%22stitch%22%20result=%22noise%22/%3E%20%3CfeColorMatrix%20in=%22noise%22%20type=%22matrix%22%20values=%220%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200.05%200%22/%3E%20%3C/filter%3E%20%3C/defs%3E%20%3Crect%20width=%22640%22%20height=%22640%22%20fill=%22url(%23grid)%22/%3E%20%3Crect%20width=%22640%22%20height=%22640%22%20fill=%22url(%23dots)%22/%3E%20%3Crect%20width=%22640%22%20height=%22640%22%20filter=%22url(%23grain)%22/%3E%20%3Cg%20stroke=%22rgba(88,190,255,0.07)%22%20stroke-width=%221.3%22%20fill=%22none%22%3E%20%3Cpath%20d=%22M0%20126%20H189%20V63%20H336%22/%3E%20%3Cpath%20d=%22M640%20400%20H448%20V526%20H256%20V463%22/%3E%20%3Cpath%20d=%22M84%20640%20V546%20H231%20V610%22/%3E%20%3Cpath%20d=%22M560%200%20V84%20H420%22/%3E%20%3C/g%3E%20%3Cg%20fill=%22rgba(88,190,255,0.16)%22%3E%20%3Ccircle%20cx=%22189%22%20cy=%22126%22%20r=%222.6%22/%3E%20%3Ccircle%20cx=%22336%22%20cy=%2263%22%20r=%222.6%22/%3E%20%3Ccircle%20cx=%22420%22%20cy=%2284%22%20r=%222.6%22/%3E%20%3C/g%3E%20%3Cg%20fill=%22rgba(155,109,255,0.16)%22%3E%20%3Ccircle%20cx=%22448%22%20cy=%22400%22%20r=%222.6%22/%3E%20%3Ccircle%20cx=%22256%22%20cy=%22526%22%20r=%222.6%22/%3E%20%3Ccircle%20cx=%22231%22%20cy=%22546%22%20r=%222.6%22/%3E%20%3C/g%3E%20%3C/svg%3E");
+  /* User-supplied shell backdrop (2026-09-07): a photographic network/data-node scene,
+     dark enough to sit under the same glow gradients .fs-shell already painted over the
+     procedural texture above. .theme-light overrides this with a light-backdrop shot of
+     the same scene, not this same file re-tinted. */
+  --fs-bg-photo: url("./assets/studio-background.jpg");
   --fs-panel: rgba(10, 25, 43, 0.58);
   --fs-panel-strong: rgba(13, 32, 54, 0.72);
   --fs-panel-subtle: rgba(255, 255, 255, 0.05);
@@ -335,6 +340,9 @@ html,
 .theme-light {
   --fs-bg: #f5f8fc;
   --fs-bg-soft: #edf4fb;
+  /* User-supplied shell backdrop (2026-09-07): same network/data-node scene as :root's
+     dark version, shot on a light backdrop instead -- not the dark photo re-tinted. */
+  --fs-bg-photo: url("./assets/studio-background-light.jpg");
   --fs-panel: rgba(255, 255, 255, 0.6);
   --fs-panel-strong: rgba(248, 252, 255, 0.76);
   --fs-panel-subtle: rgba(2, 20, 38, 0.04);
@@ -364,9 +372,10 @@ html,
   color: var(--fs-text);
   background:
     var(--fs-bg-texture) 0 0/320px repeat,
+    var(--fs-bg-photo) center/cover no-repeat fixed,
     radial-gradient(circle at 45% -15%, color-mix(in srgb, var(--fs-accent) 22%, transparent), transparent 32rem),
     radial-gradient(circle at 95% 8%, color-mix(in srgb, var(--fs-accent) 14%, transparent), transparent 30rem),
-    linear-gradient(135deg, var(--fs-bg), var(--fs-bg-soft) 58%, var(--fs-bg));
+    linear-gradient(135deg, color-mix(in srgb, var(--fs-bg) 80%, transparent), color-mix(in srgb, var(--fs-bg-soft) 62%, transparent) 58%, color-mix(in srgb, var(--fs-bg) 80%, transparent));
   overflow: hidden;
 }
 
