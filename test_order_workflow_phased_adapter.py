@@ -145,7 +145,11 @@ def _safe_prose_ai_ask(_prompt: str) -> str:
     return "A generated project overview paragraph."
 
 
-def _adapter(tmp_path, *, opencode_client=None, repair_opencode_client=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None, visual_check_runner=None, state_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
+def _no_second_opinion(_workspace_path, _goal, _files):
+    return None
+
+
+def _adapter(tmp_path, *, opencode_client=None, repair_opencode_client=None, second_opinion_reviewer=None, qa_runner=None, ai_ask=None, environ=None, smoke_check_runner=None, visual_check_runner=None, state_check_runner=None) -> PhasedLiveOpenCodeExecutionAdapter:
     return PhasedLiveOpenCodeExecutionAdapter(
         provider_name="opencode_bridge",
         model_name="openai/gpt-5.5",
@@ -154,6 +158,13 @@ def _adapter(tmp_path, *, opencode_client=None, repair_opencode_client=None, qa_
         # None (the default) leaves the constructor's own fallback in place -- the same
         # client repairs as built, exactly as before this parameter existed.
         repair_opencode_client=repair_opencode_client,
+        # An explicit no-op by default, NOT None: the adapter's own default (None) resolves
+        # active_second_opinion_backend() against the real, uncommitted system_settings on
+        # whatever machine runs this suite -- turning this on in Settings (the whole point of
+        # the feature) would otherwise make every test using this helper place a real Grok CLI
+        # call the moment that machine's local Settings has it enabled. Tests that want to
+        # exercise the real wiring pass their own reviewer explicitly.
+        second_opinion_reviewer=second_opinion_reviewer or _no_second_opinion,
         qa_runner=qa_runner or _passing_qa,
         ai_ask=ai_ask or _safe_prose_ai_ask,
         environ={"FREELANCERSTUDIO_ENABLE_LIVE_OPENCODE_EXECUTION": "1", **(environ or {})},
@@ -936,6 +947,91 @@ def test_the_delivered_folder_carries_the_checks_own_output(tmp_path):
     assert "Palette: 4/4 approved colours painted (100%)." in evidence
     report = next(tmp_path.rglob("delivery_report.md")).read_text(encoding="utf-8")
     assert "qa_evidence.md" in report
+
+
+def test_a_second_opinion_is_appended_to_the_delivered_evidence(tmp_path):
+    """Report-only, confirmed explicitly with the user 2026-09-07: Grok reads the finished,
+    already-QA-passed project and writes down what it notices, appended to qa_evidence.md --
+    never blocking, never triggering another repair."""
+    brief, handoff = _contract()
+    captured = {}
+
+    def fake_reviewer(workspace_path, goal, files):
+        captured["workspace_path"] = workspace_path
+        captured["goal"] = goal
+        captured["files"] = files
+        return "- The submit button has no focus style for keyboard navigation."
+
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), second_opinion_reviewer=fake_reviewer)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
+    assert "## Second opinion (Grok, independent review after delivery)" in evidence
+    assert "no focus style for keyboard navigation" in evidence
+    assert captured["goal"] == brief.goal
+    assert isinstance(captured["files"], tuple)
+
+
+def test_no_second_opinion_section_when_the_reviewer_finds_nothing(tmp_path):
+    """The other half of the same guarantee: a reviewer that returns None (disabled, Grok
+    not ready, nothing worth flagging) must not add the section -- qa_evidence.md still
+    exists because the QA gates printed their own output, exactly as before this feature
+    existed, it just gains nothing extra."""
+    brief, handoff = _contract()
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), second_opinion_reviewer=_no_second_opinion)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
+    assert "Second opinion" not in evidence
+
+
+def test_a_second_opinion_that_raises_does_not_fail_the_delivery(tmp_path):
+    """This is an advisory extra, not a gate: whatever goes wrong inside the review call
+    itself must never turn a successful delivery into a failed one, and must not add a
+    section either -- there is nothing real to show for a call that blew up."""
+    brief, handoff = _contract()
+
+    def exploding_reviewer(_workspace_path, _goal, _files):
+        raise RuntimeError("the review call blew up")
+
+    adapter = _adapter(tmp_path, opencode_client=FakePhaseOpenCodeClient(), second_opinion_reviewer=exploding_reviewer)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
+    assert "Second opinion" not in evidence
+
+
+def test_a_second_opinion_alone_is_enough_to_create_the_evidence_file(tmp_path):
+    """The (evidence or "") fallback in _finalize_success: a delivery whose gates printed
+    nothing of their own must still get a qa_evidence.md when the second opinion has
+    something to say -- the file did not exist for this reason before this feature."""
+    brief, handoff = _contract()
+
+    def _silent_qa(_qa_commands, _cwd):
+        return QAOutcome(passed=True, results=(QACommandResult(command="npm test", exit_code=0, stdout_tail="", stderr_tail="", duration=0.1),))
+
+    def fake_reviewer(_workspace_path, _goal, _files):
+        return "- Nothing structural failed, but the empty state has no illustration."
+
+    adapter = _adapter(
+        tmp_path,
+        opencode_client=FakePhaseOpenCodeClient(),
+        qa_runner=_silent_qa,
+        second_opinion_reviewer=fake_reviewer,
+    )
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    evidence = next(tmp_path.rglob("qa_evidence.md")).read_text(encoding="utf-8")
+    assert "## Second opinion (Grok, independent review after delivery)" in evidence
+    assert "empty state has no illustration" in evidence
 
 
 def test_a_visual_gate_repair_reaches_the_delivered_report_and_evidence(tmp_path):

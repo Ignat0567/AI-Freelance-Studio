@@ -301,6 +301,18 @@ class _GateTally:
         )
 
 
+def _default_second_opinion(workspace_path: Path, goal: str, files: tuple[str, ...]) -> str | None:
+    """Resolved at call time, not once at adapter construction, so a Settings change takes
+    effect on the very next delivery with no adapter reconstruction needed."""
+    from .claude_code_client import active_second_opinion_backend
+
+    if active_second_opinion_backend() != "grok":
+        return None
+    from .grok_code_client import build_second_opinion
+
+    return build_second_opinion(workspace_path, goal=goal, files=files)
+
+
 class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
     """Restructures live generation into UI-SHELL -> CORE-FEATURE -> BACKEND-DECISION-GATE,
     each its own OpenCode call with its own scoped prompt and its own QA-gated checkpoint,
@@ -324,6 +336,12 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # None (the default -- nobody has pinned repair_backend) means "the client above",
         # so every existing setup behaves exactly as before this parameter existed.
         repair_opencode_client: OpenCodeExecutionClient | None = None,
+        # Report-only: runs once, after every QA gate has already passed, on the finished
+        # project. None (the default) resolves active_second_opinion_backend() at call time
+        # instead of once here, so a Settings change takes effect on the very next delivery
+        # with no adapter reconstruction needed -- same reasoning as repair_opencode_client's
+        # own default, one level further removed since this one is off unless named.
+        second_opinion_reviewer: Callable[[Path, str, tuple[str, ...]], str | None] | None = None,
         qa_commands: tuple[str, ...] = ("npm test",),
         environ: dict[str, str] | None = None,
         writable_probe: Callable[[Path], bool] | None = None,
@@ -346,6 +364,7 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         self._repair_client = (
             _WebAppCodingClient(repair_opencode_client) if repair_opencode_client is not None else self._opencode_client
         )
+        self._second_opinion_reviewer = second_opinion_reviewer or _default_second_opinion
         self._environ = environ
         # The general-purpose prose call: the README overview, and the cinematic-website
         # fallback's own section-copy call. The backend-decision gate used to take a second,
@@ -995,6 +1014,20 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
         # the status belongs to whichever check fetched the page, and only one ever does.
         served = re.search(r"Served over HTTP: (\d{3})", evidence or "")
         served_http_status = int(served.group(1)) if served else None
+        # Every gate above has already passed; this is a report-only extra read of the
+        # finished project, appended to the same evidence file when it has something to say.
+        # Never allowed to turn a successful delivery into a failed one -- see
+        # _default_second_opinion / build_second_opinion for how each of their own failure
+        # modes already degrades to None before this call ever raises.
+        try:
+            second_opinion = self._second_opinion_reviewer(workspace.project_path, request.brief.goal, meaningful_artifacts)
+        except Exception as exc:
+            second_opinion = None
+            event_sink.emit(stage=ExecutionStage.COMPLETED, agent="Grok", progress=97, message="Second opinion pass could not run.", level=EventLevel.WARNING, details=(str(exc)[:2000],))
+        else:
+            if second_opinion:
+                event_sink.emit(stage=ExecutionStage.COMPLETED, agent="Grok", progress=97, message="Second opinion recorded in qa_evidence.md.")
+                evidence = (evidence or "") + "\n\n## Second opinion (Grok, independent review after delivery)\n\n" + second_opinion
         evidence_file = None
         if evidence:
             evidence_file = "qa_evidence.md"

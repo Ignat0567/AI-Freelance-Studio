@@ -350,6 +350,7 @@ class SystemConfigPayload(StrictRequestModel):
     show_experimental: Any | None = None
     coding_backend: Any | None = None
     repair_backend: Any | None = None
+    second_opinion_backend: Any | None = None
 
 
 @router.get("/api/system/build")

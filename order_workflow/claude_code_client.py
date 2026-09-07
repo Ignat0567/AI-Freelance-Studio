@@ -469,6 +469,32 @@ def active_repair_backend() -> str:
     return _resolve_ready_backend(requested)
 
 
+_SECOND_OPINION_BACKENDS = frozenset({"grok"})
+
+
+def active_second_opinion_backend() -> str:
+    """Which worker, if any, reads the finished project after every gate has already passed
+    and writes down what it notices -- report-only, never blocking, never triggering another
+    repair (confirmed explicitly with the user 2026-09-07 over the escalate-to-repair and
+    block-delivery alternatives).
+
+    Empty (the default) means skip the pass entirely: unlike coding_backend/repair_backend
+    there is no "worker who already touched this order" fallback that makes sense here -- an
+    empty setting is not a request for auto-detection, it is "nobody has turned this on".
+    Only "grok" is meaningful right now; an unrecognised value (a stale pin, a typo) silently
+    resolves to skip rather than raising over an advisory extra that was never load-bearing.
+    """
+    pinned = os.environ.get("FREELANCERSTUDIO_SECOND_OPINION_BACKEND", "").strip().lower()
+    if not pinned:
+        try:
+            from system_settings import SYSTEM_SETTINGS
+
+            pinned = str(SYSTEM_SETTINGS.get("second_opinion_backend") or "").strip().lower()
+        except Exception:
+            pinned = ""
+    return pinned if pinned in _SECOND_OPINION_BACKENDS else ""
+
+
 def select_coding_execution_client(backend: str | None = None) -> OpenCodeExecutionClient:
     """`backend`, when given, is used as-is (already resolved by the caller, e.g. from
     active_repair_backend()) instead of re-resolving via active_coding_backend() -- so build

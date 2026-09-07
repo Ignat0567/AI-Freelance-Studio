@@ -277,6 +277,18 @@ export default function SettingsModal({ activePort, onClose, addLog, embedded = 
                   </select>
                 </label>
                 <p className="provider-message">When a QA check fails, this worker gets the repair prompt instead of the one that wrote the first draft -- e.g. a fast local draft, then a stronger worker fixes what the checks find.</p>
+                <label className="block mt-3 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Independent second opinion after delivery
+                  <select
+                    value={s.second_opinion_backend || ''}
+                    onChange={e => updateSetting('second_opinion_backend', e.target.value)}
+                    className="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs focus:outline-none mt-1"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    <option value="">Off</option>
+                    <option value="grok">Grok subscription</option>
+                  </select>
+                </label>
+                <p className="provider-message">Report-only: after every QA gate has already passed, this worker reads the finished project once and writes what it notices into qa_evidence.md. Never blocks delivery, never triggers another repair.</p>
               </Section>
 
               <Section label="Experimental tools">

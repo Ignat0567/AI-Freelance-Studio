@@ -215,3 +215,79 @@ class ConfiguredGrokExecutionClient:
             elapsed_seconds=elapsed,
             timeout_seconds=limit,
         )
+
+
+_SECOND_OPINION_TIMEOUT = 240
+_SECOND_OPINION_CONTENT_CAP = 60_000
+_SECOND_OPINION_SYSTEM = (
+    "You are reviewing a project that has already been delivered to a client. Every "
+    "automated QA gate it had to pass -- build, tests, functional smoke check, visual "
+    "check -- has already passed. Nothing you say will change the delivery or trigger any "
+    "repair; this is a second, independent pass, purely advisory. Read the files below and "
+    "write 3 to 6 concrete, specific findings as plain bullet points: accessibility gaps, "
+    "missing error handling, unhandled edge cases, or real code-quality problems. Name the "
+    "file and, where useful, the exact element or function. Do not ask a question, do not "
+    "propose a plan, do not emit file markers or code changes -- only the bullet list. If you "
+    "genuinely find nothing worth flagging, say so in one sentence instead of inventing filler."
+)
+
+
+def _second_opinion_looks_like_error(text: str) -> bool:
+    return (text or "").casefold().startswith("grok cli ")
+
+
+def build_second_opinion(
+    workspace_path: Path,
+    *,
+    goal: str,
+    files: tuple[str, ...],
+    timeout: int = _SECOND_OPINION_TIMEOUT,
+) -> str | None:
+    """A report-only extra read of an already-delivered, already-QA-passed project.
+
+    Every failure mode here -- Grok not ready, the CLI call itself failing, nothing left to
+    show after the size cap -- degrades to None rather than raising: _finalize_success()'s
+    delivery must never fail because this advisory pass could not run. `files` is the
+    caller's already-curated, noise-filtered list (scan_meaningful_generated_artifacts()'s
+    output, passed in rather than recomputed) so this function makes no filesystem-shape
+    decisions of its own about what counts as source.
+    """
+    if not grok_bridge.test_grok_readiness().get("ready"):
+        return None
+
+    workspace = Path(workspace_path)
+    blocks: list[str] = []
+    total = 0
+    for relative in files:
+        path = workspace / relative
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not text.strip():
+            continue
+        block = f"--- {relative} ---\n{text}"
+        if total + len(block) > _SECOND_OPINION_CONTENT_CAP:
+            blocks.append(f"-- remaining files omitted, over the {_SECOND_OPINION_CONTENT_CAP}-char review budget --")
+            break
+        blocks.append(block)
+        total += len(block)
+    if not blocks:
+        return None
+
+    user_prompt = f"Project goal: {goal}\n\n" + "\n\n".join(blocks)
+    try:
+        output = grok_bridge.ask_grok_cli(
+            _SECOND_OPINION_SYSTEM,
+            user_prompt,
+            model=grok_bridge.DEFAULT_GROK_MODEL,
+            timeout=timeout,
+        )
+    except Exception:
+        return None
+    output = (output or "").strip()
+    if not output or _second_opinion_looks_like_error(output):
+        return None
+    return output

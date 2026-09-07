@@ -209,6 +209,8 @@ def test_browser_client_sends_the_launch_choice():
     assert 'value="openrouter"' in settings
     assert "Who fixes QA failures" in settings
     assert "repair_backend" in settings
+    assert "Independent second opinion after delivery" in settings
+    assert "second_opinion_backend" in settings
 
 
 def test_emit_coding_is_optional_on_plain_sinks():

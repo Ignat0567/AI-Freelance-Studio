@@ -230,6 +230,14 @@ class ConfigurationBackedExecutionAdapter:
                 if self._opencode_client is None
                 else None
             )
+            # Same guard as repair_client, for a different reason: PhasedLiveOpenCodeExecutionAdapter's
+            # own default (None) resolves active_second_opinion_backend() live at delivery time, not
+            # here -- correct for production, but it means every phased-adapter unit test that injects
+            # its own opencode_client would otherwise make a real Grok CLI call the moment this
+            # machine's real Settings happens to have second_opinion_backend="grok" saved (exactly the
+            # state a developer running this app normally leaves behind). An explicit no-op, not None,
+            # for the injected-client path -- None here would still mean "use the live default".
+            second_opinion_reviewer = None if self._opencode_client is None else (lambda *_args, **_kwargs: None)
             if self._revision:
                 # ReviseProjectExecutionAdapter itself checks request.brief.product_type to
                 # pick web (npm) vs bot (pip/python) QA commands -- same adapter class
@@ -240,6 +248,7 @@ class ConfigurationBackedExecutionAdapter:
                     workspace_root=workspace_root,
                     opencode_client=opencode_client,
                     repair_opencode_client=repair_client,
+                    second_opinion_reviewer=second_opinion_reviewer,
                     environ=environ,
                     ai_ask=self._website_section_ai_ask,
                     qa_runner=_select_qa_runner(self._environ),
@@ -253,6 +262,7 @@ class ConfigurationBackedExecutionAdapter:
                     workspace_root=workspace_root,
                     opencode_client=opencode_client,
                     repair_opencode_client=repair_client,
+                    second_opinion_reviewer=second_opinion_reviewer,
                     environ=environ,
                     ai_ask=self._website_section_ai_ask,
                     qa_runner=_select_qa_runner(self._environ),
@@ -264,6 +274,7 @@ class ConfigurationBackedExecutionAdapter:
                     workspace_root=workspace_root,
                     opencode_client=opencode_client,
                     repair_opencode_client=repair_client,
+                    second_opinion_reviewer=second_opinion_reviewer,
                     environ=environ,
                     ai_ask=self._website_section_ai_ask,
                     qa_runner=_select_qa_runner(self._environ),
@@ -284,6 +295,7 @@ class ConfigurationBackedExecutionAdapter:
                 workspace_root=workspace_root,
                 opencode_client=opencode_client,
                 repair_opencode_client=repair_client,
+                second_opinion_reviewer=second_opinion_reviewer,
                 environ=environ,
                 ai_ask=self._website_section_ai_ask,
                 # environ above is a synthetic live-opt-in-only dict (see the LiveOpenCodeExecutionAdapter

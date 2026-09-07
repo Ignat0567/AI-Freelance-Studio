@@ -23,6 +23,11 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     # claude_code_client.py. A non-empty value pins the QA-repair-loop worker independently
     # of who wrote the first draft, e.g. Ollama drafts, Claude Code repairs.
     "repair_backend": "",
+    # Empty means "skip -- no second-opinion pass at all". Unlike coding_backend/repair_backend
+    # there is no fallback worker: this is a report-only extra read of the already-delivered,
+    # already-QA-passed project, written into qa_evidence.md. See active_second_opinion_backend()
+    # in claude_code_client.py and build_second_opinion() in grok_code_client.py.
+    "second_opinion_backend": "",
 }
 
 ALLOWED_SYSTEM_KEYS = [
@@ -32,7 +37,7 @@ ALLOWED_SYSTEM_KEYS = [
     "default_budget", "polling_interval", "log_detail",
     "vscode_path", "pycharm_path",
     "live_execution_enabled", "show_experimental",
-    "coding_backend", "repair_backend",
+    "coding_backend", "repair_backend", "second_opinion_backend",
 ]
 
 _load_studio_keys: Callable[[], dict] | None = None
