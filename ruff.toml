@@ -15,4 +15,38 @@ exclude = [
 ]
 
 [lint]
-select = ["E9", "F63", "F7", "F82"]
+# A ratchet, not a wish list. A rule is added here only once the codebase already has zero
+# of it, so CI is green at the commit that adds it and stays green after. Nothing in this
+# file is ever a backlog of things to fix -- that would put the build in the red over code
+# that works, and a red build nobody can fix today is a build people learn to ignore.
+#
+# To widen it: pick a rule, run `ruff check . --select <RULE> --statistics`, clear what it
+# finds in its own commit, then add it here in the next one. Never the other way round.
+# Rules measured as non-zero on 2026-09-10 and therefore NOT here yet: F401 (135, and see
+# the warning below), F841 (5), B008 (16), B904 (14), B023 (5), E701 (23), E702 (107).
+# Deliberately not planned: ARG (509) and UP (289) -- at that volume the rule disagrees
+# with the codebase's style rather than the codebase being wrong.
+#
+# On F401 specifically, when its turn comes: do not run `--fix` across the repository.
+# `import provider_adapters` in main.py is unused by name and load-bearing by effect --
+# the module registers every provider adapter at import time -- and the fix deletes it.
+# The suite does not catch that, because tests import the module directly.
+select = [
+    "E9",     # syntax and IO errors
+    "F63",    # comparisons that are always the same
+    "F7",     # break/return outside a loop or function
+    "F82",    # undefined names
+    "F402",   # import shadowed by a loop variable
+    "F811",   # redefinition of an unused name -- a duplicated test silently shadows
+    "E711",   # comparison to None with ==
+    "E712",   # comparison to True/False with ==
+    "E713",   # `not x in y`
+    "E714",   # `not x is y`
+    "E721",   # type comparison with == instead of isinstance
+    "E722",   # bare except -- this codebase catches OSError on purpose, never blindly
+    "B002",   # ++x, which is not an increment
+    "B006",   # mutable default argument
+    "B012",   # break/return inside finally, which swallows the exception
+    "T100",   # a debugger call left in the source: in an unattended order it hangs the run
+    "S102",   # exec()
+]
