@@ -130,3 +130,70 @@ def test_describe_phase_complexity_explains_a_routine_decision():
 
     assert complexity == "routine"
     assert reason
+
+
+# --- a keyword that is being excluded is not evidence of difficulty -------------------
+# Found live on 2026-09-10: an order whose description ended "No backend, no database, no
+# authentication, no user accounts." routed its ui_shell phase to the expensive model with
+# the reason `matched 'authentication'` -- charged the hard-work rate for saying it did not
+# want the hard work.
+
+
+@pytest.mark.parametrize(
+    "focus_text",
+    [
+        "No backend, no database, no authentication, no user accounts.",
+        "The app has no authentication.",
+        "Runs without authentication of any kind.",
+        "There is never any payment involved.",
+        "It doesn't need authentication.",
+        "Excluding authentication, this is a plain list.",
+    ],
+)
+def test_a_negated_keyword_does_not_route_to_complex(focus_text):
+    brief = _brief()
+
+    assert classify_phase_complexity(brief, focus_text=focus_text) == "routine"
+
+
+@pytest.mark.parametrize(
+    "focus_text",
+    [
+        "The user signs in with authentication.",
+        # The negation belongs to the previous clause, not to this keyword.
+        "There is no backend, but authentication is required.",
+        # ...nor does one from the previous sentence carry over.
+        "There is no backend. Authentication uses OAuth.",
+        # Far enough away to be about something else entirely.
+        "No decorative animation, no icons, no illustrations, and authentication throughout.",
+        # Negated once, meant once.
+        "No authentication yet, though authentication is planned.",
+    ],
+)
+def test_an_affirmative_keyword_still_routes_to_complex(focus_text):
+    brief = _brief()
+
+    assert classify_phase_complexity(brief, focus_text=focus_text) == "complex"
+
+
+def test_the_reason_names_only_the_keywords_that_actually_counted():
+    brief = _brief()
+
+    complexity, reason = describe_phase_complexity(
+        brief, focus_text="No authentication and no payment, but it does use websocket streaming."
+    )
+
+    assert complexity == "complex"
+    assert "websocket" in reason
+    assert "authentication" not in reason
+    assert "payment" not in reason
+
+
+def test_negation_scan_does_not_disturb_an_ordinary_keyword_brief():
+    # The pre-existing behaviour this must not regress: a plain affirmative mention.
+    brief = _brief()
+
+    complexity, reason = describe_phase_complexity(brief, focus_text="Sync data in real-time across devices.")
+
+    assert complexity == "complex"
+    assert "real-time" in reason

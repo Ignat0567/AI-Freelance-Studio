@@ -242,3 +242,63 @@ def test_no_style_pack_declares_a_default_theme_the_gate_will_reject():
     for pack in packs:
         assert "dark is default" not in pack.spec.casefold(), pack.slug
         assert "default (dark" not in pack.spec.casefold(), pack.slug
+
+
+# --- excluding a thing is not asking for it ------------------------------------------
+# 2026-09-10: an order ending "No backend, no database, no authentication, no user accounts"
+# was given a whole backend phase for saying so -- 341 seconds of the expensive model that
+# produced no server, because none was wanted. Only the three patterns people idiomatically
+# write in the negative are checked; the rest keep failing closed.
+
+
+def test_negated_authentication_does_not_demand_a_backend():
+    brief = _brief(technical_constraints=("No authentication",))
+
+    assert decide_backend_need(brief, _handoff()).needs_backend is False
+
+
+def test_negated_user_accounts_do_not_demand_a_backend():
+    brief = _brief(technical_constraints=("No user accounts",))
+
+    assert decide_backend_need(brief, _handoff()).needs_backend is False
+
+
+def test_the_whole_negative_boundary_sentence_does_not_demand_a_backend():
+    brief = _brief(technical_constraints=("No backend, no database, no authentication, no user accounts",))
+
+    assert decide_backend_need(brief, _handoff()).needs_backend is False
+
+
+def test_affirmative_authentication_still_demands_a_backend():
+    brief = _brief(technical_constraints=("Users sign in with authentication",))
+
+    assert decide_backend_need(brief, _handoff()).needs_backend is True
+
+
+def test_a_real_signal_survives_a_negation_elsewhere_in_the_same_brief():
+    # The negation belongs to authentication. Multi-user does not stop being true.
+    brief = _brief(technical_constraints=("No authentication", "Multi-user collaboration on one list"))
+
+    assert decide_backend_need(brief, _handoff()).needs_backend is True
+
+
+def test_sync_and_multi_user_are_never_negation_checked():
+    # Deliberately fail-closed: nobody writes "no synchronisation across devices" to describe
+    # a local app, and a wrong "no backend needed" ships a broken project.
+    from order_workflow.phase_prompts import _pattern_demands_backend
+
+    assert _pattern_demands_backend(r"\bsynchroni[sz]", "no synchronisation at all") is True
+    assert _pattern_demands_backend(r"\bmulti[- ]?user\b", "this is not multi-user") is True
+
+
+def test_exactly_the_three_negatable_patterns_are_derived_from_the_tuple():
+    # The set is derived rather than restated so it cannot drift from the tuple -- a stale
+    # copy of a regex literal matches nothing and fails silently.
+    from order_workflow.phase_prompts import _BACKEND_REQUIRING_PATTERNS, _NEGATABLE_BACKEND_PATTERNS
+
+    assert _NEGATABLE_BACKEND_PATTERNS <= set(_BACKEND_REQUIRING_PATTERNS)
+    assert len(_NEGATABLE_BACKEND_PATTERNS) == 3
+    assert all(
+        any(marker in pattern for marker in ("authenticat", "user account", "login"))
+        for pattern in _NEGATABLE_BACKEND_PATTERNS
+    )

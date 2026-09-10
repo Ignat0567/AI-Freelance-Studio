@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from .complexity import occurrence_is_negated
 from .execution_plan import build_prompt
 from .models import AgentHandoff, ProjectBrief
 from .phase_context import PhaseContext
@@ -287,6 +288,37 @@ _BACKEND_REQUIRING_PATTERNS: tuple[str, ...] = (
 )
 
 
+# The only three of the patterns above that are checked for negation, because these are the
+# three people write in the negative when they are drawing a boundary: "no authentication",
+# "no user accounts", "no login". Found live on 2026-09-10, when an order ending "No backend,
+# no database, no authentication, no user accounts" was given a backend phase for saying so --
+# 341 seconds of the expensive model, which produced no server because none was wanted.
+#
+# The rest are deliberately left alone. Nobody writes "no synchronisation across devices" to
+# describe a local app, and the two mistakes do not cost the same: a missed backend ships a
+# broken project, an unnecessary one ships a working project that cost more. This module
+# fails closed on purpose, and it still does everywhere the negative form is not idiomatic.
+# Derived from the tuple above rather than restated, so the two can never drift apart --
+# a copy of a regex literal that no longer matches its original fails silently, which is
+# exactly how this fix was first written and exactly how it was first wrong.
+_NEGATABLE_MARKERS = ("authenticat", "user account", "login")
+_NEGATABLE_BACKEND_PATTERNS = frozenset(
+    pattern
+    for pattern in _BACKEND_REQUIRING_PATTERNS
+    if any(marker in pattern for marker in _NEGATABLE_MARKERS)
+)
+
+
+def _pattern_demands_backend(pattern: str, text: str) -> bool:
+    """Does `pattern` appear in `text` as a requirement rather than as an exclusion?"""
+    matches = list(re.finditer(pattern, text))
+    if not matches:
+        return False
+    if pattern not in _NEGATABLE_BACKEND_PATTERNS:
+        return True
+    return any(not occurrence_is_negated(text, match.start()) for match in matches)
+
+
 def decide_backend_need(brief: ProjectBrief, handoff: AgentHandoff) -> BackendDecision:
     """Decide whether this project needs a backend, from the approved brief alone.
 
@@ -310,7 +342,7 @@ def decide_backend_need(brief: ProjectBrief, handoff: AgentHandoff) -> BackendDe
     # Checked before target_users on purpose: "only me, but synced across my laptop and
     # phone" is a single-user audience that still needs somewhere to sync through.
     for pattern in _BACKEND_REQUIRING_PATTERNS:
-        if re.search(pattern, text):
+        if _pattern_demands_backend(pattern, text):
             return BackendDecision(
                 needs_backend=True,
                 reasoning="The approved requirements ask for sync, accounts, or multi-user access, which needs server-side state.",

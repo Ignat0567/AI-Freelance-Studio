@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from .models import ProjectBrief
@@ -28,6 +29,63 @@ _COMPLEXITY_KEYWORDS = (
 )
 
 
+# A keyword that is being *excluded* is not evidence of difficulty. An order saying "no
+# backend, no database, no authentication" contains the word "authentication" and used to
+# route its phase to the expensive model for saying it did not want the thing -- observed
+# live on 2026-09-10, on an order whose whole point was that it had no accounts.
+#
+# The scan below is deliberately narrow, because the two mistakes do not cost the same. A
+# missed negation overpays for one phase. A wrongly-detected negation sends genuinely hard
+# work to the cheap model, which is how a repair loop gets paid for instead. So a negator
+# only counts when it sits within a couple of words of the keyword, in the same clause.
+#
+# Two words, not four: "no icons, no illustrations, and authentication throughout" reaches a
+# "no" at four but it belongs to the illustrations. Every real way of excluding a thing --
+# "no authentication", "no user authentication", "without authentication", "doesn't need
+# authentication" -- lands inside two.
+_NEGATORS = frozenset({
+    "no", "not", "without", "never", "zero", "none", "neither", "nor", "excluding", "except", "sans",
+})
+# Scanning backwards stops here: whatever was negated before "but" is not what follows it.
+_CLAUSE_BREAKS = frozenset({"but", "however", "although", "though", "whereas", "yet"})
+_NEGATION_WINDOW_WORDS = 2
+_SENTENCE_BOUNDARIES = ".;:!?\n"
+_WORD = re.compile(r"[a-z']+")
+
+
+def occurrence_is_negated(text: str, start: int) -> bool:
+    """Is this keyword occurrence cancelled by a negator just in front of it?
+
+    `text` is already casefolded and `start` is the index the keyword was found at.
+    """
+    prefix = text[:start]
+    cut = max((prefix.rfind(char) for char in _SENTENCE_BOUNDARIES), default=-1)
+    words = _WORD.findall(prefix[cut + 1:])
+    for word in reversed(words[-_NEGATION_WINDOW_WORDS:]):
+        if word in _CLAUSE_BREAKS:
+            return False
+        if word in _NEGATORS or word.endswith("n't"):
+            return True
+    return False
+
+
+def matched_complexity_keywords(text: str) -> tuple[str, ...]:
+    """Keywords present in `text` in the affirmative -- negated mentions do not count.
+
+    A keyword counts on its first un-negated occurrence: "no authentication yet, but
+    authentication is planned" is about authentication.
+    """
+    matched = []
+    for keyword in _COMPLEXITY_KEYWORDS:
+        start = text.find(keyword)
+        while start != -1:
+            if not occurrence_is_negated(text, start):
+                matched.append(keyword)
+                break
+            start = text.find(keyword, start + 1)
+    return tuple(matched)
+
+
 def substantive_technical_constraints(brief: ProjectBrief) -> tuple[str, ...]:
     """Constraints that say something about *this project*, not about the default stack.
 
@@ -53,8 +111,7 @@ def describe_phase_complexity(brief: ProjectBrief, *, focus_text: str) -> tuple[
     """Classify, and say why. The reason is surfaced in the execution event stream so a
     routing decision can be audited from the outside instead of being taken on trust.
     """
-    text = focus_text.casefold()
-    matched = [keyword for keyword in _COMPLEXITY_KEYWORDS if keyword in text]
+    matched = matched_complexity_keywords(focus_text.casefold())
     if matched:
         return "complex", f"matched {', '.join(repr(word) for word in matched[:3])}"
 
