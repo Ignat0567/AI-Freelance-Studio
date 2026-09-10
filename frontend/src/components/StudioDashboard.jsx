@@ -400,7 +400,7 @@ function PipelineStages({ orderId, language }) {
   useEffect(() => { if (currentGroupIndex >= 0) setOpenIndex(currentGroupIndex); }, [currentGroupIndex]);
 
   return (
-    <section className="fs-panel fs-pipeline-panel" data-glass>
+    <section className="fs-panel fs-pipeline-panel">
       <div className="fs-panel-title">
         <div>
           <span>{t('pipelineLabel')}</span>
@@ -420,6 +420,7 @@ function PipelineStages({ orderId, language }) {
             <div
               key={group.id}
               className={`fs-stage ${isDone ? 'success' : isActive ? 'active' : ''}`}
+              data-glass
               style={{ cursor: 'pointer' }}
               onClick={() => setOpenIndex(isOpen ? -1 : index)}
             >
@@ -435,7 +436,7 @@ function PipelineStages({ orderId, language }) {
                 </div>
               )}
               {isOpen && groupEvents.length > 0 && (
-                <div style={{ borderTop: '1px dashed var(--fs-border)', marginTop: 8, paddingTop: 6, display: 'grid', gap: 4 }}>
+                <div className="fs-stage-events">
                   {groupEvents.slice(-4).map(event => (
                     <div
                       key={event.id}
@@ -468,11 +469,11 @@ function ArtifactsGrid({ orderId, language }) {
   }, [orderId]);
 
   return (
-    <section className="fs-panel fs-artifacts-panel" data-glass>
+    <section className="fs-panel fs-artifacts-panel">
       <div className="fs-panel-title"><div><span>{t('artifactsLabel')}</span><strong>{artifacts.length}</strong></div></div>
       <div className="fs-artifacts-grid">
         {artifacts.length ? artifacts.map(item => (
-          <div className="fs-artifact-card" key={item.id}>
+          <div className="fs-artifact-card" data-glass key={item.id}>
             <div className="fs-artifact-preview"><span>{item.kind.replace(/_/g, ' ')}</span></div>
             <b>{item.name}</b>
             <span>{item.summary}</span>
@@ -485,13 +486,13 @@ function ArtifactsGrid({ orderId, language }) {
 
 function AgentActivity({ agents, statuses, expanded = false }) {
   return (
-    <section className="fs-panel fs-team-panel" data-glass>
+    <section className="fs-panel fs-team-panel">
       <div className="fs-panel-title"><div><span>AI Team</span><strong>{agents.length || 0} configured agents</strong></div></div>
       <div className={`fs-agent-grid ${expanded ? 'expanded' : ''}`}>
         {agents.length ? agents.map(agent => {
           const state = statuses?.[agent.id]?.status || (agent.enabled === false ? 'unavailable' : 'idle');
           return (
-            <div className={`fs-agent ${statusTone(state)}`} key={agent.id} title={agent.name || agent.id}>
+            <div className={`fs-agent ${statusTone(state)}`} data-glass key={agent.id} title={agent.name || agent.id}>
               <span className="fs-agent-mark" style={{ '--agent-color': agent.color || 'var(--fs-accent)' }}>{getAgentInitials(agent)}</span>
               <span><b>{agent.name || agent.id}</b><small>{statuses?.[agent.id]?.task || agent.display_role || agent.role || pretty(state)}</small></span>
               <i aria-label={state} />
@@ -505,7 +506,7 @@ function AgentActivity({ agents, statuses, expanded = false }) {
 
 function ActivityPanel({ logs, onOpenLogs }) {
   return (
-    <section className="fs-panel fs-activity fs-activity-panel" data-glass>
+    <section className="fs-panel fs-activity fs-activity-panel">
       <div className="fs-panel-title"><div><span>Recent Activity</span><strong>{logs.length ? `${logs.length} latest events` : 'No events'}</strong></div><button type="button" onClick={onOpenLogs}>Open logs</button></div>
       <div className="fs-log-list">
         {logs.length ? logs.map((log, index) => <div className="fs-log-line" key={`${log}-${index}`}><i aria-hidden="true" /><span>{log}</span></div>) : <p className="fs-empty">No recent activity is available.</p>}
@@ -525,7 +526,7 @@ function LogPanel({ logs, language }) {
     return true;
   });
   return (
-    <section className="fs-panel fs-log-panel" data-glass>
+    <section className="fs-panel fs-log-panel">
       <div className="fs-panel-title">
         <div><span>Logs</span><strong>{logs?.length || 0} events</strong></div>
       </div>
@@ -593,7 +594,7 @@ function MobilePreviewPanel({ activePort }) {
   const canEmbed = isEmbeddablePreviewUrl(previewUrl);
   const hasExternalUrl = previewUrl && !canEmbed;
   return (
-    <section className="fs-panel fs-mobile-preview-page" data-glass>
+    <section className="fs-panel fs-mobile-preview-page">
       <div className="fs-panel-title">
         <div><span>Mobile Preview</span></div>
       </div>

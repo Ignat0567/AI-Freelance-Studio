@@ -21,7 +21,7 @@ export function QuestionInput({ question, value, onChange }) {
 export default function ClarificationPanel({ state, answers, setAnswers, pending, onSubmit, onDefaults, onBack }) {
   const questions = state?.questions || [];
   return (
-    <section className="fs-panel ow-card" aria-labelledby="ow-clarification-title">
+    <section className="fs-panel ow-card" data-glass aria-labelledby="ow-clarification-title">
       <div className="fs-panel-title"><div><span>Alex Clarification</span><strong id="ow-clarification-title">Answer the questions that affect implementation</strong></div></div>
       <p className="ow-note">Progress: {state?.answers?.length || 0} answered of {questions.length}. You can use recommended defaults to complete the MVP brief quickly.</p>
       <div className="ow-question-list">

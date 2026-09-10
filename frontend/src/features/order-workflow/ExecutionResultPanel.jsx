@@ -54,7 +54,7 @@ export default function ExecutionResultPanel({ state, pending, onRetry, onRevise
   const canRevise = execution?.status === 'succeeded' && Boolean(onRevise);
   const workspacePath = delivery.workspace_path;
   return (
-    <section className="fs-panel ow-card" aria-labelledby="ow-result-title">
+    <section className="fs-panel ow-card" data-glass aria-labelledby="ow-result-title">
       <div className="fs-panel-title"><div><span>Result</span><strong id="ow-result-title">{formatLabel(execution?.status, 'No result yet')}</strong></div></div>
       {execution?.revised_from && (
         <div className="ow-callout" role="status">

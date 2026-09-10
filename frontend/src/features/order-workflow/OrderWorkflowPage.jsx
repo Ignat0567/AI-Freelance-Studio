@@ -140,11 +140,19 @@ export default function OrderWorkflowPage({ active }) {
 
   const submitOrder = event => {
     event.preventDefault();
+    if (!form.title.trim() || !form.description.trim()) {
+      setError('Fill in the project title and description first.');
+      return;
+    }
     run(() => orderWorkflowApi.createOrder(asOrderPayload(form)));
   };
 
   const submitOrderAutomatically = event => {
     event.preventDefault();
+    if (!form.title.trim() || !form.description.trim()) {
+      setError('Fill in the project title and description first.');
+      return;
+    }
     run(async () => {
       const created = await orderWorkflowApi.createOrder(asOrderPayload(form));
       return orderWorkflowApi.runAutopilot(created.order.id);

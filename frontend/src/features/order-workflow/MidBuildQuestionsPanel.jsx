@@ -32,7 +32,7 @@ export default function MidBuildQuestionsPanel({ questions = [], pending, onSubm
       .map(question => ({ question_id: question.id, value: question.recommended_answer }));
 
   return (
-    <section className="fs-panel ow-card" aria-labelledby="ow-midbuild-title">
+    <section className="fs-panel ow-card" data-glass aria-labelledby="ow-midbuild-title">
       <div className="fs-panel-title">
         <div>
           <span>Paused for your answer</span>

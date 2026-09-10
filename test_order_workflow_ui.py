@@ -8,6 +8,27 @@ def _read(name):
     return (ROOT / name).read_text(encoding="utf-8")
 
 
+def test_create_project_large_glass_panel_skips_refraction_hover():
+    """Create Project still tilts on hover, but must not attach the fractal-noise
+    SVG filter, which shows as crawling pixels on a page-sized card."""
+    glass = Path("frontend/src/liquidGlass.js").read_text(encoding="utf-8")
+    create = _read("OrderCreatePanel.jsx")
+    assert 'data-glass' in create
+    assert "isLargeSurface" in glass
+    assert "LARGE_SURFACE_MIN_WIDTH" in glass
+    assert "url(#liquid-refraction)" in glass
+    assert "const large = isLargeSurface(w, h)" in glass
+    assert "if (!large)" in glass
+    assert "el.style.transform" in glass
+    noise_line = next(line for line in glass.splitlines() if "url(#liquid-refraction)" in line)
+    assert "backdropFilter" in noise_line
+    gated = glass.split("if (!large)")[1].split("el.style.boxShadow")[0]
+    assert "url(#liquid-refraction)" in gated
+    assert "noValidate" in create
+    page = _read("OrderWorkflowPage.jsx")
+    assert "Fill in the project title and description first." in page
+
+
 def test_create_project_entry_is_visible_in_dashboard():
     source = Path("frontend/src/components/StudioDashboard.jsx").read_text(encoding="utf-8")
     assert "Create Project" in source

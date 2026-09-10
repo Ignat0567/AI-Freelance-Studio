@@ -8,6 +8,16 @@
 const IDLE_SCALE = 18;
 const HOVER_SCALE = 32;
 const IDLE_TIMEOUT_MS = 280;
+// Page-sized forms (Create Project, Brief, Execution) are far larger than the
+// glass tiles the hover filter was designed for. Putting fractal-noise
+// displacement + a 3D transform on them rasterizes crawling pixels across the
+// whole card. Small tiles keep the existing effect.
+const LARGE_SURFACE_MIN_WIDTH = 520;
+const LARGE_SURFACE_MIN_HEIGHT = 240;
+
+function isLargeSurface(width, height) {
+  return width > LARGE_SURFACE_MIN_WIDTH && height > LARGE_SURFACE_MIN_HEIGHT;
+}
 
 function prefersReducedMotion() {
   return document.documentElement.classList.contains('theme-reduced-motion')
@@ -68,13 +78,19 @@ export function initLiquidGlass() {
     const w = rect.width;
     const h = rect.height;
 
-    el.style.backdropFilter = 'blur(22px) saturate(170%) url(#liquid-refraction)';
-    el.style.webkitBackdropFilter = el.style.backdropFilter;
+    const large = isLargeSurface(w, h);
+    // Keep tilt + glare on page-sized cards so they still move with the
+    // cursor. Do not attach the fractal-noise SVG filter on those surfaces:
+    // it shows as crawling pixels across Create Project / Brief / Execution.
+    if (!large) {
+      el.style.backdropFilter = 'blur(22px) saturate(170%) url(#liquid-refraction)';
+      el.style.webkitBackdropFilter = el.style.backdropFilter;
+      el.style.willChange = 'transform';
+    }
     el.style.boxShadow = 'inset 0 1px 0 oklch(1 0 0 / 0.24), 0 18px 40px -22px oklch(0.10 0.02 300 / 0.8)';
-    el.style.willChange = 'transform';
 
     if (h >= 44) {
-      const amp = w > 520 ? 4.5 : 7;
+      const amp = large ? 3.2 : w > 520 ? 4.5 : 7;
       const rotX = -((y - h / 2) / h) * amp;
       const rotY = ((x - w / 2) / w) * amp * 1.2;
       el.style.transform = `perspective(1200px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg)`;
@@ -83,7 +99,7 @@ export function initLiquidGlass() {
     const glareSize = Math.max(220, w * 0.8);
     el.style.backgroundImage = `radial-gradient(${glareSize}px circle at ${x}px ${y}px, oklch(1 0 0 / 0.16), transparent 62%), var(--fs-glass)`;
 
-    targetScale = HOVER_SCALE;
+    if (!large) targetScale = HOVER_SCALE;
     lastMoveAt = Date.now();
   }
 

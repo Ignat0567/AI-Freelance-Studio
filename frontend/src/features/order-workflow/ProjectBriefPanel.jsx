@@ -53,10 +53,10 @@ export default function ProjectBriefPanel({ state, pending, onGenerate, onApprov
   const brief = state?.brief;
   const [revisionText, setRevisionText] = useState('');
   if (!brief) {
-    return <section className="fs-panel ow-card"><div className="fs-panel-title"><div><span>Project Brief</span><strong>Ready to generate</strong></div></div><p className="ow-note">Alex has enough information to create the structured brief.</p><div className="ow-actions"><button type="button" className="fs-secondary" onClick={onBack}>Back to questions</button><button type="button" className="fs-primary" onClick={onGenerate} disabled={pending}>Generate project brief</button></div></section>;
+    return <section className="fs-panel ow-card" data-glass><div className="fs-panel-title"><div><span>Project Brief</span><strong>Ready to generate</strong></div></div><p className="ow-note">Alex has enough information to create the structured brief.</p><div className="ow-actions"><button type="button" className="fs-secondary" onClick={onBack}>Back to questions</button><button type="button" className="fs-primary" onClick={onGenerate} disabled={pending}>Generate project brief</button></div></section>;
   }
   return (
-    <section className="fs-panel ow-card" aria-labelledby="ow-brief-title">
+    <section className="fs-panel ow-card" data-glass aria-labelledby="ow-brief-title">
       <div className="fs-panel-title"><div><span>Project Brief</span><strong id="ow-brief-title">Revision {brief.revision}</strong></div></div>
       <div className="ow-brief-grid">
         <section className="ow-brief-section wide"><h3>Goal</h3><p>{brief.goal}</p></section>

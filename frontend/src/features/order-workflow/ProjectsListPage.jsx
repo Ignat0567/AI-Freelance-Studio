@@ -62,7 +62,7 @@ export default function ProjectsListPage({ active, onOpenProject, language }) {
   }, [orders, activeFilter]);
 
   return (
-    <section className="fs-panel fs-projects-panel" data-glass>
+    <section className="fs-panel fs-projects-panel">
       <div className="fs-panel-title">
         <div><span>Projects</span><strong>{orders ? `${orders.length} total` : 'Loading...'}</strong></div>
         <button type="button" onClick={load}>Refresh</button>
@@ -89,7 +89,7 @@ export default function ProjectsListPage({ active, onOpenProject, language }) {
             const status = String(order.execution_status || order.status || '').toLowerCase();
             const tone = statusTone(order.status, order.execution_status);
             return (
-              <button type="button" className="fs-project-card" key={order.id} onClick={() => open(order.id)}>
+              <button type="button" className="fs-project-card" data-glass key={order.id} onClick={() => open(order.id)}>
                 <div className="fs-project-card-preview"><span>{(order.product_type || 'project').replace(/_/g, ' ')}</span></div>
                 <div className="fs-project-card-body">
                   <strong>{order.title}</strong>

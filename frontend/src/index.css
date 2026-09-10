@@ -688,7 +688,13 @@ html,
 .fs-panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
 .fs-panel-title span { display: block; color: var(--fs-dim); text-transform: uppercase; letter-spacing: 0.09em; font-size: 11px; font-weight: 800; }
 .fs-panel-title strong { display: block; margin-top: 3px; color: var(--fs-text); font-size: 13px; font-weight: 700; }
-.fs-pipeline { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+/* align-items:start, not the grid default stretch: opening one stage (the current one
+   opens itself) used to inflate every other card in its row into a tall empty box with
+   its agent name stranded at the bottom. A card is as tall as what it has to say. */
+.fs-pipeline { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-items: start; gap: 14px; }
+/* The open stage lists its last few events; capped so that expanding one card cannot
+   push the whole panel down the page. */
+.fs-stage-events { max-height: 92px; overflow-y: auto; border-top: 1px dashed var(--fs-border); margin-top: 8px; padding-top: 6px; display: grid; gap: 4px; }
 .fs-stage { min-width: 0; border: 1px solid var(--fs-border); border-radius: 18px; padding: 15px 17px 16px; background: var(--fs-panel-subtle); display: flex; flex-direction: column; gap: 10px; }
 .fs-stage.active { background: linear-gradient(160deg, var(--fs-acc-soft), oklch(1 0 0 / 0.05)); border-color: var(--fs-acc-line); box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.22), 0 0 30px -12px var(--fs-accent), 0 10px 28px -18px oklch(0.10 0.02 300 / 0.7); }
 .fs-stage.active i { animation: fs-pulse 1.6s infinite; }
@@ -803,7 +809,12 @@ html,
 .fs-overview-workspace .fs-panel-title span { font-size: 9px; }
 .fs-overview-workspace .fs-panel-title strong { margin-top: 1px; font-size: 11px; }
 
-.fs-overview-workspace .fs-pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+/* One row for the six stages whenever the width allows, which on a wide window it does.
+   Three fixed columns wrapped them into a 3x2 block that filled the Overview and left
+   the second row pressed against the panel edge -- while every window under 1680px was
+   already laying them out in a single row (see the responsive block below). The widest
+   window had the most cramped pipeline. */
+.fs-overview-workspace .fs-pipeline { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px; }
 .fs-overview-workspace .fs-stage { padding: 7px 8px; border-radius: 10px; }
 .fs-overview-workspace .fs-stage i { width: 6px; height: 6px; margin-bottom: 5px; }
 .fs-overview-workspace .fs-stage b { font-size: 10px; }
@@ -1039,7 +1050,8 @@ html,
 .fs-rail-stream { display: inline-flex; align-items: center; gap: 5px; color: var(--fs-success); text-transform: none; letter-spacing: 0; }
 .fs-rail-stream i { width: 6px; height: 6px; border-radius: 50%; background: var(--fs-success); animation: fs-pulse 1.6s infinite; }
 .fs-rail-log-list { max-height: 260px; overflow-y: auto; display: grid; gap: 6px; scrollbar-width: thin; scrollbar-color: var(--fs-scrollbar-thumb) var(--fs-scrollbar-track); }
-.fs-rail-log-line { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; font: 11.5px var(--fs-font-mono); animation: fs-ent .25s ease; overflow-wrap: anywhere; }
+.fs-rail-log-line { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; font: 11.5px var(--fs-font-mono); animation: fs-ent .25s ease; overflow-wrap: anywhere; border-radius: 6px; padding: 2px 4px; margin: 0 -4px; transition: background .14s; }
+.fs-rail-log-line:hover, .fs-log-line:hover { background: var(--fs-surface-hover); }
 .fs-rail-log-line time { color: var(--fs-dim); white-space: nowrap; }
 .fs-rail-log-line span { min-width: 0; }
 .fs-rail-log-line.level-info span { color: var(--fs-muted); }
@@ -1096,7 +1108,9 @@ html,
     grid-area: auto;
     flex: 0 0 auto;
   }
-  .fs-overview-workspace .fs-pipeline,
+  /* The pipeline is deliberately not in this list: a stage tile carries a short label, a
+     status word and an agent name, so 160px tracks wrapped six of them into 4+2 while they
+     fit on one line at 96px. Agents and tools keep the wider track. */
   .fs-overview-workspace .fs-agent-grid,
   .fs-overview-workspace .fs-tool-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
   .fs-attention-panel,

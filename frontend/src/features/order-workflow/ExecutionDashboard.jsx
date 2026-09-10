@@ -143,7 +143,7 @@ export default function ExecutionDashboard({ state, readiness, pending, canStart
   };
 
   return (
-    <section className="fs-panel ow-card" aria-labelledby="ow-execution-title">
+    <section className="fs-panel ow-card" data-glass aria-labelledby="ow-execution-title">
       <div className="fs-panel-title"><div><span>Execution Dashboard</span><strong id="ow-execution-title">{execution ? (live ? 'Live build' : 'Simulation mode') : 'Ready to build'}</strong></div></div>
       {!execution && <ExecutionReadinessPanel readiness={readiness} />}
       {!execution && quotaActive && (
