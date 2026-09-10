@@ -442,3 +442,62 @@ def test_the_same_check_with_different_output_keeps_both_and_says_which_is_which
     assert "## the browser render check, after the screens and navigation" in document
     assert "## the browser render check, after the core feature" in document
     assert "elements: 9" in document and "elements: 22" in document
+
+
+# --- "What was built" must describe the thing, not restate the order ------------------
+# 2026-09-10: a delivery opened with 2,491 characters that were the client's own order text,
+# acceptance criteria included, because brief_service copies the description into the goal
+# verbatim. The client was handed back their own brief under the heading that is supposed to
+# tell them what they got.
+
+from order_workflow.delivery_report import summarise_goal
+
+SHORT_GOAL = (
+    "A pomodoro focus timer that runs entirely offline in the browser. The user can start, "
+    "pause and reset a 25-minute focus session."
+)
+
+PASTED_SPECIFICATION = """A single-page web app: a thematic RAG assistant that answers questions about its own docs.
+
+What it does. The user types a question in plain language and gets an answer with sources.
+
+Retrieval. Entirely on the client, no external service: normalise the query, score every section by word overlap with extra weight on the section heading, and return the top three matches without any network call at all.
+
+Acceptance criteria:
+- ask a question the documents answer, and get an answer with a source chip
+- ask a question they do not answer, and get an explicit message
+
+Visual style: dark, calm, technical."""
+
+
+def test_a_short_hand_written_goal_is_left_exactly_as_it_is():
+    # The common case, and the one this must not spoil.
+    assert summarise_goal(SHORT_GOAL) == SHORT_GOAL
+
+
+def test_a_pasted_specification_is_cut_back_to_what_was_built():
+    summary = summarise_goal(PASTED_SPECIFICATION)
+
+    assert summary.startswith("A single-page web app")
+    assert "The user types a question" in summary
+    assert len(summary) < len(PASTED_SPECIFICATION)
+
+
+def test_the_summary_stops_before_the_acceptance_criteria():
+    summary = summarise_goal(PASTED_SPECIFICATION)
+
+    assert "Acceptance criteria" not in summary
+    assert "get an answer with a source chip" not in summary
+
+
+def test_the_summary_never_ends_mid_word():
+    monster = "This app does one thing. " * 80
+
+    summary = summarise_goal(monster)
+
+    assert len(summary) <= 600
+    assert summary.endswith(".")
+
+
+def test_an_empty_goal_survives():
+    assert summarise_goal("") == ""

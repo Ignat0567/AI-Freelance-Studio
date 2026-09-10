@@ -171,6 +171,57 @@ def requirements_worth_listing(goal: str, requirements: tuple[str, ...]) -> tupl
     return tuple(kept)
 
 
+# A goal written by hand is a sentence or two and belongs in the report whole. An order
+# pasted in as a full specification -- the shape a real client sends -- reaches this module
+# as its entire text, acceptance criteria and all, because brief_service copies the order
+# description into the goal verbatim. Printed under "What was built", that hands the client
+# back their own brief instead of telling them what they got: on 2026-09-10 a delivery
+# opened with 2,491 characters of restated requirements.
+#
+# So the report prints the opening of the goal -- what was built -- and lets the bullets and
+# the sections below carry the specification. Nothing is marked as truncated, because a
+# summary that apologises for being a summary reads worse than one that simply reads well.
+_GOAL_SUMMARY_BUDGET = 600
+
+
+def _looks_like_specification(paragraph: str) -> bool:
+    """Has the goal stopped describing the thing and started specifying it?"""
+    first_line = paragraph.splitlines()[0].strip()
+    return first_line.endswith(":") or paragraph.lstrip().startswith("-")
+
+
+def _first_sentences_within(text: str, budget: int) -> str:
+    """As much of `text` as fits, cut at a sentence end rather than mid-word."""
+    if len(text) <= budget:
+        return text
+    window = text[:budget]
+    cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+    if cut == -1:
+        cut = window.rfind(" ")
+    return window[: cut + 1].strip() if cut != -1 else window.strip()
+
+
+def summarise_goal(goal: str) -> str:
+    """The opening of the goal: what was built, not the specification of how.
+
+    A short goal survives untouched -- the common case, and the one this must not spoil.
+    """
+    normalised = goal.replace("\r\n", "\n").strip()
+    if len(normalised) <= _GOAL_SUMMARY_BUDGET:
+        return normalised
+    paragraphs = [block.strip() for block in normalised.split("\n\n") if block.strip()]
+    if not paragraphs:
+        return normalised
+    kept = [_first_sentences_within(paragraphs[0], _GOAL_SUMMARY_BUDGET)]
+    for paragraph in paragraphs[1:]:
+        if _looks_like_specification(paragraph):
+            break
+        if sum(len(item) for item in kept) + len(paragraph) > _GOAL_SUMMARY_BUDGET:
+            break
+        kept.append(paragraph)
+    return "\n\n".join(kept)
+
+
 def build_delivery_report(
     *,
     goal: str,
@@ -199,7 +250,7 @@ def build_delivery_report(
         "",
         "## What was built",
         "",
-        goal.strip(),
+        summarise_goal(goal),
         "",
         *([*[f"- {item}" for item in requirements_worth_listing(goal, requirements)], ""]
           if requirements_worth_listing(goal, requirements) else []),
