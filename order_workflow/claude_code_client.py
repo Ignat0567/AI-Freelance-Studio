@@ -148,12 +148,16 @@ class ConfiguredClaudeCodeExecutionClient:
             return OpenCodeExecutionResult(success=False, summary="Claude Code CLI is not available.")
 
         _ensure_isolated_git_repo(Path(workspace_path))
-        # --setting-sources below stops the CLI loading `.claude/` from this directory, but it
-        # does not stop it reading a CLAUDE.md there: measured 2026-09-10, a workspace holding
-        # a CLAUDE.md that named a codename had the CLI answer with that codename even with
-        # setting sources pinned to empty. So the directory is cleared as well as the loader
-        # restricted. Before every call, not only the first: a build phase can write either
-        # file, and the repair calls that follow it run in the same directory.
+        # Defence in depth, not the primary control: --setting-sources below already stops the
+        # CLI loading either `.claude/` or CLAUDE.md from this directory. What it does not stop
+        # is the agent opening such a file with its own tools, which one measurement here shows
+        # it will happily do -- asked about "this project" in a directory holding a CLAUDE.md,
+        # it read the file and answered from it. A file whose whole purpose is to instruct an
+        # agent should not be sitting in a workspace that will hold client-supplied templates,
+        # so it is removed rather than relied upon to go unread.
+        #
+        # Before every call, not only the first: a build phase can write either file, and the
+        # repair calls that follow it run in the same directory.
         scrubbed = scrub_agent_config(Path(workspace_path), instructions_too=True)
         if scrubbed:
             # In the stream, not a log file. Agent configuration in a generated project is
@@ -206,10 +210,13 @@ class ConfiguredClaudeCodeExecutionClient:
             # is resolved separately and survives this; --model and --tools are already
             # passed explicitly above, and user scope holds no pipeline setting.
             #
-            # What this flag does NOT cover is CLAUDE.md, which the same session measured
-            # still reaching the model with sources pinned to empty. The scrub above is
-            # what closes that; neither mechanism is sufficient alone, so do not remove
-            # one on the strength of the other.
+            # This flag covers CLAUDE.md as well, measured the same way and controlled for
+            # tool use: with tools disallowed, a workspace CLAUDE.md naming a codename was
+            # answered back on default sources and not with sources pinned, in one turn
+            # each, and the same held under the bypass flags above. An earlier reading of
+            # this said the opposite; that run had left tools enabled, and the model had
+            # simply opened the file. The scrub above is therefore defence in depth here,
+            # and load-bearing only against an agent that reads such a file by choice.
             "--setting-sources", "",
         ]
         if model:

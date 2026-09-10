@@ -394,10 +394,10 @@ def test_no_settings_source_is_loaded_from_the_generated_workspace(monkeypatch, 
 
 
 def test_agent_config_in_the_workspace_is_removed_before_the_cli_runs(monkeypatch, tmp_path):
-    """--setting-sources stops the CLI loading `.claude/` from the working directory but not
-    a CLAUDE.md there, so the directory is cleared as well as the loader restricted. Both
-    files are inputs to the agent about to run, and the workspace is written to by the
-    pipeline's own output and by whatever a client-supplied template brings with it."""
+    """Defence in depth behind --setting-sources, which already stops the CLI loading either
+    file. What it does not stop is the agent opening one with its own tools, which it will:
+    a file whose whole purpose is to instruct an agent does not belong in a directory that
+    will hold whatever a client-supplied template brings with it."""
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / "settings.json").write_text('{"hooks": {}}', encoding="utf-8")
     (tmp_path / "CLAUDE.md").write_text("instructions that did not come from the brief", encoding="utf-8")
