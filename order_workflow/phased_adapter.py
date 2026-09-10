@@ -60,8 +60,15 @@ from .web_app_scaffold import reconcile_web_app_workspace
 from .website_generation import detect_cinematic_website_intent
 from .workspace import AGENT_CONFIG_DIR, is_regular_file, remove_executable_agent_config, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
 
-UI_SHELL_QA_COMMANDS: tuple[str, ...] = ("npm run build",)
-CORE_FEATURE_QA_COMMANDS: tuple[str, ...] = ("npm test",)
+# Lint first in both tuples, and in both phases rather than one. It is the cheapest command
+# here (a second against a build's minutes) and it is the only one that reads code the other
+# two never execute: `npm test` proves the paths a test covers, `npm run build` proves the
+# file parses, and esbuild resolves no identifiers at all -- measured 2026-09-10, a component
+# calling `setCoutn` in an onClick built clean and would have shipped, failing the first time
+# a client pressed the button. Both phases write code, so both phases are linted; running it
+# first only orders the repair prompt, since qa_runner runs every command regardless.
+UI_SHELL_QA_COMMANDS: tuple[str, ...] = ("npm run lint", "npm run build")
+CORE_FEATURE_QA_COMMANDS: tuple[str, ...] = ("npm run lint", "npm test")
 # docker_qa_runner.detect_base_image() already resolves requirements.txt/pyproject.toml
 # projects to a Python image with zero changes needed there -- pip install then a bare
 # import is the bot equivalent of "npm run build": proves dependencies resolve and the

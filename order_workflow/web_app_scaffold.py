@@ -22,6 +22,10 @@ PLUGIN_REACT = "^4.3.1"
 PREVIEW_SCRIPT = "vite preview --host 127.0.0.1 --port 4173"
 BUILD_SCRIPT = "vite build"
 TEST_SCRIPT = "vitest run"
+# --no-error-on-unmatched-pattern so the gate reports "clean" rather than "failed" for a
+# workspace that has no src/*.jsx yet. A check must never fail because there was nothing
+# to check; that is the vacuous pass qa_runner is careful about elsewhere, in reverse.
+LINT_SCRIPT = "eslint src --no-error-on-unmatched-pattern"
 
 # `npm test` runs inside the node:20-slim Docker image (docker_qa_runner.py), permanently --
 # see project_vite8_frontend_upgrade_deferred. Every version below is pinned against that,
@@ -34,6 +38,13 @@ JSDOM = "^27.0.1"
 TESTING_LIBRARY_REACT = "^16.3.3"
 TESTING_LIBRARY_JEST_DOM = "^6.9.1"
 TESTING_LIBRARY_DOM = "^10.4.1"
+# Same rule as the block above -- these are pinned against node:20-slim, not against
+# "latest". Measured 2026-09-10: eslint 9.39.5 declares ^18.18 || ^20.9 || >=21.1, and the
+# other two declare >=18, so all three run on the image. eslint 10, whenever it lands, is
+# the one to check before bumping.
+ESLINT = "^9.39.5"
+ESLINT_GLOBALS = "^17.12.0"
+ESLINT_PLUGIN_REACT_HOOKS = "^7.1.1"
 
 _VITE_CONFIG = """import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -51,6 +62,57 @@ export default defineConfig({
 """
 
 _VITEST_SETUP = """import '@testing-library/jest-dom/vitest';
+"""
+
+# Two rules, both measured on 2026-09-10 against a deliberately broken component, and both
+# chosen because `vite build` passes the file anyway:
+#
+#   no-undef                     `setCoutn(count + 1)` in an onClick -- builds, ships, and
+#                                throws the first time a client presses the button. esbuild
+#                                does no identifier resolution, so the build cannot see it.
+#   react-hooks/rules-of-hooks   a useState behind an `if` -- renders until the branch
+#                                flips, then corrupts every hook after it.
+#
+# Nothing stylistic is enabled, on purpose. A finding here costs a repair call, so a rule
+# that fires on working code converts straight into money; the same reasoning that keeps
+# ruff.toml narrow at Studio's own root.
+#
+# The second block is not optional. `no-undef` with browser globals alone reports describe,
+# it and expect in every generated test file, which would have failed every core_feature
+# phase that wrote one -- i.e. all of them. Measured before shipping, not after.
+#
+# `<MissingWidget />` is NOT caught: no-undef does not resolve JSX component names, and
+# catching it needs eslint-plugin-react for one rule. Left out deliberately -- an undefined
+# component renders a blank page, which the visual and smoke gates already fail on.
+_ESLINT_CONFIG = """import globals from 'globals';
+import reactHooks from 'eslint-plugin-react-hooks';
+
+const testGlobals = {
+  describe: 'readonly', it: 'readonly', test: 'readonly', expect: 'readonly',
+  beforeAll: 'readonly', afterAll: 'readonly', beforeEach: 'readonly', afterEach: 'readonly',
+  vi: 'readonly', suite: 'readonly',
+};
+
+export default [
+  {
+    files: ['src/**/*.{js,jsx}'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.browser, ...globals.es2021 },
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'no-undef': 'error',
+      'react-hooks/rules-of-hooks': 'error',
+    },
+  },
+  {
+    files: ['src/**/*.{test,spec}.{js,jsx}'],
+    languageOptions: { globals: testGlobals },
+  },
+];
 """
 
 _INDEX_HTML = """<!DOCTYPE html>
@@ -107,6 +169,8 @@ def reconcile_web_app_workspace(cwd: Path) -> tuple[str, ...]:
         changed.append("package.json")
     if _ensure_vite_config(root):
         changed.append("vite.config.js")
+    if _ensure_eslint_config(root):
+        changed.append("eslint.config.js")
     if _ensure_vitest_setup(root):
         changed.append("vitest.setup.js")
     if _ensure_index_html(root, entry=f"/{entry_rel}"):
@@ -152,6 +216,7 @@ def _ensure_package_json(root: Path) -> bool:
             # measured live 2026-09-03 (b03/b04) was that nothing installed a test runner for
             # this write-only path, not that the requirement should be softer.
             "test": TEST_SCRIPT,
+            "lint": LINT_SCRIPT,
         },
         "dependencies": {**dependencies, "react": REACT, "react-dom": REACT},
         "devDependencies": {
@@ -163,6 +228,9 @@ def _ensure_package_json(root: Path) -> bool:
             "@testing-library/react": TESTING_LIBRARY_REACT,
             "@testing-library/jest-dom": TESTING_LIBRARY_JEST_DOM,
             "@testing-library/dom": TESTING_LIBRARY_DOM,
+            "eslint": ESLINT,
+            "globals": ESLINT_GLOBALS,
+            "eslint-plugin-react-hooks": ESLINT_PLUGIN_REACT_HOOKS,
         },
     }
     if "dev" not in desired["scripts"]:
@@ -172,6 +240,27 @@ def _ensure_package_json(root: Path) -> bool:
     if current == text:
         return False
     path.write_text(text, encoding="utf-8")
+    return True
+
+
+def _ensure_eslint_config(root: Path) -> bool:
+    path = root / "eslint.config.js"
+    text = _ESLINT_CONFIG if _ESLINT_CONFIG.endswith("\n") else _ESLINT_CONFIG + "\n"
+    current = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if current == text:
+        return False
+    path.write_text(text, encoding="utf-8")
+    # eslint 9 reads exactly one flat config and refuses to start if an .eslintrc* is also
+    # present: a model that has seen a lot of pre-9 React will write one, and its presence
+    # turns the gate from "reports findings" into "cannot run", which reads as a failure
+    # nobody can act on. Same treatment vite.config.ts gets above.
+    for stale_name in (".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml"):
+        stale = root / stale_name
+        if stale.is_file():
+            try:
+                stale.unlink()
+            except OSError:
+                pass
     return True
 
 

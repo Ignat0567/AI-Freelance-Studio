@@ -9,6 +9,7 @@ from pathlib import Path
 
 from order_workflow.web_app_scaffold import (
     JSDOM,
+    LINT_SCRIPT,
     PLUGIN_REACT,
     PREVIEW_SCRIPT,
     REACT,
@@ -144,3 +145,58 @@ def test_a_model_authored_setup_file_with_jest_dom_already_is_left_alone(tmp_pat
 
     assert "vitest.setup.js" not in changed
     assert (tmp_path / "vitest.setup.js").read_text(encoding="utf-8") == original
+
+
+def test_the_lint_gate_is_scaffolded_with_its_config_and_its_dependencies(tmp_path: Path):
+    """`vite build` resolves no identifiers, so `setCoutn(count + 1)` in an onClick compiles,
+    ships, and throws the first time a client presses the button. Verified end to end on
+    2026-09-10: a component with that typo, an undefined variable and a conditional useState
+    built clean with exit 0 and failed the lint gate with three findings."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.jsx").write_text("export default function App() { return <button>Go</button>; }\n", encoding="utf-8")
+
+    changed = reconcile_web_app_workspace(tmp_path)
+
+    assert "eslint.config.js" in changed
+    payload = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert payload["scripts"]["lint"] == LINT_SCRIPT
+    for package in ("eslint", "globals", "eslint-plugin-react-hooks"):
+        assert package in payload["devDependencies"], f"the gate cannot run without {package}"
+
+
+def test_the_lint_config_exempts_generated_tests_from_undefined_globals(tmp_path: Path):
+    """Without this block `no-undef` reports describe, it and expect in every generated test
+    file, which is every core_feature phase that writes one. A gate that fires on working
+    code costs a repair call each time, which is the opposite of why it exists."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.jsx").write_text("export default function App() { return <button>Go</button>; }\n", encoding="utf-8")
+
+    reconcile_web_app_workspace(tmp_path)
+
+    config = (tmp_path / "eslint.config.js").read_text(encoding="utf-8")
+    assert "'src/**/*.{test,spec}.{js,jsx}'" in config
+    for name in ("describe", "it", "expect", "vi"):
+        assert f"{name}:" in config
+
+
+def test_a_legacy_eslintrc_is_removed_rather_than_left_to_stop_the_gate(tmp_path: Path):
+    """eslint 9 reads one flat config and refuses to start beside an .eslintrc*. A model that
+    has seen a lot of pre-9 React writes one, and its presence turns the gate from "reports
+    findings" into "cannot run" -- a failure nobody can act on."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.jsx").write_text("export default function App() { return <button>Go</button>; }\n", encoding="utf-8")
+    (tmp_path / ".eslintrc.json").write_text('{"extends": "eslint:recommended"}', encoding="utf-8")
+
+    reconcile_web_app_workspace(tmp_path)
+
+    assert not (tmp_path / ".eslintrc.json").exists()
+    assert (tmp_path / "eslint.config.js").is_file()
+
+
+def test_the_gate_reports_clean_rather_than_failing_when_there_is_nothing_to_lint(tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.jsx").write_text("export default function App() { return <button>Go</button>; }\n", encoding="utf-8")
+
+    reconcile_web_app_workspace(tmp_path)
+
+    assert "--no-error-on-unmatched-pattern" in LINT_SCRIPT

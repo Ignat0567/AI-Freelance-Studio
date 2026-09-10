@@ -1258,3 +1258,15 @@ def test_a_phase_whose_repair_the_provider_refused_is_classified_as_provider(tmp
     assert result.errors[0] == "claude_code_process_failed"
     assert "qa_failed" in result.errors
     assert classify_failure_cause(result.errors, outcome=result.outcome) == "provider"
+
+
+def test_both_code_writing_phases_lint_what_they_wrote():
+    """The lint gate goes in both phases because both write code, and first in each because
+    it is the cheapest command and the only one that reads paths the others never execute --
+    `npm test` proves what a test covers, `npm run build` proves the file parses."""
+    from order_workflow.phased_adapter import CORE_FEATURE_QA_COMMANDS, UI_SHELL_QA_COMMANDS
+
+    assert UI_SHELL_QA_COMMANDS[0] == "npm run lint"
+    assert CORE_FEATURE_QA_COMMANDS[0] == "npm run lint"
+    assert "npm run build" in UI_SHELL_QA_COMMANDS, "linting must not have replaced the build"
+    assert "npm test" in CORE_FEATURE_QA_COMMANDS, "linting must not have replaced the tests"
