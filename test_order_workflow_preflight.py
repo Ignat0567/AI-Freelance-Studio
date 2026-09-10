@@ -1009,3 +1009,45 @@ def test_execution_readiness_lists_preflight_checks_and_fix_commands(monkeypatch
     assert grok["action"] == "grok login"
     assert readiness["can_run_live"] is False
     assert any(item["code"] == "preflight_grok_not_logged_in" for item in readiness["blockers"])
+
+
+# --- preflight starts the local model loading, and never depends on it ----------------
+
+
+def test_preflight_warms_the_selected_local_model():
+    from order_workflow.preflight import probe_ollama_runtime
+    warmed = []
+
+    status, message, blocker = probe_ollama_runtime(
+        tags_probe=lambda: ("qwen2.5-coder:14b",),
+        warm_up=warmed.append,
+    )
+
+    assert status == "ok"
+    assert blocker is None
+    assert warmed == ["qwen2.5-coder:14b"]
+
+
+def test_preflight_warms_nothing_when_no_usable_model_is_installed():
+    from order_workflow.preflight import probe_ollama_runtime
+    warmed = []
+
+    status, _message, blocker = probe_ollama_runtime(tags_probe=lambda: (), warm_up=warmed.append)
+
+    assert status == "blocked"
+    assert blocker is not None
+    assert warmed == []
+
+
+def test_a_failing_warm_up_leaves_the_check_ready():
+    # The whole point of warming in the background: it is an optimisation, never a gate.
+    from order_workflow.preflight import probe_ollama_runtime
+
+    def boom(_model):
+        raise OSError("ollama went away")
+
+    status, message, blocker = probe_ollama_runtime(tags_probe=lambda: ("qwen2.5-coder:14b",), warm_up=boom)
+
+    assert status == "ok"
+    assert blocker is None
+    assert message == "qwen2.5-coder:14b"

@@ -248,3 +248,71 @@ def test_multi_file_spec_keeps_generic_preamble():
     spec = "Build a React app with package.json and src/App.jsx"
     preamble = coder_preamble_for_spec(spec)
     assert "Do not emit src/" not in preamble
+
+
+# --- warming the local model before anything asks it to write code --------------------
+# The first real call against a cold model is the one that answers HTTP 500; that failure
+# already costs an 8-second retry inside generate_ollama_completion. Loading the weights
+# while the brief and the design preview are still being approved makes the retry moot.
+
+
+def test_warm_up_posts_an_empty_prompt_and_a_keep_alive(monkeypatch):
+    import order_workflow.ollama_code_client as client
+    seen = {}
+
+    def fake_request(url, payload=None, timeout=10):
+        seen.update({"url": url, "payload": payload, "timeout": timeout})
+        return {"done": True}
+
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    assert client.warm_up_ollama_model("qwen2.5-coder:14b", endpoint="http://ollama.test") is True
+    assert seen["url"] == "http://ollama.test/api/generate"
+    assert seen["payload"]["model"] == "qwen2.5-coder:14b"
+    # An empty prompt is the preload: load the weights, sample nothing.
+    assert seen["payload"]["prompt"] == ""
+    assert seen["payload"]["keep_alive"] == client.OLLAMA_WARM_UP_KEEP_ALIVE
+
+
+def test_warm_up_never_raises_when_ollama_is_unreachable(monkeypatch):
+    import order_workflow.ollama_code_client as client
+
+    def boom(url, payload=None, timeout=10):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(client, "_request_json", boom)
+
+    assert client.warm_up_ollama_model("qwen2.5-coder:14b") is False
+
+
+def test_start_warm_up_returns_without_waiting_for_the_load(monkeypatch):
+    import order_workflow.ollama_code_client as client
+    started = []
+
+    def slow_load(url, payload=None, timeout=10):
+        started.append(payload["model"])
+        return {"done": True}
+
+    monkeypatch.setattr(client, "_request_json", slow_load)
+
+    thread = client.start_ollama_warm_up("qwen2.5-coder:14b")
+    assert thread.daemon
+    thread.join(timeout=5)
+    assert started == ["qwen2.5-coder:14b"]
+
+
+def test_a_failed_warm_up_says_why_in_the_log(monkeypatch, caplog):
+    # Runs on a background thread with no event sink, so the log is the only trace it
+    # leaves. Without it, "the warm-up did nothing" reads exactly like "it never ran".
+    import order_workflow.ollama_code_client as client
+
+    def boom(url, payload=None, timeout=10):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(client, "_request_json", boom)
+
+    with caplog.at_level("WARNING", logger="order_workflow.ollama_code_client"):
+        assert client.warm_up_ollama_model("qwen2.5-coder:14b", endpoint="http://ollama.test") is False
+
+    assert "qwen2.5-coder:14b" in caplog.text
+    assert "connection refused" in caplog.text

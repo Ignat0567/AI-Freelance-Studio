@@ -13,8 +13,10 @@ Base/FIM-only models such as qwen2.5-coder:1.5b-base are skipped.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -214,6 +216,64 @@ def write_emitted_files(workspace: Path, files: list[tuple[str, str]]) -> tuple[
             continue
         written.append(relative.replace("\\", "/"))
     return tuple(written)
+
+
+_logger = logging.getLogger(__name__)
+
+# How long Ollama should keep the model resident after a warm-up. Long enough to cover the
+# brief, the design preview and the prompt build that happen between preflight and the first
+# real call; Ollama's own default is 5 minutes, which a slow approval step outlives.
+OLLAMA_WARM_UP_KEEP_ALIVE = "30m"
+# Loading a 14b model off a cold disk is minutes, not seconds, on an unlucky machine. Nothing
+# waits on this, so the ceiling only exists to stop a wedged request living forever.
+OLLAMA_WARM_UP_TIMEOUT = 300
+
+
+def warm_up_ollama_model(model: str, *, endpoint: str | None = None, timeout: int = OLLAMA_WARM_UP_TIMEOUT) -> bool:
+    """Ask Ollama to load `model` into memory without generating anything.
+
+    An empty prompt is Ollama's own documented preload: it loads the weights and returns
+    rather than sampling. Worth doing because the first real call against a cold model is
+    the one that answers HTTP 500 -- the failure `generate_ollama_completion` already pays
+    an 8-second retry for. Warming ahead of time turns that retry into a no-op.
+
+    Never raises. A warm-up that fails changes nothing: the next real call behaves exactly
+    as it does today, retry included -- but it is logged rather than swallowed. This runs on
+    a background thread with no event sink to report into, so the log line is the only trace
+    a failure leaves; without it "the warm-up did nothing" and "the warm-up never ran" look
+    identical from the outside.
+    """
+    host = (endpoint or ollama_endpoint()).rstrip("/")
+    try:
+        _request_json(
+            f"{host}/api/generate",
+            {"model": model, "prompt": "", "stream": False, "keep_alive": OLLAMA_WARM_UP_KEEP_ALIVE},
+            timeout=timeout,
+        )
+    except Exception as exc:
+        _logger.warning("Ollama warm-up of %s at %s failed: %s: %s", model, host, type(exc).__name__, exc)
+        return False
+    _logger.info("Ollama warm-up of %s completed; resident for %s", model, OLLAMA_WARM_UP_KEEP_ALIVE)
+    return True
+
+
+def start_ollama_warm_up(model: str, *, endpoint: str | None = None) -> threading.Thread:
+    """Start the load in the background and return immediately.
+
+    Deliberately fire-and-forget: preflight's contract is that it costs seconds before the
+    client is told work has started, so it must not stand and wait for a model to page in.
+    The load overlaps the brief, the preview and the prompt build instead, and whoever calls
+    the model next finds it resident.
+    """
+    thread = threading.Thread(
+        target=warm_up_ollama_model,
+        args=(model,),
+        kwargs={"endpoint": endpoint},
+        name=f"ollama-warm-up-{model}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def generate_ollama_completion(

@@ -378,7 +378,15 @@ def probe_grok_cli(
 def probe_ollama_runtime(
     *,
     tags_probe: Callable[[], tuple[str, ...]] | None = None,
+    warm_up: Callable[[str], None] | None = None,
 ) -> tuple[PreflightStatus, str, ExecutionBlocker | None]:
+    """Confirm a usable local coding model exists, and start loading it.
+
+    `warm_up` is called with the selected model and must return immediately -- see
+    ollama_code_client.start_ollama_warm_up. It runs only once the model is known to be
+    installed, because there is nothing to warm otherwise, and it can never change the
+    outcome of this check: a machine whose warm-up fails is exactly as ready as it was.
+    """
     from .ollama_code_client import list_ollama_models, select_ollama_coding_model
 
     try:
@@ -390,6 +398,11 @@ def probe_ollama_runtime(
     selected = select_ollama_coding_model(models)
     if not selected:
         return "blocked", OLLAMA_MODEL_MISSING.message, OLLAMA_MODEL_MISSING
+    if warm_up is not None:
+        try:
+            warm_up(selected)
+        except Exception:
+            pass
     return "ok", selected, None
 
 
@@ -462,7 +475,15 @@ def run_preflight(
     uses_local_coder = coding_backend not in {"claude_code", "opencode_bridge", "grok", "openrouter"}
     uses_cloud_cli = coding_backend in {"claude_code", "opencode_bridge"}
     if uses_local_coder:
-        record("ollama_runtime", "Ollama local coder", probe_ollama_runtime(tags_probe=ollama_tags_probe))
+        # Only warm the real daemon. A caller that injected `ollama_tags_probe` is describing
+        # a machine that does not exist, and loading a model on the developer's own box on its
+        # behalf would be a surprise, not a service.
+        warm_up = None
+        if ollama_tags_probe is None:
+            from .ollama_code_client import start_ollama_warm_up
+
+            warm_up = start_ollama_warm_up
+        record("ollama_runtime", "Ollama local coder", probe_ollama_runtime(tags_probe=ollama_tags_probe, warm_up=warm_up))
         checks.append(
             PreflightCheck(
                 code="coding_cli_credentials",
