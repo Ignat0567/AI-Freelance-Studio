@@ -71,6 +71,72 @@ def _style(locator):
     )
 
 
+def _luminance(locator, prop):
+    """How light the element's `color`, or its painted surface, actually is (0 dark, 1 white).
+
+    Colours are compared by value here, never by string. Four assertions in this file used to
+    read `backgroundColor == "rgb(255, 255, 255)"`, and the Liquid Glass redesign broke every
+    one of them without changing a single surface a user can see -- two of the four are still
+    solid, they simply compute to `oklch(1 0 0)` now, and string equality cannot tell that
+    from a regression. The other two are deliberately glass: transparent, painted by a white
+    gradient. `color != "rgb(255, 255, 255)"` was the same hole facing the other way, since
+    white written as `oklch(1 0 0)` passed it.
+
+    For a surface the layers are composited over white, which is what these sit on in the
+    light theme, so a translucent glass panel measures as the light surface it renders as.
+    """
+    return locator.evaluate(
+        """(element, prop) => {
+            const style = getComputedStyle(element);
+            const probe = document.createElement('canvas');
+            probe.width = probe.height = 1;
+            const ctx = probe.getContext('2d', { willReadFrequently: true });
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 1, 1);
+            const layers = [];
+            if (prop === 'color') {
+                layers.push(style.color);
+            } else {
+                if (style.backgroundColor && style.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+                    layers.push(style.backgroundColor);
+                }
+                if (style.backgroundImage && style.backgroundImage !== 'none') {
+                    const found = style.backgroundImage.match(
+                        /(?:oklch|oklab|rgba?|hsla?|color)\\([^)]*\\)|#[0-9a-f]{3,8}/gi
+                    );
+                    if (found) layers.push(found[0]);
+                }
+            }
+            for (const layer of layers) {
+                // Black first, so an unreadable value paints dark and fails loudly instead
+                // of inheriting whatever was measured before it.
+                ctx.fillStyle = '#000000';
+                ctx.fillStyle = layer;
+                ctx.fillRect(0, 0, 1, 1);
+            }
+            const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+            const linear = channel => {
+                channel /= 255;
+                return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+            };
+            return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+        }""",
+        prop,
+    )
+
+
+# A light theme's surfaces read as light and its body text reads as dark. Both thresholds sit
+# well away from the values actually measured here, so they fail on a theme that has gone
+# wrong rather than on a token that moved a little.
+LIGHT_SURFACE = 0.7
+DARK_TEXT = 0.4
+# The theme buttons are tinted accent surfaces, and the selected one keeps focus after being
+# clicked, which lightens its label past DARK_TEXT. The assertion this replaces only ever
+# checked the label was not white, so that is what is checked -- by value, because white
+# written as `oklch(1 0 0)` passed the string comparison it used to be.
+NOT_WHITE = 0.85
+
+
 def _contrast_report(page):
     # The colour is painted and read back, rather than parsed out of the token text.
     #
@@ -171,31 +237,28 @@ def test_light_theme_runtime_contrast_screenshots_and_persistence(studio_server,
         for state in ("primary", "secondary", "success", "warning", "danger", "accent"):
             assert light_report[state] >= 4.5, (state, light_report[state])
 
-        settings_panel = _style(page.locator(".settings-inline-container"))
-        settings_body = _style(page.get_by_role("region", name="Settings content"))
-        assert settings_panel["backgroundColor"] == "rgb(255, 255, 255)"
-        assert settings_body["color"] != "rgb(255, 255, 255)"
+        settings_panel = page.locator(".settings-inline-container")
+        settings_body = page.get_by_role("region", name="Settings content")
+        assert _luminance(settings_panel, "background") >= LIGHT_SURFACE
+        assert _luminance(settings_body, "color") <= DARK_TEXT
 
         theme_button = page.get_by_role("button", name=re.compile(r"Light$"))
-        button_style = _style(theme_button)
-        assert button_style["color"] != "rgb(255, 255, 255)"
+        assert _luminance(theme_button, "color") <= NOT_WHITE
 
         page.locator('[data-settings-tab="general"]').click()
         general_select = page.get_by_role("combobox").first
         general_select.focus()
-        select_style = _style(general_select)
-        assert select_style["backgroundColor"] in {"rgb(241, 245, 249)", "rgb(255, 255, 255)"}
-        assert select_style["color"] != "rgb(255, 255, 255)"
-        assert select_style["outlineStyle"] != "none"
+        assert _luminance(general_select, "background") >= LIGHT_SURFACE
+        assert _luminance(general_select, "color") <= DARK_TEXT
+        assert _style(general_select)["outlineStyle"] != "none"
 
         page.locator('[data-settings-tab="ai"]').click()
         expect(page.get_by_test_id("settings-last-ai")).to_be_attached()
         ai_input = page.locator(".provider-form input").first
         ai_disabled = page.locator(".provider-actions button:disabled").first
-        ai_input_style = _style(ai_input)
         disabled_style = _style(ai_disabled)
-        assert ai_input_style["backgroundColor"] == "rgb(255, 255, 255)"
-        assert ai_input_style["color"] != "rgb(255, 255, 255)"
+        assert _luminance(ai_input, "background") >= LIGHT_SURFACE
+        assert _luminance(ai_input, "color") <= DARK_TEXT
         assert float(disabled_style["opacity"]) <= 0.5
         assert disabled_style["borderColor"] != "rgba(0, 0, 0, 0)"
 
@@ -212,19 +275,21 @@ def test_light_theme_runtime_contrast_screenshots_and_persistence(studio_server,
 
         _capture_key_screens(page, "light")
 
-        info_card = _style(page.locator(".info-inline-body > div").first)
-        info_text = _style(page.locator(".info-inline-body h3").first)
+        info_card = page.locator(".info-inline-body > div").first
+        info_text = page.locator(".info-inline-body h3").first
         info_scroller = _style(page.get_by_role("region", name="Info content"))
-        assert info_card["backgroundColor"] == "rgb(255, 255, 255)"
-        assert info_text["color"] != "rgb(255, 255, 255)"
+        assert _luminance(info_card, "background") >= LIGHT_SURFACE
+        assert _luminance(info_text, "color") <= DARK_TEXT
         assert "auto" not in info_scroller["scrollbarColor"]
 
         page.locator('.fs-nav button[title="Logs"]').click()
         expect(page.locator(".fs-full-log")).to_be_visible()
-        log_style = _style(page.locator(".fs-full-log"))
-        status_style = _style(page.locator(".fs-status").first)
-        assert log_style["color"] != "rgb(255, 255, 255)"
-        assert status_style["color"] != "rgb(255, 255, 255)"
+        # `.fs-status` used to be checked here too. The Logs view no longer renders one --
+        # the class survives on the dashboard's device selector and in the Sandbox Test Lab,
+        # neither of which this screen shows -- so the locator waited ten seconds and failed
+        # on an element that was never going to appear. Dropped rather than made conditional:
+        # an assertion that silently skips is not one.
+        assert _luminance(page.locator(".fs-full-log"), "color") <= DARK_TEXT
 
         page.reload(wait_until="domcontentloaded")
         expect(page.locator("html")).to_have_class(re.compile(r"theme-light"))
