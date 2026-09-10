@@ -526,6 +526,73 @@ def test_usage_summary_expires_a_rate_limit_record_a_day_old_even_with_claude_ac
     assert body["last_rate_limit"]["stale"] is True
 
 
+def test_usage_summary_expires_a_claude_session_limit_once_the_named_reset_has_passed(monkeypatch):
+    """Found 2026-09-08: Retry stayed blocked after 4:40pm Europe/Berlin because the
+    only Claude-active expiry was RATE_LIMIT_RECORD_MAX_AGE (24h), not the reset clock
+    the leftover itself named."""
+    from order_workflow import claude_code_client
+
+    monkeypatch.setattr(claude_code_client, "active_coding_backend", lambda: "claude_code")
+    hit_at = datetime(2026, 9, 8, 14, 12, tzinfo=timezone.utc)
+    after_reset = datetime(2026, 9, 8, 14, 55, tzinfo=timezone.utc)
+    ids = SequenceIds()
+    execution = ProjectExecutionService(
+        id_factory=ids,
+        clock=lambda: hit_at,
+        fake_adapter=_UsageReportingAdapter(
+            usage=None,
+            rate_limit_message="You've hit your session limit · resets 4:40pm (Europe/Berlin)",
+        ),
+        mode="fake",
+    )
+    service = OrderWorkflowService(id_factory=ids, clock=lambda: after_reset, execution_service=execution)
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+
+    summary = client.get("/api/orders/usage-summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["last_rate_limit"]["message"] == "You've hit your session limit · resets 4:40pm (Europe/Berlin)"
+    assert body["last_rate_limit"]["stale"] is True
+
+
+def test_usage_summary_keeps_a_claude_session_limit_active_before_the_named_reset(monkeypatch):
+    from order_workflow import claude_code_client
+
+    monkeypatch.setattr(claude_code_client, "active_coding_backend", lambda: "claude_code")
+    hit_at = datetime(2026, 9, 8, 14, 12, tzinfo=timezone.utc)
+    before_reset = datetime(2026, 9, 8, 14, 20, tzinfo=timezone.utc)
+    ids = SequenceIds()
+    execution = ProjectExecutionService(
+        id_factory=ids,
+        clock=lambda: hit_at,
+        fake_adapter=_UsageReportingAdapter(
+            usage=None,
+            rate_limit_message="You've hit your session limit · resets 4:40pm (Europe/Berlin)",
+        ),
+        mode="fake",
+    )
+    service = OrderWorkflowService(id_factory=ids, clock=lambda: before_reset, execution_service=execution)
+    client = _client(_app(service))
+    order_id, _ = _approve(client)
+    client.post(f"/api/orders/{order_id}/execution", json={"mode": "fake"})
+    for _ in range(30):
+        if client.get(f"/api/orders/{order_id}/execution").json()["execution"]["status"] == "succeeded":
+            break
+        sleep(0.01)
+
+    summary = client.get("/api/orders/usage-summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["last_rate_limit"]["message"] == "You've hit your session limit · resets 4:40pm (Europe/Berlin)"
+    assert body["last_rate_limit"].get("stale") is not True
+
+
 class _FakeRevisionAdapter:
     def __init__(self) -> None:
         self.received_notes: list[str] = []

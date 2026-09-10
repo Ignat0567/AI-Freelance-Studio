@@ -32,6 +32,7 @@ from order_workflow import (
 from order_workflow.preflight import (
     MINIMUM_FREE_DISK_BYTES,
     MINIMUM_NODE_MAJOR,
+    claude_session_limit_reset_at,
     looks_like_claude_session_limit,
     probe_coding_cli_credentials,
     run_preflight,
@@ -79,6 +80,33 @@ def _preflight(**overrides):
 def test_claude_session_limit_copy_is_not_treated_as_a_grok_quota():
     assert looks_like_claude_session_limit("You've hit your session limit · resets 2:30pm (Europe/Berlin)") is True
     assert looks_like_claude_session_limit("Ollama timed out") is False
+
+
+def test_claude_session_limit_reset_at_uses_the_named_clock_on_the_hit_day():
+    hit_at = datetime(2026, 9, 8, 14, 12, tzinfo=timezone.utc)
+    reset_at = claude_session_limit_reset_at(
+        "You've hit your session limit · resets 4:40pm (Europe/Berlin)",
+        hit_at,
+    )
+
+    assert reset_at == datetime(2026, 9, 8, 14, 40, tzinfo=timezone.utc)
+
+
+def test_claude_session_limit_reset_at_rolls_an_already_passed_clock_to_the_next_local_day():
+    hit_at = datetime(2026, 9, 8, 23, 50, tzinfo=timezone.utc)
+    reset_at = claude_session_limit_reset_at(
+        "You've hit your session limit · resets 1:10am (Europe/Berlin)",
+        hit_at,
+    )
+
+    assert reset_at == datetime(2026, 9, 9, 23, 10, tzinfo=timezone.utc)
+
+
+def test_claude_session_limit_reset_at_returns_none_when_the_clock_is_missing():
+    hit_at = datetime(2026, 9, 8, 14, 12, tzinfo=timezone.utc)
+
+    assert claude_session_limit_reset_at("rate limited, try again later", hit_at) is None
+    assert claude_session_limit_reset_at("You've hit your session limit", hit_at) is None
 
 
 def test_ollama_coding_backend_skips_the_cloud_cli_login():
@@ -739,9 +767,10 @@ def test_ollama_missing_model_names_the_pull_command(monkeypatch):
     assert ollama.action == "ollama pull qwen2.5-coder:14b"
 
 
-def _failed_execution(*, duration=3.0, errors=("grok_not_logged_in",), rate_limit_message=None, summary="Provider failed."):
+def _failed_execution(*, duration=3.0, errors=("grok_not_logged_in",), rate_limit_message=None, summary="Provider failed.", completed_at=None):
     from order_workflow.models import ExecutionMode, ExecutionResult, ExecutionStatus, ProjectExecution
 
+    at = completed_at or NOW
     result = ExecutionResult(
         success=False,
         summary=summary,
@@ -749,7 +778,7 @@ def _failed_execution(*, duration=3.0, errors=("grok_not_logged_in",), rate_limi
         errors=errors,
         duration_seconds=duration,
         rate_limit_message=rate_limit_message,
-        completed_at=NOW,
+        completed_at=at,
     )
     return ProjectExecution(
         id="execution_abcd1234",
@@ -760,10 +789,10 @@ def _failed_execution(*, duration=3.0, errors=("grok_not_logged_in",), rate_limi
         live=True,
         status=ExecutionStatus.FAILED,
         result=result,
-        created_at=NOW,
-        updated_at=NOW,
-        started_at=NOW,
-        finished_at=NOW,
+        created_at=at,
+        updated_at=at,
+        started_at=at,
+        finished_at=at,
     )
 
 
@@ -851,6 +880,76 @@ def test_claude_session_limit_is_stale_on_the_grok_path_and_does_not_block(monke
     assert usage["last_rate_limit"]["stale"] is True
     assert usage["last_rate_limit"]["source"] == "claude"
     assert service._run_preflight().ready is True
+    assert not any(item["code"] == "provider_quota" for item in readiness["checks"])
+
+
+def test_claude_session_limit_stays_active_on_claude_code_before_the_named_reset(monkeypatch):
+    from order_workflow.api_models import CreateOrderRequest
+    from order_workflow.service import OrderWorkflowService
+
+    hit_at = datetime(2026, 9, 8, 14, 12, tzinfo=timezone.utc)
+    before_reset = datetime(2026, 9, 8, 14, 20, tzinfo=timezone.utc)
+    monkeypatch.setattr("order_workflow.service.run_preflight", _healthy_preflight_report)
+    monkeypatch.setattr("order_workflow.claude_code_client.active_coding_backend", lambda: "claude_code")
+    limited = _failed_execution(
+        duration=1178,
+        errors=("provider_rate_limited",),
+        rate_limit_message="You've hit your session limit · resets 4:40pm (Europe/Berlin)",
+        summary="You've hit your session limit · resets 4:40pm (Europe/Berlin)",
+        completed_at=hit_at,
+    )
+    service = OrderWorkflowService(
+        clock=lambda: before_reset,
+        execution_service=_SnapshotExecutions([limited]),
+        preflight_enabled=True,
+    )
+    order_id = service.create_order(
+        CreateOrderRequest(title="Claude order", description="D" * 40, product_type="web_app", preferred_language="en", constraints=(), attachments=())
+    )["order"]["id"]
+
+    usage = service.usage_summary()
+    gated = service._run_preflight()
+    readiness = service.execution_readiness(order_id)
+
+    assert "stale" not in usage["last_rate_limit"]
+    assert gated.ready is False
+    assert [blocker.code for blocker in gated.blockers] == ["provider_rate_limited"]
+    quota = next(item for item in readiness["checks"] if item["code"] == "provider_quota")
+    assert quota["status"] == "blocked"
+    assert "resets 4:40pm" in quota["message"]
+
+
+def test_claude_session_limit_is_stale_on_claude_code_after_the_named_reset(monkeypatch):
+    from order_workflow.api_models import CreateOrderRequest
+    from order_workflow.service import OrderWorkflowService
+
+    hit_at = datetime(2026, 9, 8, 14, 12, tzinfo=timezone.utc)
+    after_reset = datetime(2026, 9, 8, 14, 55, tzinfo=timezone.utc)
+    monkeypatch.setattr("order_workflow.service.run_preflight", _healthy_preflight_report)
+    monkeypatch.setattr("order_workflow.claude_code_client.active_coding_backend", lambda: "claude_code")
+    limited = _failed_execution(
+        duration=1178,
+        errors=("provider_rate_limited",),
+        rate_limit_message="You've hit your session limit · resets 4:40pm (Europe/Berlin)",
+        summary="You've hit your session limit · resets 4:40pm (Europe/Berlin)",
+        completed_at=hit_at,
+    )
+    service = OrderWorkflowService(
+        clock=lambda: after_reset,
+        execution_service=_SnapshotExecutions([limited]),
+        preflight_enabled=True,
+    )
+    order_id = service.create_order(
+        CreateOrderRequest(title="Claude order", description="D" * 40, product_type="web_app", preferred_language="en", constraints=(), attachments=())
+    )["order"]["id"]
+
+    usage = service.usage_summary()
+    gated = service._run_preflight()
+    readiness = service.execution_readiness(order_id)
+
+    assert usage["last_rate_limit"]["stale"] is True
+    assert usage["last_rate_limit"]["source"] == "claude"
+    assert gated.ready is True
     assert not any(item["code"] == "provider_quota" for item in readiness["checks"])
 
 

@@ -32,7 +32,9 @@ import shutil
 import subprocess
 import tempfile
 import time
+from calendar import monthrange
 from collections.abc import Callable, Sequence
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -156,6 +158,74 @@ def looks_like_claude_session_limit(message: str) -> bool:
     """Claude leftover copy must not be treated as a Grok/Ollama rate limit."""
     lowered = (message or "").casefold()
     return "you've hit your session limit" in lowered or "europe/berlin" in lowered
+
+
+_CLAUDE_RESET_RE = re.compile(
+    r"resets\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(([^)]+)\)",
+    re.IGNORECASE,
+)
+
+
+def _last_sunday(year: int, month: int) -> int:
+    last_day = monthrange(year, month)[1]
+    weekday = datetime(year, month, last_day, tzinfo=timezone.utc).weekday()
+    return last_day - ((weekday + 1) % 7)
+
+
+def _europe_berlin_offset(at: datetime) -> timedelta:
+    """CET (+1) / CEST (+2). EU DST: last Sunday of March 01:00 UTC to last Sunday of October 01:00 UTC."""
+    year = at.year
+    start = datetime(year, 3, _last_sunday(year, 3), 1, 0, tzinfo=timezone.utc)
+    end = datetime(year, 10, _last_sunday(year, 10), 1, 0, tzinfo=timezone.utc)
+    return timedelta(hours=2 if start <= at < end else 1)
+
+
+def _named_zone(name: str):
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
+def claude_session_limit_reset_at(message: str, hit_at: datetime) -> datetime | None:
+    """UTC instant named in Claude leftover copy, or None if the clock cannot be parsed.
+
+    Copy looks like "You've hit your session limit · resets 4:40pm (Europe/Berlin)".
+    The clock is local to the named zone. If that wall time on the hit's local calendar
+    day is already in the past relative to the hit, the reset is the next local day.
+    Windows Studio installs often have no tzdata; Europe/Berlin then uses the EU DST rule.
+    """
+    match = _CLAUDE_RESET_RE.search(message or "")
+    if match is None or hit_at.tzinfo is None or hit_at.utcoffset() is None:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour < 1 or hour > 12 or minute > 59:
+        return None
+    hour24 = hour % 12
+    if match.group(3).lower() == "pm":
+        hour24 += 12
+    hit_utc = hit_at.astimezone(timezone.utc)
+    tz_name = match.group(4).strip()
+    tz = _named_zone(tz_name)
+    if tz is not None:
+        local_hit = hit_utc.astimezone(tz)
+        reset_local = local_hit.replace(hour=hour24, minute=minute, second=0, microsecond=0)
+        if reset_local <= local_hit:
+            reset_local = reset_local + timedelta(days=1)
+        return reset_local.astimezone(timezone.utc)
+    if tz_name.casefold() not in {"europe/berlin", "cet", "cest"}:
+        return None
+    local_hit = hit_utc.astimezone(timezone(_europe_berlin_offset(hit_utc)))
+    reset_local = local_hit.replace(hour=hour24, minute=minute, second=0, microsecond=0)
+    if reset_local <= local_hit:
+        reset_local = reset_local + timedelta(days=1)
+    reset_utc = reset_local.astimezone(timezone.utc)
+    return reset_utc.astimezone(timezone(_europe_berlin_offset(reset_utc))).replace(
+        hour=hour24, minute=minute, second=0, microsecond=0
+    ).astimezone(timezone.utc)
 
 
 def _probe_node_version(runner: Callable[[Sequence[str]], tuple[int, str]]) -> tuple[PreflightStatus, str, ExecutionBlocker | None]:

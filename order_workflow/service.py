@@ -53,6 +53,7 @@ from .preflight import (
     PROVIDER_FAST_FAIL_SECONDS,
     PROVIDER_QUOTA,
     PROVIDER_RECENTLY_FAILED,
+    claude_session_limit_reset_at,
     looks_like_claude_session_limit,
     run_preflight,
 )
@@ -309,9 +310,10 @@ class ConfigurationBackedExecutionAdapter:
         return ProductionProjectExecutionAdapter(provider_name=provider, model_name=model, workspace_root=workspace_root)
 
 
-# A Claude Code session limit resets within hours, not days (the user has observed several
-# resets in one day). 24h comfortably outlives any real reset cycle while still expiring a
-# record that has clearly stopped meaning anything -- see usage_summary()'s staleness check.
+# A Claude Code session limit names its own reset clock ("resets 4:40pm (Europe/Berlin)").
+# usage_summary() prefers that instant. 24h is the fallback when the leftover has no
+# parseable reset, so a record cannot block live starts for days -- found 2026-09-03: a
+# real hit on 2026-08-21 was still blocking every Claude Code live start 13 days later.
 RATE_LIMIT_RECORD_MAX_AGE = timedelta(hours=24)
 
 
@@ -925,14 +927,20 @@ class OrderWorkflowService:
 
             if active_coding_backend() in {"", "ollama", "opencode_bridge", "grok", "openrouter"}:
                 last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
-            elif last_rate_limit_at is not None and utc_now(self._clock) - last_rate_limit_at > RATE_LIMIT_RECORD_MAX_AGE:
-                # A session limit resets within hours (the user has observed several
-                # resets a day), never days. Found 2026-09-03: a real limit hit on
-                # 2026-08-21 was still blocking every Claude Code live start 13 days
-                # later, because this was the only staleness check and it only fires
-                # for a DIFFERENT active backend -- Claude Code pinned as its own
-                # active backend could never outlive its own oldest recorded miss.
-                last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
+            else:
+                now = utc_now(self._clock)
+                reset_at = claude_session_limit_reset_at(
+                    str(last_rate_limit.get("message") or ""),
+                    last_rate_limit_at or now,
+                )
+                if reset_at is not None and now >= reset_at:
+                    last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
+                elif last_rate_limit_at is not None and now - last_rate_limit_at > RATE_LIMIT_RECORD_MAX_AGE:
+                    # Found 2026-09-03: a real limit hit on 2026-08-21 was still blocking
+                    # every Claude Code live start 13 days later, because the only
+                    # staleness check fired for a DIFFERENT active backend -- Claude Code
+                    # pinned as its own active backend could never outlive its own miss.
+                    last_rate_limit = {**last_rate_limit, "stale": True, "source": "claude"}
 
         return {
             "total_cost_usd": round(total_cost_usd, 6),
