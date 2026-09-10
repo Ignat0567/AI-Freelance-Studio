@@ -4,6 +4,54 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shutil
+
+
+# Agent configuration that must not survive in a generated project, and the reason the two
+# entries are treated differently below.
+#
+# `.claude/` is executable: it declares hooks, which are shell commands, and skills, which
+# are model-invocable bundled scripts. CLAUDE.md is not executable, but it is read as
+# project instructions by the agent working in the directory, which for an unattended order
+# means instructions arriving from outside the order's own brief.
+AGENT_CONFIG_DIR = ".claude"
+AGENT_INSTRUCTION_FILE = "CLAUDE.md"
+
+
+def scrub_agent_config(project_path: Path | str, *, instructions_too: bool) -> tuple[str, ...]:
+    """Remove agent configuration from a generated project, returning what was removed.
+
+    Called with instructions_too=True before handing the directory to a coding agent: at that
+    moment both entries are inputs to the agent, and the directory is one the pipeline's own
+    output and (once orders carry them) client-supplied templates write into.
+
+    Called with instructions_too=False at delivery: `.claude/` would execute on the client's
+    machine the moment they opened the project in their own tooling, so it never ships, while
+    a CLAUDE.md the build wrote is ordinary documentation and is theirs to keep.
+
+    Never fatal. A directory that still holds one of these has failed to be tidied, and that
+    is worth reporting -- the callers do -- but it is not worth losing a finished build over.
+    """
+    removed: list[str] = []
+    targets = [AGENT_CONFIG_DIR] + ([AGENT_INSTRUCTION_FILE] if instructions_too else [])
+    for name in targets:
+        target = Path(project_path) / name
+        try:
+            if not target.exists():
+                continue
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink()
+            still_there = target.exists()
+        except OSError:
+            # A path that cannot be stat-ed at all: npm's Windows junctions have produced
+            # exactly that in this workspace before and killed a finished order on the way
+            # out. Report it as not-removed rather than raising.
+            continue
+        if not still_there:
+            removed.append(name)
+    return tuple(removed)
 
 
 STUDIO_METADATA_FILES = frozenset(

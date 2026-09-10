@@ -22,6 +22,7 @@ from .executors import CancellationToken, ExecutionEventSink, emit_coding
 from .models import EventLevel, TokenUsage
 from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
+from .workspace import scrub_agent_config
 from .workspace_processes import stop_processes_left_in_workspace
 
 # Measured, not guessed. 900s was sized when a phase prompt asked for screens and navigation
@@ -147,6 +148,24 @@ class ConfiguredClaudeCodeExecutionClient:
             return OpenCodeExecutionResult(success=False, summary="Claude Code CLI is not available.")
 
         _ensure_isolated_git_repo(Path(workspace_path))
+        # --setting-sources below stops the CLI loading `.claude/` from this directory, but it
+        # does not stop it reading a CLAUDE.md there: measured 2026-09-10, a workspace holding
+        # a CLAUDE.md that named a codename had the CLI answer with that codename even with
+        # setting sources pinned to empty. So the directory is cleared as well as the loader
+        # restricted. Before every call, not only the first: a build phase can write either
+        # file, and the repair calls that follow it run in the same directory.
+        scrubbed = scrub_agent_config(Path(workspace_path), instructions_too=True)
+        if scrubbed:
+            # In the stream, not a log file. Agent configuration in a generated project is
+            # either something the build did that nobody asked for, or something that arrived
+            # with the order -- and the second one is worth a human noticing.
+            event_sink.emit(
+                stage="implementation",
+                agent="Claude Code",
+                progress=50,
+                message=f"Removed agent configuration found in the workspace before running: {', '.join(scrubbed)}.",
+                level=EventLevel.WARNING,
+            )
         event_sink.emit(stage="implementation", agent="Claude Code", progress=50, message="Invoking Claude Code CLI")
         emit_coding(event_sink, "Claude Code is writing project files...\n", agent="Claude Code")
         # No --bare: it forces standard (prompting) permission behavior, which blocks
@@ -183,10 +202,14 @@ class ConfiguredClaudeCodeExecutionClient:
             # invocation, and not run once this flag was passed. The same test, with
             # CLAUDE_CONFIG_DIR pointed at a throwaway home, showed the empty value also
             # excludes the *user* scope -- so nothing an operator installs into their own
-            # ~/.claude (skills especially) can reach an unattended order, and a run
-            # depends only on Studio's code and the prompt it was given. Authentication
+            # ~/.claude (skills especially) can reach an unattended order. Authentication
             # is resolved separately and survives this; --model and --tools are already
             # passed explicitly above, and user scope holds no pipeline setting.
+            #
+            # What this flag does NOT cover is CLAUDE.md, which the same session measured
+            # still reaching the model with sources pinned to empty. The scrub above is
+            # what closes that; neither mechanism is sufficient alone, so do not remove
+            # one on the strength of the other.
             "--setting-sources", "",
         ]
         if model:

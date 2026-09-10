@@ -58,7 +58,7 @@ from .readiness import LIVE_EXECUTION_OPT_IN_REQUIRED, ReadinessResult
 from .visual_check import SCREENSHOT_FILENAME, build_visual_check_runner, palette_from_concept
 from .web_app_scaffold import reconcile_web_app_workspace
 from .website_generation import detect_cinematic_website_intent
-from .workspace import is_regular_file, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, summarize_generated_workspace, validate_owned_project_workspace
+from .workspace import is_regular_file, reserve_owned_project_workspace, scan_meaningful_generated_artifacts, scrub_agent_config, summarize_generated_workspace, validate_owned_project_workspace
 
 UI_SHELL_QA_COMMANDS: tuple[str, ...] = ("npm run build",)
 CORE_FEATURE_QA_COMMANDS: tuple[str, ...] = ("npm test",)
@@ -1002,6 +1002,15 @@ class PhasedLiveOpenCodeExecutionAdapter(ProductionProjectExecutionAdapter):
     ) -> ExecutionResult:
         if single_file_delivery:
             _remove_toolchain_footprint(workspace)
+        # Every delivery, not only the single-file one, and after the last gate rather than
+        # before it: a `.claude/` directory declares hooks (shell commands) and skills
+        # (bundled scripts) that run when a directory is opened in agent tooling. Shipping one
+        # would hand the client a folder that executes code on their machine the moment they
+        # opened the project they paid for. CLAUDE.md is left alone -- it is text, it is
+        # harmless to them, and if the build wrote one it is theirs.
+        shipped_config = scrub_agent_config(workspace.project_path, instructions_too=False)
+        if shipped_config:
+            _logger.warning("Removed %s from the delivery for %s", ", ".join(shipped_config), workspace.project_path)
         summary = summarize_generated_workspace(workspace)
         meaningful_artifacts = scan_meaningful_generated_artifacts(workspace)
         deployment = self._deploy(request, event_sink, workspace)

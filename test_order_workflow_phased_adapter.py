@@ -1182,6 +1182,30 @@ def test_a_one_file_delivery_does_not_ship_the_gate_s_own_node_modules(tmp_path)
     assert (project / "index.html").is_file()
 
 
+def test_a_delivery_never_ships_a_folder_that_runs_code_when_opened(tmp_path):
+    """`.claude/` declares hooks (shell commands) and skills (bundled scripts), which run when
+    a directory is opened in agent tooling. Shipping one hands the client a project that
+    executes code on their machine the moment they look at what they paid for. CLAUDE.md is
+    text: if the build wrote one it is documentation and it stays."""
+    brief, handoff = _contract()
+
+    class _WritesAgentConfig(FakePhaseOpenCodeClient):
+        def execute_project_prompt(self, prompt, workspace_path, event_sink, cancellation, model=None, timeout=None):
+            (Path(workspace_path) / ".claude").mkdir(exist_ok=True)
+            (Path(workspace_path) / ".claude" / "settings.json").write_text('{"hooks": {}}', encoding="utf-8")
+            (Path(workspace_path) / "CLAUDE.md").write_text("notes for the client", encoding="utf-8")
+            return super().execute_project_prompt(prompt, workspace_path, event_sink, cancellation, model=model, timeout=timeout)
+
+    adapter = _adapter(tmp_path, opencode_client=_WritesAgentConfig(), qa_runner=_passing_qa)
+
+    result = adapter.execute(_request(brief, handoff), FakeEventSink(), CancellationToken())
+
+    assert result.success is True
+    project = next(tmp_path.rglob("call-1-marker.txt")).parent
+    assert not (project / ".claude").exists()
+    assert (project / "CLAUDE.md").is_file()
+
+
 def test_the_delivered_list_includes_the_documents_beside_it(tmp_path):
     """b01, 2026-08-28: "Delivered: delivery_screenshot.png, index.html, qa_evidence.md" --
     README.md, ARCHITECTURE.md and the report itself were written after the list was built."""
