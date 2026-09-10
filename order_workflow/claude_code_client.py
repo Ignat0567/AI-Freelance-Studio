@@ -153,7 +153,9 @@ class ConfiguredClaudeCodeExecutionClient:
         # every file write in this non-interactive context with no TTY to answer the
         # prompt. _ensure_isolated_git_repo() above already stops `git diff`/`git status`
         # (which --bare would otherwise be needed to guard against) from walking up to
-        # Studio's own repo, so --bare's CLAUDE.md/auto-memory isolation is redundant here.
+        # Studio's own repo. --setting-sources below, not --bare, is what isolates this
+        # call's configuration -- it does that without touching permission mode, so the
+        # reason --bare was rejected does not apply to it.
         # The prompt is sent over stdin, not as a command-line argument: prompts routinely
         # exceed cmd.exe's ~8191-character command-line limit on Windows (claude.cmd is a
         # batch wrapper, so every invocation goes through cmd.exe), which previously made
@@ -166,6 +168,26 @@ class ConfiguredClaudeCodeExecutionClient:
             "--allow-dangerously-skip-permissions",
             "--permission-mode", "bypassPermissions",
             "--tools", "default",
+            # Load no settings sources at all. The CLI's default is to read `.claude/`
+            # from its working directory, and this call's working directory is the
+            # generated project -- a directory this very call writes into, and which
+            # will hold client-supplied templates and repositories as soon as orders
+            # start carrying them. Settings files are not inert data: they can define
+            # hooks, which are shell commands, and skills, which are model-invocable
+            # bundled scripts. Combined with bypassPermissions above, that made any
+            # `.claude/settings.json` appearing in a workspace arbitrary code execution
+            # on the next invocation, and gave one order a way to reach the next one.
+            #
+            # Measured 2026-09-10 rather than read off --help: a workspace holding a
+            # SessionStart hook that wrote a marker file had that hook run on a default
+            # invocation, and not run once this flag was passed. The same test, with
+            # CLAUDE_CONFIG_DIR pointed at a throwaway home, showed the empty value also
+            # excludes the *user* scope -- so nothing an operator installs into their own
+            # ~/.claude (skills especially) can reach an unattended order, and a run
+            # depends only on Studio's code and the prompt it was given. Authentication
+            # is resolved separately and survives this; --model and --tools are already
+            # passed explicitly above, and user scope holds no pipeline setting.
+            "--setting-sources", "",
         ]
         if model:
             # Studio's stored model ids carry a "claude/" catalog prefix (e.g. "claude/opus");

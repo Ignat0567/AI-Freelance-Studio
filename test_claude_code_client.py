@@ -378,3 +378,16 @@ def test_a_timed_out_call_still_reports_its_budget(monkeypatch, tmp_path):
     assert len(budget_lines) == 1, "a killed call has to enter the record like any other"
     assert "1s budget" in budget_lines[0]
     assert "stopped at the ceiling" in budget_lines[0]
+
+
+def test_no_settings_source_is_loaded_from_the_generated_workspace(monkeypatch, tmp_path):
+    """The working directory of this call is the generated project -- a directory the call
+    itself writes into. A `.claude/settings.json` landing there can define hooks (shell
+    commands) and skills (bundled scripts), and this call runs with permissions bypassed,
+    so loading it would let one order execute code inside the next one. Verified against
+    the real CLI on 2026-09-10: a SessionStart hook in the working directory ran without
+    this flag and did not run with it."""
+    _, cmd = _run(monkeypatch, tmp_path)
+
+    assert "--setting-sources" in cmd, "settings sources must be pinned, not left at the CLI default"
+    assert cmd[cmd.index("--setting-sources") + 1] == "", "empty means: load neither the workspace's nor the operator's settings"

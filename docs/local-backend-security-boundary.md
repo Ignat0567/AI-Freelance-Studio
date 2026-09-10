@@ -21,6 +21,16 @@ The existing routes are classified as follows:
 
 Local-only capabilities, including Sandbox Test Lab operations, are unavailable whenever the configured bind address is not an IP loopback address or `localhost`. A hostname that merely resolves to loopback is not trusted for this classification. Test Lab capability requests in network mode return the existing `403 network_bind_disallowed` policy response rather than an availability document.
 
+## Agent Execution Boundary
+
+A second boundary, independent of the HTTP one above, separates a generated project from the coding agent that produces the next one. `order_workflow/claude_code_client.py` invokes the Claude Code CLI with its working directory set to the generated project and with permissions bypassed, because a non-interactive call has no TTY to answer a permission prompt. The CLI's default behaviour is to load `.claude/` from that working directory, and a settings file is not inert data: it can declare hooks, which are shell commands, and skills, which are model-invocable bundled scripts. The generated project is a directory the agent itself writes into, and will hold client-supplied templates and repositories once orders carry them.
+
+The invocation therefore pins `--setting-sources` to the empty value, loading neither the workspace's settings nor the operator's. Two properties follow: no artifact of one order can execute code during another, and a run depends only on Studio's own code and the prompt it was given, never on what an operator happens to have installed in `~/.claude`. Authentication is resolved separately and is unaffected; model and tool selection are passed explicitly on the command line.
+
+Skills, if adopted, are subject to the same boundary and are governed by `docs/agent-skills.md`: vendored into this repository, never fetched at runtime, and never reachable from an unattended order except through an explicitly passed directory.
+
+`provider_adapters.py` (`CLISubscriptionAdapter.execute`) runs vendor CLIs with the generated project as working directory and does not yet pin an equivalent isolation flag for each vendor. That path is not the pinned coding backend; the gap is recorded here rather than assumed closed.
+
 ## Threat Model
 
 1. A malicious website cannot supply the process token, and Electron injects it only for the trusted Studio renderer and owned backend endpoint. Exact Origin and Host checks provide defense in depth against localhost CSRF and DNS rebinding.
@@ -29,5 +39,7 @@ Local-only capabilities, including Sandbox Test Lab operations, are unavailable 
 4. A process occupying a stale stored port is never sent the bearer token. Electron trusts the port only from its child control pipe and requires a matching launch/instance HMAC proof, so a stale port file or compatible `/health` service cannot be adopted.
 5. A LAN device cannot invoke the local boundary because clients must be loopback. Network bind mode does not enable local-only capabilities and is not a remote multi-user authentication mode.
 6. The token is never logged or returned, is not written to the port file or configuration, and is not passed in argv or URLs. Startup diagnostics redact common secret labels as an additional safeguard.
+
+7. A generated project cannot influence the execution of a later order through configuration it leaves on disk. Verified by direct observation on 2026-09-10: a `SessionStart` hook placed in a workspace's `.claude/settings.json` ran on a default CLI invocation and did not run once `--setting-sources` was pinned. The same test, run against a throwaway `CLAUDE_CONFIG_DIR`, confirmed the operator's own scope is excluded as well.
 
 Administrator/root-equivalent attackers that can read another process's memory, inject into Electron/Python, or replace trusted application binaries are explicitly out of scope.
