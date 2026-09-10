@@ -103,10 +103,10 @@ reviewed.
 
 ## Contour 2 — letting a worker use a skill
 
-The worker loads no settings sources, and its workspace is cleared of `.claude/` and
-`CLAUDE.md` before every call, so no skill on disk reaches it implicitly. The only way in is
-an explicit argument, and that is deliberate: the set of skills a run can see should be
-visible in the command line that started it and reconstructable from a commit.
+The worker loads no settings sources, so no skill on disk reaches it implicitly — not from
+its workspace and not from the operator's own `~/.claude`. The only way in is an explicit
+argument, and that is deliberate: the set of skills a run can see should be visible in the
+command line that started it and reconstructable from a commit.
 
 To grant one, place the vetted skill under `agent-skills/<stack>/` and pass that directory in
 the CLI invocation built in `order_workflow/claude_code_client.py`:

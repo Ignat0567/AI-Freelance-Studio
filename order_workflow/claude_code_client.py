@@ -22,7 +22,6 @@ from .executors import CancellationToken, ExecutionEventSink, emit_coding
 from .models import EventLevel, TokenUsage
 from .production_adapter import OpenCodeExecutionClient, OpenCodeExecutionResult
 from .readiness import CLAUDE_CODE_UNAVAILABLE, ReadinessResult
-from .workspace import scrub_agent_config
 from .workspace_processes import stop_processes_left_in_workspace
 
 # Measured, not guessed. 900s was sized when a phase prompt asked for screens and navigation
@@ -148,28 +147,6 @@ class ConfiguredClaudeCodeExecutionClient:
             return OpenCodeExecutionResult(success=False, summary="Claude Code CLI is not available.")
 
         _ensure_isolated_git_repo(Path(workspace_path))
-        # Defence in depth, not the primary control: --setting-sources below already stops the
-        # CLI loading either `.claude/` or CLAUDE.md from this directory. What it does not stop
-        # is the agent opening such a file with its own tools, which one measurement here shows
-        # it will happily do -- asked about "this project" in a directory holding a CLAUDE.md,
-        # it read the file and answered from it. A file whose whole purpose is to instruct an
-        # agent should not be sitting in a workspace that will hold client-supplied templates,
-        # so it is removed rather than relied upon to go unread.
-        #
-        # Before every call, not only the first: a build phase can write either file, and the
-        # repair calls that follow it run in the same directory.
-        scrubbed = scrub_agent_config(Path(workspace_path), instructions_too=True)
-        if scrubbed:
-            # In the stream, not a log file. Agent configuration in a generated project is
-            # either something the build did that nobody asked for, or something that arrived
-            # with the order -- and the second one is worth a human noticing.
-            event_sink.emit(
-                stage="implementation",
-                agent="Claude Code",
-                progress=50,
-                message=f"Removed agent configuration found in the workspace before running: {', '.join(scrubbed)}.",
-                level=EventLevel.WARNING,
-            )
         event_sink.emit(stage="implementation", agent="Claude Code", progress=50, message="Invoking Claude Code CLI")
         emit_coding(event_sink, "Claude Code is writing project files...\n", agent="Claude Code")
         # No --bare: it forces standard (prompting) permission behavior, which blocks
@@ -215,8 +192,9 @@ class ConfiguredClaudeCodeExecutionClient:
             # answered back on default sources and not with sources pinned, in one turn
             # each, and the same held under the bypass flags above. An earlier reading of
             # this said the opposite; that run had left tools enabled, and the model had
-            # simply opened the file. The scrub above is therefore defence in depth here,
-            # and load-bearing only against an agent that reads such a file by choice.
+            # simply opened the file. Nothing else guards this directory, so the flag is
+            # the whole control -- do not drop it on the assumption that something
+            # downstream also cleans up.
             "--setting-sources", "",
         ]
         if model:
