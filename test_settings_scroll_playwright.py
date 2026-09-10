@@ -6,6 +6,14 @@ from playwright.sync_api import expect
 from ui_regression_support import capture_evidence
 
 
+# Needs a real browser: these drive Chromium through the `page`/`browser_session`
+# fixtures and start a built Studio server. Marked so the default suite excludes them
+# rather than failing on a machine without Playwright's browsers installed -- CI runs
+# `-m "not external and not browser and not android"` and, unmarked, these were inside
+# that selection while nothing in the workflow ever ran `playwright install`.
+pytestmark = pytest.mark.browser
+
+
 VIEWPORTS = [
     ("1366x768@100", 1366, 768, 1),
     ("1280x720@125", 1280, 720, 1.25),
