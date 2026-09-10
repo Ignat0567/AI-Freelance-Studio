@@ -98,6 +98,7 @@ def test_vite2_stub_entry_is_rewritten_to_mount_app(tmp_path: Path):
     assert "127.0.0.1" in vite
     assert "environment: 'jsdom'" in vite
     assert "./vitest.setup.js" in vite
+    assert "include: ['src/**/*.{test,spec}.{js,jsx,ts,tsx}']" in vite
     assert "vitest.setup.js" in changed
     setup = (tmp_path / "vitest.setup.js").read_text(encoding="utf-8")
     assert "@testing-library/jest-dom/vitest" in setup
