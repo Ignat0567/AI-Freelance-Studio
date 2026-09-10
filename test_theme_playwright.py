@@ -4,6 +4,15 @@ import re
 from playwright.sync_api import expect
 
 from ui_regression_support import capture_evidence
+import pytest
+
+
+# Needs a real browser: these drive Chromium through the `page`/`browser_session`
+# fixtures and start a built Studio server. Marked so the default suite excludes them
+# rather than failing on a machine without Playwright's browsers installed -- CI runs
+# `-m "not external and not browser and not android"` and, unmarked, these were inside
+# that selection while nothing in the workflow ever ran `playwright install`.
+pytestmark = pytest.mark.browser
 
 
 def _open_studio(page, studio_server):
@@ -63,17 +72,36 @@ def _style(locator):
 
 
 def _contrast_report(page):
+    # The colour is painted and read back, rather than parsed out of the token text.
+    #
+    # The parser this replaces took the first three numbers it found and divided them by
+    # 255, which is right for `#rrggbb` and `rgb(r, g, b)` and nonsense for anything else.
+    # When the Liquid Glass redesign moved every token to `oklch()`, it began reading
+    # `oklch(0.23 0.012 300)` as the channels 0.23, 0.012 and 300 -- and reported the light
+    # theme's body text at 3.09 against white, which failed the 4.5 assertion below and read
+    # exactly like a real accessibility regression. It is not one: the same pair measured
+    # through a canvas is 16.88. Verified 2026-09-10 by running both parsers side by side on
+    # the same two colours; the old one reproduced 3.0894088268980315 to the digit, and both
+    # agree that black on white is 21.
+    #
+    # A canvas has no opinion about notation. Whatever the browser can paint, it can paint
+    # into one pixel, and the pixel comes back as sRGB bytes. `getComputedStyle().color` is
+    # not a substitute -- it hands back `oklch(...)` unchanged, which is the trap again.
     return page.evaluate(
         """() => {
+            const probe = document.createElement('canvas');
+            probe.width = probe.height = 1;
+            const ctx = probe.getContext('2d', { willReadFrequently: true });
             const parse = value => {
-                value = value.trim();
-                let values;
-                if (/^#[0-9a-f]{6}$/i.test(value)) {
-                    values = [1, 3, 5].map(index => parseInt(value.slice(index, index + 2), 16));
-                } else {
-                    values = value.match(/[\\d.]+/g)?.slice(0, 3).map(Number) || [0, 0, 0];
-                }
-                return values.map(channel => {
+                ctx.clearRect(0, 0, 1, 1);
+                // Painted twice: an unparseable value leaves fillStyle at its previous
+                // setting, so the black underneath makes a bad token read as black rather
+                // than silently inheriting the colour measured just before it.
+                ctx.fillStyle = '#000000';
+                ctx.fillStyle = String(value).trim();
+                ctx.fillRect(0, 0, 1, 1);
+                const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+                return [r, g, b].map(channel => {
                     channel /= 255;
                     return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
                 });
@@ -98,6 +126,12 @@ def _contrast_report(page):
                 accent: contrast(root.getPropertyValue('--accent'), panel),
                 fsPanel: root.getPropertyValue('--fs-panel-strong').trim(),
                 fsText: root.getPropertyValue('--fs-text').trim(),
+                // Asserted by the caller before anything else is read. The failure this
+                // guards against is not a wrong colour, it is a measurement that quietly
+                // stops measuring: the previous parser went on returning plausible numbers
+                // for a year's worth of notations it could not read. A ratio that is not 21
+                // means the instrument is broken, and nothing below it means anything.
+                sanityBlackOnWhite: contrast('#000000', '#ffffff'),
             };
         }"""
     )
@@ -130,6 +164,10 @@ def test_light_theme_runtime_contrast_screenshots_and_persistence(studio_server,
         _set_theme(page, "light")
         assert page.evaluate("localStorage.getItem('studio_theme')") == "light"
         light_report = _contrast_report(page)
+        assert abs(light_report["sanityBlackOnWhite"] - 21) < 0.01, (
+            "the contrast probe itself is broken; every ratio below this line is meaningless",
+            light_report["sanityBlackOnWhite"],
+        )
         for state in ("primary", "secondary", "success", "warning", "danger", "accent"):
             assert light_report[state] >= 4.5, (state, light_report[state])
 

@@ -384,9 +384,17 @@ html,
   --fs-line: oklch(0.30 0.02 300 / 0.14);
   --fs-border: oklch(0.30 0.02 300 / 0.08);
   --fs-border-strong: oklch(0.30 0.02 300 / 0.14);
-  --fs-success: oklch(0.55 0.14 165);
+  /* 0.55 -> 0.53, the only token in this theme that missed AA: measured at 4.38 against the
+     white card, where the rule is 4.5. 0.54 clears it at 4.55, which is a margin thin enough
+     for a rendering difference to flip; 0.53 lands at 4.73 and the two are indistinguishable
+     side by side. The soft variant keeps 0.55 on purpose -- it is a 12% background wash that
+     no text is measured against, and its authored value should stand. */
+  --fs-success: oklch(0.53 0.14 165);
   --fs-success-soft: oklch(0.55 0.14 165 / 0.12);
-  --fs-warning: oklch(0.60 0.15 75);
+  /* 0.60 -> 0.56 for the same reason as --fs-success above: 4.01 against the white card,
+     and amber is the hardest hue to keep readable on white without going brown. 0.58 is
+     still short at 4.40; 0.56 clears at 4.77. Soft variant unchanged, as above. */
+  --fs-warning: oklch(0.56 0.15 75);
   --fs-warning-soft: oklch(0.60 0.15 75 / 0.12);
   --fs-danger: oklch(0.55 0.19 25);
   --fs-danger-soft: oklch(0.55 0.19 25 / 0.10);
